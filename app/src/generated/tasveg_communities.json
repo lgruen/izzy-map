@@ -1,0 +1,1094 @@
+{
+ "AAP": {
+  "name": "(AAP) Alkaline pans",
+  "group": "Saltmarsh and wetland",
+  "color": "#809fff",
+  "outline": "#686868",
+  "label": "(AAP) Alkaline pans"
+ },
+ "AHF": {
+  "name": "(AHF) Freshwater aquatic herbland",
+  "group": "Saltmarsh and wetland",
+  "color": "#65cbfe",
+  "outline": "#686868",
+  "label": "(AHF) Freshwater aquatic herbland"
+ },
+ "AHL": {
+  "name": "(AHL) Lacustrine herbland",
+  "group": "Saltmarsh and wetland",
+  "color": "#65cbfe",
+  "outline": "#ece9d8",
+  "label": "(AHL) Lacustrine herbland"
+ },
+ "AHS": {
+  "name": "(AHS) Saline aquatic herbland",
+  "group": "Saltmarsh and wetland",
+  "color": "#65cbfe",
+  "outline": "#ece9d8",
+  "label": "(AHS) Saline aquatic herbland"
+ },
+ "ARS": {
+  "name": "(ARS) Saline sedgeland / rushland",
+  "group": "Saltmarsh and wetland",
+  "color": "#65cbfe",
+  "outline": "#ece9d8",
+  "label": "(ARS) Saline sedgeland/rushland"
+ },
+ "ASF": {
+  "name": "(ASF) Freshwater aquatic sedgeland and rushland",
+  "group": "Saltmarsh and wetland",
+  "color": "#65cbfe",
+  "outline": "#ece9d8",
+  "label": "(ASF) Fresh water aquatic sedgeland and rushland"
+ },
+ "ASP": {
+  "name": "(ASP) Sphagnum peatland",
+  "group": "Saltmarsh and wetland",
+  "color": "#66ccff",
+  "outline": "#ece9d8",
+  "label": "(ASP) Sphagnum peatland"
+ },
+ "ASS": {
+  "name": "(ASS) Succulent saline herbland",
+  "group": "Saltmarsh and wetland",
+  "color": "#65cbfe",
+  "outline": "#ece9d8",
+  "label": "(ASS) Succulent saline herbland"
+ },
+ "AUS": {
+  "name": "(AUS) Saltmarsh (undifferentiated)",
+  "group": "Saltmarsh and wetland",
+  "color": "#65cbfe",
+  "outline": "#ece9d8",
+  "label": "(AUS) Saltmarsh (undifferntiated)"
+ },
+ "AWU": {
+  "name": "(AWU) Wetland (undifferentiated)",
+  "group": "Saltmarsh and wetland",
+  "color": "#66ccff",
+  "outline": "#d4d0c8",
+  "label": "(AWU) Wetland (undifferentiated)"
+ },
+ "DAC": {
+  "name": "(DAC) Eucalyptus amygdalina coastal forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#686868",
+  "label": "(DAC) Eucalyptus amygdalina coastal forest and woodland"
+ },
+ "DAD": {
+  "name": "(DAD) Eucalyptus amygdalina forest and woodland on dolerite",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DAD) Eucalyptus amygdalina forest and woodland on dolerite"
+ },
+ "DAM": {
+  "name": "(DAM) Eucalyptus amygdalina forest on mudstone",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DAM) Eucalyptus amygdalina forest on mudstone"
+ },
+ "DAS": {
+  "name": "(DAS) Eucalyptus amygdalina forest and woodland on sandstone",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DAS) Eucalyptus amygdalina forest and woodland on sandstone"
+ },
+ "DAZ": {
+  "name": "(DAZ) Eucalyptus amygdalina inland forest and woodland on Cainozoic deposits",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DAZ) Eucalyptus amygdalina inland forest and woodland on Cainozoic deposits"
+ },
+ "DBA": {
+  "name": "(DBA) Eucalyptus barberi forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DBA) Eucalyptus barberi forest and woodland"
+ },
+ "DCO": {
+  "name": "(DCO) Eucalyptus coccifera forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DCO) Eucalyptus coccifera forest and woodland"
+ },
+ "DCR": {
+  "name": "(DCR) Eucalyptus cordata forest",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DCR) Eucalyptus cordata forest"
+ },
+ "DDE": {
+  "name": "(DDE) Eucalyptus tasmaniensis dry forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#ece9d8",
+  "label": "(DDE) Eucalyptus tasmaniensis dry forest and woodland"
+ },
+ "DDP": {
+  "name": "(DDP) Eucalyptus dalrympleana - Eucalyptus pauciflora forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#686868",
+  "label": "(DDP) Eucalyptus dalrympleana - Eucalyptus pauciflora forest and woodland"
+ },
+ "DFP": {
+  "name": "(DFP) Furneaux peppermint forest",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#686868",
+  "label": "(DFP) Furneaux peppermint forest"
+ },
+ "DGL": {
+  "name": "(DGL) Eucalyptus globulus dry forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#ece9d8",
+  "label": "(DGL) Eucalyptus globulus dry forest and woodland"
+ },
+ "DGW": {
+  "name": "(DGW) Eucalyptus gunnii woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#ece9d8",
+  "label": "(DGW) Eucalyptus gunnii woodland"
+ },
+ "DKW": {
+  "name": "(DKW) King Island eucalypt woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#ece9d8",
+  "label": "(DKW) King Island eucalypt woodland"
+ },
+ "DMO": {
+  "name": "(DMO) Eucalyptus morrisbyi forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#ece9d8",
+  "label": "(DMO) Eucalyptus morrisbyi forest and woodland"
+ },
+ "DMW": {
+  "name": "(DMW) Midlands woodland complex",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#ece9d8",
+  "label": "(DMW) Midlands woodland complex"
+ },
+ "DNI": {
+  "name": "(DNI) Eucalyptus nitida dry forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#ece9d8",
+  "label": "(DNI) Eucalyptus nitida dry forest and woodland"
+ },
+ "DOB": {
+  "name": "(DOB) Eucalyptus obliqua dry forest",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#ece9d8",
+  "label": "(DOB) Eucalyptus obliqua dry forest"
+ },
+ "DOV": {
+  "name": "(DOV) Eucalyptus ovata forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#cbfe98",
+  "outline": "#ece9d8",
+  "label": "(DOV) Eucalyptus ovata forest and woodland"
+ },
+ "DOW": {
+  "name": "(DOW) Eucalyptus ovata heathy woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#686868",
+  "label": "(DOW) Eucalyptus ovata heathy woodland"
+ },
+ "DPD": {
+  "name": "(DPD) Eucalyptus pauciflora forest and woodland on dolerite",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DPD) Eucalyptus pauciflora forest and woodland on dolerite"
+ },
+ "DPE": {
+  "name": "(DPE) Eucalyptus perriniana forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DPE) Eucalyptus perriniana forest and woodland"
+ },
+ "DPO": {
+  "name": "(DPO) Eucalyptus pauciflora forest and woodland not on dolerite",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DPO) Eucalyptus pauciflora forest and woodland not on dolerite"
+ },
+ "DPU": {
+  "name": "(DPU) Eucalyptus pulchella forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DPU) Eucalyptus pulchella forest and woodland"
+ },
+ "DRI": {
+  "name": "(DRI) Eucalyptus risdonii forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DRI) Eucalyptus risdonii forest and woodland"
+ },
+ "DRO": {
+  "name": "(DRO) Eucalyptus rodwayi forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DRO) Eucalyptus rodwayi forest and woodland"
+ },
+ "DSC": {
+  "name": "(DSC) Eucalyptus amygdalina - Eucalyptus obliqua damp sclerophyll forest",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#98fe00",
+  "outline": "#ece9d8",
+  "label": "(DSC) Eucalyptus amygdalina - Eucalyptus obliqua damp sclerophyll forest"
+ },
+ "DSG": {
+  "name": "(DSG) Eucalyptus sieberi forest and woodland on granite",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DSG) Eucalyptus sieberi forest and woodland on granite"
+ },
+ "DSO": {
+  "name": "(DSO) Eucalyptus sieberi forest and woodland not on granite",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#659800",
+  "outline": "#ece9d8",
+  "label": "(DSO) Eucalyptus sieberi forest and woodland not on granite"
+ },
+ "DTD": {
+  "name": "(DTD) Eucalyptus tenuiramis forest and woodland on dolerite",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#686868",
+  "label": "(DTD) Eucalyptus tenuiramis forest and woodland on dolerite"
+ },
+ "DTG": {
+  "name": "(DTG) Eucalyptus tenuiramis forest and woodland on granite",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#ece9d8",
+  "label": "(DTG) Eucalyptus tenuiramis forest and woodland on granite"
+ },
+ "DTO": {
+  "name": "(DTO) Eucalyptus tenuiramis forest and woodland on sediments",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#ece9d8",
+  "label": "(DTO) Eucalyptus tenuiramis forest and woodland on sediments"
+ },
+ "DVC": {
+  "name": "(DVC) Eucalyptus viminalis - Eucalyptus globulus coastal forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#ece9d8",
+  "label": "(DVC) Eucalyptus viminalis - Eucalyptus globulus coastal forest and woodland"
+ },
+ "DVF": {
+  "name": "(DVF) Eucalyptus viminalis Furneaux forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#ece9d8",
+  "label": "(DVF) Eucalyptus viminalis Furneaux forest and woodland"
+ },
+ "DVG": {
+  "name": "(DVG) Eucalyptus viminalis grassy forest and woodland",
+  "group": "Dry eucalypt forest and woodland",
+  "color": "#32cb65",
+  "outline": "#ece9d8",
+  "label": "(DVG) Eucalyptus viminalis grassy forest and woodland"
+ },
+ "FAC": {
+  "name": "(FAC) Improved pasture with native tree canopy",
+  "group": "Modified land",
+  "color": "#ffffcc",
+  "outline": "#ece9d8",
+  "label": "(FAC) Improved pasture with native tree canopy"
+ },
+ "FAL": {
+  "name": "(FAL) Agricultural land",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#686868",
+  "label": "(FAL) Agricultural land"
+ },
+ "FMG": {
+  "name": "(FMG) Marram grassland",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#ece9d8",
+  "label": "(FMG) Marram grassland"
+ },
+ "FPE": {
+  "name": "(FPE) Permanent easements",
+  "group": "Modified land",
+  "color": "#ffffff",
+  "outline": "#ece9d8",
+  "label": "(FPE) Permanent easements"
+ },
+ "FPF": {
+  "name": "(FPF) Pteridium esculentum fernland",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#ece9d8",
+  "label": "(FPF) Pteridium esculentum fernland"
+ },
+ "FPH": {
+  "name": "(FPH) Plantations for silviculture - hardwood",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#ece9d8",
+  "label": "(FPH) Plantations for silviculture - hardwood"
+ },
+ "FPS": {
+  "name": "(FPS) Plantations for silviculture - softwood",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#ece9d8",
+  "label": "(FPS) Plantations for silviculture - softwood"
+ },
+ "FPU": {
+  "name": "(FPU) Unverified plantations for silviculture",
+  "group": "Modified land",
+  "color": "#ffffff",
+  "outline": "#ece9d8",
+  "label": "(FPU) Unverified plantations for silviculture"
+ },
+ "FRG": {
+  "name": "(FRG) Regenerating cleared land",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#ece9d8",
+  "label": "(FRG) Regenerating cleared land"
+ },
+ "FSM": {
+  "name": "(FSM) Spartina marshland",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#ece9d8",
+  "label": "(FSM) Spartina marshland"
+ },
+ "FUM": {
+  "name": "(FUM) Extra-urban miscellaneous",
+  "group": "Modified land",
+  "color": "#ffffff",
+  "outline": "#ece9d8",
+  "label": "(FUM) Extra-urban miscellaneous"
+ },
+ "FUR": {
+  "name": "(FUR) Urban areas",
+  "group": "Modified land",
+  "color": "#ffffff",
+  "outline": "#ece9d8",
+  "label": "(FUR) Urban areas"
+ },
+ "FWU": {
+  "name": "(FWU) Weed infestation",
+  "group": "Modified land",
+  "color": "#fefecb",
+  "outline": "#ece9d8",
+  "label": "(FWU) Weed infestation"
+ },
+ "GCL": {
+  "name": "(GCL) Lowland grassland complex",
+  "group": "Native grassland",
+  "color": "#e7ff00",
+  "outline": "#ece9d8",
+  "label": "(GCL) Lowland grassland complex"
+ },
+ "GHC": {
+  "name": "(GHC) Coastal grass and herbfield",
+  "group": "Native grassland",
+  "color": "#e7ff00",
+  "outline": "#686868",
+  "label": "(GHC) Coastal grass and herbfield"
+ },
+ "GPH": {
+  "name": "(GPH) Highland Poa grassland",
+  "group": "Native grassland",
+  "color": "#e7ff00",
+  "outline": "#ece9d8",
+  "label": "(GPH) Highland Poa grassland"
+ },
+ "GPL": {
+  "name": "(GPL) Lowland Poa labillardierei grassland",
+  "group": "Native grassland",
+  "color": "#e6ff05",
+  "outline": "#d4d0c8",
+  "label": "(GPL) Lowland Poa labillardierei grassland"
+ },
+ "GRP": {
+  "name": "(GRP) Rockplate grassland",
+  "group": "Native grassland",
+  "color": "#e7ff00",
+  "outline": "#ece9d8",
+  "label": "(GRP) Rockplate grassland"
+ },
+ "GSL": {
+  "name": "(GSL) Lowland grassy sedgeland",
+  "group": "Native grassland",
+  "color": "#e7ff00",
+  "outline": "#ece9d8",
+  "label": "(GSL) Lowland grassy sedgeland"
+ },
+ "GTL": {
+  "name": "(GTL) Lowland Themeda triandra grassland",
+  "group": "Native grassland",
+  "color": "#e7ff00",
+  "outline": "#ece9d8",
+  "label": "(GTL) Lowland Themeda triandra grassland"
+ },
+ "HCH": {
+  "name": "(HCH) Alpine coniferous heathland",
+  "group": "Highland treeless vegetation",
+  "color": "#fe98fe",
+  "outline": "#686868",
+  "label": "(HCH) Alpine coniferous heathland"
+ },
+ "HCM": {
+  "name": "(HCM) Cushion moorland",
+  "group": "Highland treeless vegetation",
+  "color": "#fe98fe",
+  "outline": "#ece9d8",
+  "label": "(HCM) Cushion moorland"
+ },
+ "HHE": {
+  "name": "(HHE) Eastern alpine heathland",
+  "group": "Highland treeless vegetation",
+  "color": "#fe98fe",
+  "outline": "#ece9d8",
+  "label": "(HHE) Eastern alpine heathland"
+ },
+ "HHW": {
+  "name": "(HHW) Western alpine heathland",
+  "group": "Highland treeless vegetation",
+  "color": "#fe98fe",
+  "outline": "#ece9d8",
+  "label": "(HHW) Western alpine heathland"
+ },
+ "HSE": {
+  "name": "(HSE) Eastern alpine sedgeland",
+  "group": "Highland treeless vegetation",
+  "color": "#fe98fe",
+  "outline": "#ece9d8",
+  "label": "(HSE) Eastern alpine sedgeland"
+ },
+ "HSW": {
+  "name": "(HSW) Western alpine sedgeland/herbland",
+  "group": "Highland treeless vegetation",
+  "color": "#fe98fe",
+  "outline": "#ece9d8",
+  "label": "(HSW) Western alpine sedgeland/herbland"
+ },
+ "MBE": {
+  "name": "(MBE) Eastern buttongrass moorland",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fefe32",
+  "outline": "#ece9d8",
+  "label": "(MBE) Eastern buttongrass moorland"
+ },
+ "MBP": {
+  "name": "(MBP) Pure buttongrass moorland",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fefe32",
+  "outline": "#ece9d8",
+  "label": "(MBP) Pure buttongrass moorland"
+ },
+ "MBR": {
+  "name": "(MBR) Sparse buttongrass moorland on slopes",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fecb32",
+  "outline": "#ece9d8",
+  "label": "(MBR) Sparse buttongrass moorland on slopes"
+ },
+ "MBS": {
+  "name": "(MBS) Buttongrass moorland with emergent shrubs",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fefe32",
+  "outline": "#ece9d8",
+  "label": "(MBS) Buttongrass moorland with emergent shrubs"
+ },
+ "MBU": {
+  "name": "(MBU) Buttongrass moorland (undifferentiated)",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fefe32",
+  "outline": "#ece9d8",
+  "label": "(MBU) Buttongrass moorland (undifferentiated)"
+ },
+ "MBW": {
+  "name": "(MBW) Western buttongrass moorland",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fecb32",
+  "outline": "#ece9d8",
+  "label": "(MBW) Western buttongrass moorland"
+ },
+ "MDS": {
+  "name": "(MDS) Subalpine Diplarrena latifolia rushland",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fecb32",
+  "outline": "#ece9d8",
+  "label": "(MDS) Subalpine Diplarrena latifolia rushland"
+ },
+ "MGH": {
+  "name": "(MGH) Highland grassy sedgeland",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fefe32",
+  "outline": "#ece9d8",
+  "label": "(MGH) Highland grassy sedgeland"
+ },
+ "MRR": {
+  "name": "(MRR) Restionaceae rushland",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fecb32",
+  "outline": "#686868",
+  "label": "(MRR) Restionaceae rushland"
+ },
+ "MSW": {
+  "name": "(MSW)  Western lowland sedgeland",
+  "group": "Moorland, sedgeland and rushland",
+  "color": "#fecb32",
+  "outline": "#ece9d8",
+  "label": "(MSW)  Western lowland sedgeland"
+ },
+ "NAD": {
+  "name": "(NAD) Acacia dealbata forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb65",
+  "outline": "#686868",
+  "label": "(NAD) Acacia dealbata forest"
+ },
+ "NAF": {
+  "name": "(NAF) Acacia melanoxylon swamp forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb65",
+  "outline": "#ece9d8",
+  "label": "(NAF) Acacia melanoxylon swamp forest"
+ },
+ "NAL": {
+  "name": "(NAL) Allocasuarina littoralis forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb65",
+  "outline": "#ece9d8",
+  "label": "(NAL) Allocasuarina littoralis forest"
+ },
+ "NAR": {
+  "name": "(NAR) Acacia melanoxylon forest on rises",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb65",
+  "outline": "#ece9d8",
+  "label": "(NAR) Acacia melanoxylon forest on rises"
+ },
+ "NAV": {
+  "name": "(NAV) Allocasuarina verticillata forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb65",
+  "outline": "#ece9d8",
+  "label": "(NAV) Allocasuarina verticillata forest"
+ },
+ "NBA": {
+  "name": "(NBA) Bursaria - Acacia woodland",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb65",
+  "outline": "#ece9d8",
+  "label": "(NBA) Bursaria - Acacia woodland and scrub"
+ },
+ "NBS": {
+  "name": "(NBS) Banksia serrata woodland",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb65",
+  "outline": "#ece9d8",
+  "label": "(NBS) Banksia serrata woodland"
+ },
+ "NCR": {
+  "name": "(NCR) Callitris rhomboidea forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb98",
+  "outline": "#686868",
+  "label": "(NCR) Callitris rhomboidea forest"
+ },
+ "NLA": {
+  "name": "(NLA) Leptospermum scoparium - Acacia mucronata forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb98",
+  "outline": "#ece9d8",
+  "label": "(NLA) Leptospermum scoparium - Acacia mucronata forest"
+ },
+ "NLE": {
+  "name": "(NLE) Leptospermum forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb98",
+  "outline": "#ece9d8",
+  "label": "(NLE) Leptospermum forest"
+ },
+ "NLM": {
+  "name": "(NLM) Leptospermum lanigerum - Melaleuca squarrosa swamp forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb98",
+  "outline": "#ece9d8",
+  "label": "(NLM) Leptospermum lanigerum - Melaleuca squarrosa swamp forest"
+ },
+ "NLN": {
+  "name": "(NLN) Subalpine Leptospermum nitidum woodland",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb98",
+  "outline": "#ece9d8",
+  "label": "(NLN) Subalpine Leptospermum nitidum woodland"
+ },
+ "NME": {
+  "name": "(NME) Melaleuca ericifolia swamp forest",
+  "group": "Non eucalypt forest and woodland",
+  "color": "#cbcb98",
+  "outline": "#ece9d8",
+  "label": "(NME) Melaleuca ericifolia swamp forest"
+ },
+ "OAQ": {
+  "name": "(OAQ) Water, sea",
+  "group": "Other natural environments",
+  "color": "#cbfefe",
+  "outline": "#686868",
+  "label": "(OAQ) Water, sea"
+ },
+ "ORO": {
+  "name": "(ORO) Lichen lithosere",
+  "group": "Other natural environments",
+  "color": "#e1e1e1",
+  "outline": "#ece9d8",
+  "label": "(ORO) Lichen lithosere"
+ },
+ "OSM": {
+  "name": "(OSM) Sand, mud",
+  "group": "Other natural environments",
+  "color": "#ffffff",
+  "outline": "#686868",
+  "label": "(OSM) Sand, mud"
+ },
+ "RCO": {
+  "name": "(RCO) Coastal rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#ece9d8",
+  "label": "(RCO) Coastal rainforest"
+ },
+ "RFE": {
+  "name": "(RFE) Rainforest fernland",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#ece9d8",
+  "label": "(RFE) Rainforest fernland"
+ },
+ "RFS": {
+  "name": "(RFS) Nothofagus gunnii rainforest scrub",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#ece9d8",
+  "label": "(RFS) Nothofagus gunnii rainforest and scrub"
+ },
+ "RHP": {
+  "name": "(RHP) Lagarostrobos franklinii rainforest and scrub",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#ece9d8",
+  "label": "(RHP) Lagarostrobos franklinii rainforest and scrub"
+ },
+ "RKF": {
+  "name": "(RKF) Athrotaxis selaginoides - Nothofagus gunnii short rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#ece9d8",
+  "label": "(RKF) Athrotaxis selaginoides - Nothofagus gunnii short rainforest"
+ },
+ "RKP": {
+  "name": "(RKP) Athrotaxis selaginoides rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#ece9d8",
+  "label": "(RKP) Athrotaxis selaginoides rainforest"
+ },
+ "RKS": {
+  "name": "(RKS) Athrotaxis selaginoides subalpine scrub",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#ece9d8",
+  "label": "(RKS) Athrotaxis selaginoides subalpine scrub"
+ },
+ "RKX": {
+  "name": "(RKX) Highland rainforest scrub with dead Athrotaxis selaginoides",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#686868",
+  "label": "(RKX) Highland rainforest scrub with dead Athrotaxis selaginoides"
+ },
+ "RML": {
+  "name": "(RML) Nothofagus - Leptospermum short rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#ece9d8",
+  "label": "(RML) Nothofagus - Leptospermum short rainforest"
+ },
+ "RMS": {
+  "name": "(RMS) Nothofagus - Phyllocladus short rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#ece9d8",
+  "label": "(RMS) Nothofagus - Phyllocladus short rainforest"
+ },
+ "RMT": {
+  "name": "(RMT) Nothofagus - Atherosperma rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#ece9d8",
+  "label": "(RMT) Nothofagus - Atherosperma rainforest"
+ },
+ "RMU": {
+  "name": "(RMU) Nothofagus rainforest (undifferentiated)",
+  "group": "Rainforest and related scrub",
+  "color": "#0065cb",
+  "outline": "#ece9d8",
+  "label": "(RMU) Nothofagus rainforest (undifferentiated)"
+ },
+ "RPF": {
+  "name": "(RPF) Athrotaxis cupressoides - Nothofagus gunnii short rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#686868",
+  "label": "(RPF) Athrotaxis cupressoides - Nothofagus gunnii short rainforest"
+ },
+ "RPP": {
+  "name": "(RPP) Athrotaxis cupressoides rainforest",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#ece9d8",
+  "label": "(RPP) Athrotaxis cupressoides rainforest"
+ },
+ "RPW": {
+  "name": "(RPW) Athrotaxis cupressoides open woodland",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#ece9d8",
+  "label": "(RPW) Athrotaxis cupressoides open woodland"
+ },
+ "RSH": {
+  "name": "(RSH) Highland low rainforest and scrub",
+  "group": "Rainforest and related scrub",
+  "color": "#3232fe",
+  "outline": "#ece9d8",
+  "label": "(RSH) Highland low rainforest and scrub"
+ },
+ "SAL": {
+  "name": "(SAL) Acacia longifolia coastal scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6532",
+  "outline": "#686868",
+  "label": "(SAL) Acacia longifolia coastal scrub"
+ },
+ "SBM": {
+  "name": "(SBM) Banksia marginata wet scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6532",
+  "outline": "#ece9d8",
+  "label": "(SBM) Banksia marginata wet scrub"
+ },
+ "SBR": {
+  "name": "(SBR) Broad-leaf scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6532",
+  "outline": "#ece9d8",
+  "label": "(SBR) Broad-leaf scrub"
+ },
+ "SCA": {
+  "name": "(SCA) Coastal scrub on alkaline sands",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6532",
+  "outline": "#ece9d8",
+  "label": "(SCA) Coastal scrub on alkaline sands"
+ },
+ "SCH": {
+  "name": "(SCH) Coastal heathland",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6532",
+  "outline": "#ece9d8",
+  "label": "(SCH) Coastal heathland"
+ },
+ "SCL": {
+  "name": "(SCL) Heathland on calcareous substrates",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9865",
+  "outline": "#ece9d8",
+  "label": "(SCL) Heathland on calcareous substrates"
+ },
+ "SED": {
+  "name": "(SED) Eastern scrub on dolerite",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9865",
+  "outline": "#686868",
+  "label": "(SED) Eastern scrub on dolerite"
+ },
+ "SHS": {
+  "name": "(SHS) Subalpine heathland",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9898",
+  "outline": "#ece9d8",
+  "label": "(SHS) Subalpine heathland"
+ },
+ "SHW": {
+  "name": "(SHW) Wet heathland",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9898",
+  "outline": "#ece9d8",
+  "label": "(SHW) Wet heathland"
+ },
+ "SKA": {
+  "name": "(SKA) Kunzea ambigua regrowth scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9865",
+  "outline": "#ece9d8",
+  "label": "(SKA) Kunzea ambigua regrowth scrub"
+ },
+ "SLG": {
+  "name": "(SLG) Leptospermum glaucescens heathland and scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9865",
+  "outline": "#ece9d8",
+  "label": "(SLG) Leptospermum glaucescens heathland and scrub"
+ },
+ "SLL": {
+  "name": "(SLL) Leptospermum lanigerum scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9865",
+  "outline": "#ece9d8",
+  "label": "(SLL) Leptospermum lanigerum scrub"
+ },
+ "SLS": {
+  "name": "(SLS) Leptospermum scoparium heathland and scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9865",
+  "outline": "#ece9d8",
+  "label": "(SLS) Leptospermum scoparium heathland and scrub"
+ },
+ "SMM": {
+  "name": "(SMM) Melaleuca squamea heathland",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6565",
+  "outline": "#ece9d8",
+  "label": "(SMM) Melaleuca squamea heathland"
+ },
+ "SMP": {
+  "name": "(SMP) Melaleuca pustulata scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6565",
+  "outline": "#ece9d8",
+  "label": "(SMP) Melaleuca pustulata scrub"
+ },
+ "SMR": {
+  "name": "(SMR) Melaleuca squarrosa scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6565",
+  "outline": "#ece9d8",
+  "label": "(SMR) Melaleuca squarrosa scrub"
+ },
+ "SRE": {
+  "name": "(SRE) Eastern riparian scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6532",
+  "outline": "#ece9d8",
+  "label": "(SRE) Eastern riparian scrub"
+ },
+ "SRF": {
+  "name": "(SRF) Leptospermum with rainforest scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6565",
+  "outline": "#686868",
+  "label": "(SRF) Leptospermum with rainforest scrub"
+ },
+ "SRH": {
+  "name": "(SRH) Rookery halophytic herbland",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6565",
+  "outline": "#ece9d8",
+  "label": "(SRH) Rookery halophytic herbland"
+ },
+ "SSC": {
+  "name": "(SSC) Coastal scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6532",
+  "outline": "#ece9d8",
+  "label": "(SSC) Coastal scrub"
+ },
+ "SSK": {
+  "name": "(SSK) Scrub complex on King Island",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#cb6565",
+  "outline": "#ece9d8",
+  "label": "(SSK) Scrub complex on King Island"
+ },
+ "SSW": {
+  "name": "(SSW) Western subalpine scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9898",
+  "outline": "#ece9d8",
+  "label": "(SSW) Western subalpine scrub"
+ },
+ "SSZ": {
+  "name": "(SSZ) Spray zone coastal complex",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9898",
+  "outline": "#686868",
+  "label": "(SSZ) Spray zone coastal complex"
+ },
+ "SWR": {
+  "name": "(SWR) Western regrowth complex",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9898",
+  "outline": "#ece9d8",
+  "label": "(SWR) Western regrowth complex"
+ },
+ "SWW": {
+  "name": "(SWW) Western wet scrub",
+  "group": "Scrub, heathland and coastal complexes",
+  "color": "#fe9898",
+  "outline": "#ece9d8",
+  "label": "(SWW) Western wet scrub"
+ },
+ "WBR": {
+  "name": "(WBR) Eucalyptus brookeriana wet forest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#326565",
+  "outline": "#686868",
+  "label": "(WBR) Eucalyptus brookeriana wet forest"
+ },
+ "WDA": {
+  "name": "(WDA) Eucalyptus dalrympleana forest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#326565",
+  "outline": "#ece9d8",
+  "label": "(WDA) Eucalyptus dalrympleana forest"
+ },
+ "WDB": {
+  "name": "(WDB) Eucalyptus tasmaniensis forest with broad-leaf shrubs",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#326565",
+  "outline": "#ece9d8",
+  "label": "(WDB) Eucalyptus tasmaniensis forest with broad-leaf shrubs"
+ },
+ "WDL": {
+  "name": "(WDL) Eucalyptus tasmaniensis forest over Leptospermum",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#326565",
+  "outline": "#ece9d8",
+  "label": "(WDL) Eucalyptus tasmaniensis forest over Leptospermum"
+ },
+ "WDR": {
+  "name": "(WDR) Eucalyptus tasmaniensis forest over rainforest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#326565",
+  "outline": "#ece9d8",
+  "label": "(WDR) Eucalyptus tasmaniensis forest over rainforest"
+ },
+ "WDU": {
+  "name": "(WDU) Eucalyptus tasmaniensis wet forest (undifferentiated)",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#659898",
+  "outline": "#686868",
+  "label": "(WDU) Eucalyptus tasmaniensis wet forest (undifferentiated)"
+ },
+ "WGK": {
+  "name": "(WGK) Eucalyptus globulus King Island forest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#659898",
+  "outline": "#ece9d8",
+  "label": "(WGK) Eucalyptus globulus King Island forest"
+ },
+ "WGL": {
+  "name": "(WGL) Eucalyptus globulus wet forest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#659898",
+  "outline": "#ece9d8",
+  "label": "(WGL) Eucalyptus globulus wet forest"
+ },
+ "WNL": {
+  "name": "(WNL) Eucalyptus nitida forest over Leptospermum",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#659898",
+  "outline": "#ece9d8",
+  "label": "(WNL) Eucalyptus nitida forest over Leptospermum"
+ },
+ "WNR": {
+  "name": "(WNR) Eucalyptus nitida forest over rainforest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#98cbcb",
+  "outline": "#686868",
+  "label": "(WNR) Eucalyptus nitida forest over rainforest"
+ },
+ "WNU": {
+  "name": "(WNU) Eucalyptus nitida wet forest (undifferentiated)",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#98cbcb",
+  "outline": "#ece9d8",
+  "label": "(WNU) Eucalyptus nitida wet forest (undifferentiated)"
+ },
+ "WOB": {
+  "name": "(WOB) Eucalyptus obliqua forest with broad-leaf shrubs",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#00cbcb",
+  "outline": "#686868",
+  "label": "(WOB) Eucalyptus obliqua forest with broad-leaf shrubs"
+ },
+ "WOL": {
+  "name": "(WOL) Eucalyptus obliqua forest over Leptospermum",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#98cbcb",
+  "outline": "#ece9d8",
+  "label": "(WOL) Eucalyptus obliqua forest over Leptospermum"
+ },
+ "WOR": {
+  "name": "(WOR) Eucalyptus obliqua forest over rainforest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#98cbcb",
+  "outline": "#ece9d8",
+  "label": "(WOR) Eucalyptus obliqua forest over rainforest"
+ },
+ "WOU": {
+  "name": "(WOU) Eucalyptus obliqua wet forest (undifferentiated)",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#00cbcb",
+  "outline": "#ece9d8",
+  "label": "(WOU) Eucalyptus obliqua wet forest (undifferentiated)"
+ },
+ "WRE": {
+  "name": "(WRE) Eucalyptus regnans forest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#00cbcb",
+  "outline": "#ece9d8",
+  "label": "(WRE) Eucalyptus regnans forest"
+ },
+ "WSU": {
+  "name": "(WSU) Eucalyptus subcrenulata forest and woodland",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#00cbcb",
+  "outline": "#ece9d8",
+  "label": "(WSU) Eucalyptus subcrenulata forest and woodland"
+ },
+ "WVI": {
+  "name": "(WVI) Eucalyptus viminalis wet forest",
+  "group": "Wet eucalypt forest and woodland",
+  "color": "#00cbcb",
+  "outline": "#ece9d8",
+  "label": "(WVI) Eucalyptus viminalis wet forest"
+ }
+}

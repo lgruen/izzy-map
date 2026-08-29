@@ -1,0 +1,629 @@
+{
+ "baseUrl": "https://nre.tas.gov.au/Documents/",
+ "index": {
+  "AAP": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 6
+  },
+  "AHF": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 8
+  },
+  "AHL": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 10
+  },
+  "AHS": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 12
+  },
+  "ARS": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 14
+  },
+  "ASF": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 16
+  },
+  "ASP": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 18
+  },
+  "ASS": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 20
+  },
+  "AUS": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 22
+  },
+  "AWU": {
+   "file": "f2f_saltmarsh.pdf",
+   "page": 23
+  },
+  "DAC": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 11
+  },
+  "DAD": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 13
+  },
+  "DAM": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 17
+  },
+  "DAS": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 15
+  },
+  "DAZ": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 19
+  },
+  "DBA": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 24
+  },
+  "DCO": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 25
+  },
+  "DCR": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 27
+  },
+  "DDE": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 31
+  },
+  "DDP": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 29
+  },
+  "DFP": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 41
+  },
+  "DGL": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 33
+  },
+  "DGW": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 35
+  },
+  "DKW": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 78
+  },
+  "DMO": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 37
+  },
+  "DMW": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 80
+  },
+  "DNI": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 39
+  },
+  "DOB": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 43
+  },
+  "DOV": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 45
+  },
+  "DOW": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 48
+  },
+  "DPD": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 52
+  },
+  "DPE": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 54
+  },
+  "DPO": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 50
+  },
+  "DPU": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 56
+  },
+  "DRI": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 58
+  },
+  "DRO": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 60
+  },
+  "DSC": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 22
+  },
+  "DSG": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 64
+  },
+  "DSO": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 62
+  },
+  "DTD": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 66
+  },
+  "DTG": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 68
+  },
+  "DTO": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 70
+  },
+  "DVC": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 76
+  },
+  "DVF": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 72
+  },
+  "DVG": {
+   "file": "f2f_dry_eucalypt.pdf",
+   "page": 74
+  },
+  "FAC": {
+   "file": "f2f_modified_land.pdf",
+   "page": 8
+  },
+  "FAL": {
+   "file": "f2f_modified_land.pdf",
+   "page": 6
+  },
+  "FMG": {
+   "file": "f2f_modified_land.pdf",
+   "page": 12
+  },
+  "FPE": {
+   "file": "f2f_modified_land.pdf",
+   "page": 13
+  },
+  "FPF": {
+   "file": "f2f_modified_land.pdf",
+   "page": 18
+  },
+  "FPH": {
+   "file": "f2f_modified_land.pdf",
+   "page": 14
+  },
+  "FPS": {
+   "file": "f2f_modified_land.pdf",
+   "page": 16
+  },
+  "FPU": {
+   "file": "f2f_modified_land.pdf",
+   "page": 22
+  },
+  "FRG": {
+   "file": "f2f_modified_land.pdf",
+   "page": 19
+  },
+  "FSM": {
+   "file": "f2f_modified_land.pdf",
+   "page": 21
+  },
+  "FUM": {
+   "file": "f2f_modified_land.pdf",
+   "page": 10
+  },
+  "FUR": {
+   "file": "f2f_modified_land.pdf",
+   "page": 24
+  },
+  "FWU": {
+   "file": "f2f_modified_land.pdf",
+   "page": 25
+  },
+  "GCL": {
+   "file": "f2f_native_grassland.pdf",
+   "page": 10
+  },
+  "GHC": {
+   "file": "f2f_native_grassland.pdf",
+   "page": 2
+  },
+  "GPH": {
+   "file": "f2f_native_grassland.pdf",
+   "page": 8
+  },
+  "GPL": {
+   "file": "f2f_native_grassland.pdf",
+   "page": 13
+  },
+  "GRP": {
+   "file": "f2f_native_grassland.pdf",
+   "page": 17
+  },
+  "GSL": {
+   "file": "f2f_native_grassland.pdf",
+   "page": 12
+  },
+  "GTL": {
+   "file": "f2f_native_grassland.pdf",
+   "page": 15
+  },
+  "HCH": {
+   "file": "f2f_highland_treeless.pdf",
+   "page": 4
+  },
+  "HCM": {
+   "file": "f2f_highland_treeless.pdf",
+   "page": 6
+  },
+  "HHE": {
+   "file": "f2f_highland_treeless.pdf",
+   "page": 8
+  },
+  "HHW": {
+   "file": "f2f_highland_treeless.pdf",
+   "page": 13
+  },
+  "HSE": {
+   "file": "f2f_highland_treeless.pdf",
+   "page": 10
+  },
+  "HSW": {
+   "file": "f2f_highland_treeless.pdf",
+   "page": 15
+  },
+  "MBE": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 11
+  },
+  "MBP": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 15
+  },
+  "MBR": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 19
+  },
+  "MBS": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 9
+  },
+  "MBU": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 8
+  },
+  "MBW": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 23
+  },
+  "MDS": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 21
+  },
+  "MGH": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 13
+  },
+  "MRR": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 17
+  },
+  "MSW": {
+   "file": "f2f_moorland_sedgeland.pdf",
+   "page": 25
+  },
+  "NAD": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 6
+  },
+  "NAF": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 10
+  },
+  "NAL": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 12
+  },
+  "NAR": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 8
+  },
+  "NAV": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 14
+  },
+  "NBA": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 2
+  },
+  "NBS": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 16
+  },
+  "NCR": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 20
+  },
+  "NLA": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 26
+  },
+  "NLE": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 22
+  },
+  "NLM": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 24
+  },
+  "NLN": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 30
+  },
+  "NME": {
+   "file": "f2f_non-eucalypt.pdf",
+   "page": 28
+  },
+  "OAQ": {
+   "file": "f2f_other_natural.pdf",
+   "page": 6
+  },
+  "ORO": {
+   "file": "f2f_other_natural.pdf",
+   "page": 3
+  },
+  "OSM": {
+   "file": "f2f_other_natural.pdf",
+   "page": 5
+  },
+  "RCO": {
+   "file": "f2f_rainforest.pdf",
+   "page": 22
+  },
+  "RFE": {
+   "file": "f2f_rainforest.pdf",
+   "page": 41
+  },
+  "RFS": {
+   "file": "f2f_rainforest.pdf",
+   "page": 38
+  },
+  "RHP": {
+   "file": "f2f_rainforest.pdf",
+   "page": 28
+  },
+  "RKF": {
+   "file": "f2f_rainforest.pdf",
+   "page": 16
+  },
+  "RKP": {
+   "file": "f2f_rainforest.pdf",
+   "page": 18
+  },
+  "RKS": {
+   "file": "f2f_rainforest.pdf",
+   "page": 20
+  },
+  "RKX": {
+   "file": "f2f_rainforest.pdf",
+   "page": 26
+  },
+  "RML": {
+   "file": "f2f_rainforest.pdf",
+   "page": 33
+  },
+  "RMS": {
+   "file": "f2f_rainforest.pdf",
+   "page": 35
+  },
+  "RMT": {
+   "file": "f2f_rainforest.pdf",
+   "page": 30
+  },
+  "RMU": {
+   "file": "f2f_rainforest.pdf",
+   "page": 40
+  },
+  "RPF": {
+   "file": "f2f_rainforest.pdf",
+   "page": 9
+  },
+  "RPP": {
+   "file": "f2f_rainforest.pdf",
+   "page": 14
+  },
+  "RPW": {
+   "file": "f2f_rainforest.pdf",
+   "page": 11
+  },
+  "RSH": {
+   "file": "f2f_rainforest.pdf",
+   "page": 24
+  },
+  "SAL": {
+   "file": "f2f_scrub.pdf",
+   "page": 12
+  },
+  "SBM": {
+   "file": "f2f_scrub.pdf",
+   "page": 14
+  },
+  "SBR": {
+   "file": "f2f_scrub.pdf",
+   "page": 16
+  },
+  "SCA": {
+   "file": "f2f_scrub.pdf",
+   "page": 23
+  },
+  "SCH": {
+   "file": "f2f_scrub.pdf",
+   "page": 18
+  },
+  "SCL": {
+   "file": "f2f_scrub.pdf",
+   "page": 30
+  },
+  "SED": {
+   "file": "f2f_scrub.pdf",
+   "page": 28
+  },
+  "SHS": {
+   "file": "f2f_scrub.pdf",
+   "page": 55
+  },
+  "SHW": {
+   "file": "f2f_scrub.pdf",
+   "page": 63
+  },
+  "SKA": {
+   "file": "f2f_scrub.pdf",
+   "page": 32
+  },
+  "SLG": {
+   "file": "f2f_scrub.pdf",
+   "page": 34
+  },
+  "SLL": {
+   "file": "f2f_scrub.pdf",
+   "page": 37
+  },
+  "SLS": {
+   "file": "f2f_scrub.pdf",
+   "page": 39
+  },
+  "SMM": {
+   "file": "f2f_scrub.pdf",
+   "page": 45
+  },
+  "SMP": {
+   "file": "f2f_scrub.pdf",
+   "page": 43
+  },
+  "SMR": {
+   "file": "f2f_scrub.pdf",
+   "page": 47
+  },
+  "SRE": {
+   "file": "f2f_scrub.pdf",
+   "page": 25
+  },
+  "SRF": {
+   "file": "f2f_scrub.pdf",
+   "page": 41
+  },
+  "SRH": {
+   "file": "f2f_scrub.pdf",
+   "page": 49
+  },
+  "SSC": {
+   "file": "f2f_scrub.pdf",
+   "page": 21
+  },
+  "SSK": {
+   "file": "f2f_scrub.pdf",
+   "page": 51
+  },
+  "SSW": {
+   "file": "f2f_scrub.pdf",
+   "page": 59
+  },
+  "SSZ": {
+   "file": "f2f_scrub.pdf",
+   "page": 53
+  },
+  "SWR": {
+   "file": "f2f_scrub.pdf",
+   "page": 57
+  },
+  "SWW": {
+   "file": "f2f_scrub.pdf",
+   "page": 61
+  },
+  "WBR": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 6
+  },
+  "WDA": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 8
+  },
+  "WDB": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 14
+  },
+  "WDL": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 10
+  },
+  "WDR": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 12
+  },
+  "WDU": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 16
+  },
+  "WGK": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 17
+  },
+  "WGL": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 19
+  },
+  "WNL": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 21
+  },
+  "WNR": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 23
+  },
+  "WNU": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 25
+  },
+  "WOB": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 29
+  },
+  "WOL": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 26
+  },
+  "WOR": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 27
+  },
+  "WOU": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 31
+  },
+  "WRE": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 32
+  },
+  "WSU": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 34
+  },
+  "WVI": {
+   "file": "f2f_wet_eucalypt.pdf",
+   "page": 36
+  }
+ }
+}

@@ -1,0 +1,13 @@
+{
+  "_comment": "Offline topo packs. bbox = [west, south, east, north] (EPSG:4326). Default is ONE statewide pack to z15 (~3 GB; decision 2026-08-29 after the target phone probe showed a 41 GB quota — no region-manager complexity needed). The TASVEG overlay is vector and stays sharp at all zooms; only the topo raster overzooms past its maxzoom. 'prune: true' skips descendants of ocean/blank tiles (<1 KB) from z13 down — cuts ~half the requests. Add bbox entries here only if z16 fine detail for a favourite area is ever wanted.",
+  "packs": [
+    {
+      "id": "tas",
+      "name": "Tasmania (statewide topo)",
+      "bbox": [143.7, -43.8, 148.6, -39.4],
+      "minzoom": 0,
+      "maxzoom": 15,
+      "prune": true
+    }
+  ]
+}
