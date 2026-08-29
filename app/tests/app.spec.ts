@@ -67,11 +67,9 @@ test("legend lists all 156 communities in 11 groups", async ({ page }) => {
 
 test("veg layer toggle hides and restores the overlay", async ({ page }) => {
   await page.locator("#btn-veg").click();
-  await page.waitForTimeout(400);
-  expect(await centerFeature(page)).toBeNull();
+  await expect.poll(() => centerFeature(page), { timeout: 15_000 }).toBeNull();
   await page.locator("#btn-veg").click();
-  await page.waitForTimeout(400);
-  expect(await centerFeature(page)).not.toBeNull();
+  await expect.poll(() => centerFeature(page), { timeout: 15_000 }).not.toBeNull();
 });
 
 test("offline: OPFS archive keeps serving vegetation tiles", async ({ page, browserName }) => {

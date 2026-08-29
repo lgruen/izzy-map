@@ -55,20 +55,21 @@ export function wireDetails(map: Map): void {
   }
 }
 
-/** Open the F2F chapter for a community, at its section page.
- * Offline: from the OPFS copy (downloaded during setup). Online fallback:
- * straight from nre.tas.gov.au (their server, their content). */
+/** Open the F2F chapter for a community at its section page, in the in-app
+ * pdf.js viewer. Offline: from the OPFS copy (downloaded during setup).
+ * Online fallback: via the CORS proxy straight off nre.tas.gov.au. */
 async function openDescription(code: string): Promise<void> {
   const entry = F2F.index[code];
   if (!entry) return;
+  const { openPdfViewer } = await import("./viewer");
   const local = await opfsFile("f2f/" + entry.file).catch(() => null);
-  const pageFrag = `#page=${entry.page + 1}`;
+  const proxy = (import.meta.env.VITE_F2F_PROXY as string | undefined) ?? "";
+  const title = COMMUNITIES[code]?.label ?? code;
   if (local) {
-    const url = URL.createObjectURL(local);
-    window.open(url + pageFrag, "_blank");
-  } else if (navigator.onLine) {
-    window.open(F2F.baseUrl + entry.file + pageFrag, "_blank");
+    await openPdfViewer(local, entry.page, title);
+  } else if (navigator.onLine && proxy) {
+    await openPdfViewer(`${proxy}/${entry.file}`, entry.page, title);
   } else {
-    alert("Description PDFs not downloaded yet — open Settings ⬇ while online.");
+    alert("Descriptions aren't downloaded yet — open the offline maps panel (⬇) while online.");
   }
 }
