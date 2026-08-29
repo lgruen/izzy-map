@@ -1,8 +1,9 @@
-name: Deploy to GitHub Pages
+name: Test & Deploy
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -15,37 +16,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install
+        working-directory: app
+        run: npm ci
+      - name: Typecheck
+        working-directory: app
+        run: npx tsc --noEmit
+      - name: Install Playwright browsers
+        working-directory: app
+        run: npx playwright install --with-deps webkit chromium
+      - name: Playwright tests
+        working-directory: app
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: app/playwright-report
+          retention-days: 7
+
   deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: test
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      # The app is built into _site/ once it exists; the probe page is
-      # always deployed under /probe/.
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Build app
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
       - name: Assemble site
         run: |
           mkdir -p _site
+          cp -r app/dist/* _site/
           cp -r probe _site/probe
-          if [ -f app/package.json ]; then
-            cd app
-            npm ci
-            npm run build
-            cp -r dist/* ../_site/
-            cd ..
-          else
-            printf '<!DOCTYPE html><meta charset="utf-8"><title>IzzyMap</title><p>IzzyMap app coming soon. <a href="probe/">Device probe</a>.' > _site/index.html
-          fi
-
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
-
       - id: deployment
         uses: actions/deploy-pages@v4

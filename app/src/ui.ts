@@ -36,7 +36,7 @@ export function closePanel(): void {
 }
 function openPanel(html: string): HTMLElement {
   const el = panel();
-  el.innerHTML = `<div class="panel-inner"><button class="panel-close" aria-label="Close">×</button>${html}</div>`;
+  el.innerHTML = `<div class="panel-inner"><div class="handle"></div><button class="panel-close" aria-label="Close">×</button>${html}</div>`;
   el.hidden = false;
   el.querySelector<HTMLButtonElement>(".panel-close")!.onclick = closePanel;
   return el;
@@ -47,10 +47,10 @@ function openPanel(html: string): HTMLElement {
 const chapters = [...new Set(Object.values(F2F.index).map((e) => e.file))];
 
 export async function openDownloads(): Promise<void> {
-  const el = openPanel(`<h2>Offline data</h2><div id="dl-list">Checking…</div>
+  const el = openPanel(`<h2>Offline maps</h2><div id="dl-list">Checking…</div>
     <p id="storage-line" class="muted"></p>
-    <p class="muted">Download on Wi-Fi. Everything keeps working in airplane
-    mode afterwards.</p>`);
+    <p class="muted">Download on Wi-Fi before heading out. Everything keeps
+    working in airplane mode afterwards.</p>`);
   const list = el.querySelector<HTMLElement>("#dl-list")!;
   const manifest = await fetchManifest();
 
@@ -160,17 +160,17 @@ export function openLegend(): void {
     groups.get(m.group)!.push(code);
   }
   openPanel(
-    `<h2>TASVEG legend</h2>` +
+    `<h2>Legend</h2>` +
       [...groups.entries()]
         .sort()
         .map(
           ([g, codes]) =>
-            `<h3>${g}</h3>` +
+            `<h3 class="leg-h">${g}<span class="leg-count">${codes.length}</span></h3>` +
             codes
               .map(
                 (c) =>
                   `<div class="leg-row"><span class="swatch" style="background:${COMMUNITIES[c].color}"></span>
-                   <span><b>${c}</b> ${COMMUNITIES[c].name}</span></div>`,
+                   <span><b>${c}</b>${COMMUNITIES[c].name.replace(/^\([A-Z]{3}\)\s*/, "")}</span></div>`,
               )
               .join(""),
         )
@@ -182,7 +182,9 @@ export function openLegend(): void {
 
 export function openAbout(): void {
   openPanel(`<h2>IzzyMap</h2>
-    <p>Offline Tasmania vegetation &amp; topographic map.</p>
+    <p class="about-lede">Which plant community am I standing in?</p>
+    <p>Offline vegetation and topographic maps of Tasmania, made for one
+    hiker's pocket.</p>
     <p>Topographic Basemap from theLIST © State of Tasmania<br>
     TASVEG 5.0 from theLIST © State of Tasmania<br>
     <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a></p>

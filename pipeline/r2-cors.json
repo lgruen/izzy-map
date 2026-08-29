@@ -1,0 +1,9 @@
+[
+  {
+    "AllowedOrigins": ["https://lgruen.github.io", "http://localhost:5199", "http://localhost:5200", "http://localhost:4173"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["range", "if-match"],
+    "ExposeHeaders": ["content-length", "content-range", "etag"],
+    "MaxAgeSeconds": 86400
+  }
+]

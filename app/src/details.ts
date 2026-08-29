@@ -31,20 +31,23 @@ export function wireDetails(map: Map): void {
       ["Notable tree", p.NOTABLE_TD],
       ["Weed type", p.WEED_TYP_D],
     ];
+    const rawName = p.VEGCODE_D ?? meta?.name ?? "Unknown community";
+    const name = rawName.replace(/^\([A-Z]{3}\)\s*/, ""); // chip already shows the code
     sheet.innerHTML = `
+      <div class="handle"></div>
       <button class="sheet-close" aria-label="Close">×</button>
       <div class="sheet-head">
         <span class="swatch" style="background:${meta?.color ?? "#c8c8c8"}"></span>
         <div>
-          <div class="sheet-code">${esc(code)}</div>
-          <div class="sheet-name">${esc(p.VEGCODE_D ?? meta?.name ?? "Unknown community")}</div>
+          <span class="sheet-code">${esc(code)}</span>
+          <div class="sheet-name">${esc(name)}</div>
         </div>
       </div>
       ${rows
         .filter(([, v]) => v && v.trim())
         .map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(v!)}</span></div>`)
         .join("")}
-      <button class="sheet-desc" data-code="${esc(code)}">Full description
+      <button class="sheet-desc" data-code="${esc(code)}">Read the full description
         <small>From Forest to Fjaeldmark</small></button>`;
     sheet.hidden = false;
     sheet.querySelector<HTMLButtonElement>(".sheet-close")!.onclick = () => (sheet.hidden = true);
