@@ -105,8 +105,22 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   if z15 raster ever feels soft: statewide 10 m contours as a small vector
   overlay (~100–300 MB) over a z14 raster base (~1 GB), keeping contours
   sharp at all zooms. Or extend raster to z16 (+~5 GB, resumable fetch).
-- **Geology overlay**: partner interest confirmed; follow the "Add an
-  overlay map" workflow with the MRT geology open data when asked.
+- **Geology overlay**: partner interest confirmed; dataset verified
+  2026-08-30. Use MRT's own ArcGIS server (NOT LISTdata — geology isn't
+  there; NOT LIST's Public/GeologicalAndSoils — grey renderer, no colours):
+  `https://data.stategrowth.tas.gov.au/ags/rest/services/MRT/Geology_Tasmania/MapServer/16`
+  = **1:500,000 GEOLOGY UNITS, statewide, 7,693 polygons, 107 legend units,
+  CC BY 3.0 AU**. Official colour is the per-polygon `RGBHex` attribute
+  (#RRGGBBAA — no QML parsing needed); render flat fills, ignore the
+  `pattern` hatch codes. `description` = plain-English lithology sentence
+  (popup headline), `strat_name` = ">"-hierarchy (legend bucketing),
+  max_age/min_age = period. Acquire via REST query paging (f=geojson,
+  outSR=4326, 2000/page ≈ 4 pages, ~26 MB raw → a few MB of PMTiles) — the
+  mrt.tas.gov.au download page is Cloudflare-blocked to scripts. 250K (165
+  units) and 25K (1,591 units, ~70% coverage) rejected as too complex for a
+  non-geologist. `ga_strat_no` links to GA's ASUD pages for ~1/3 of units;
+  richer per-unit prose would be ~107 hand-written blurbs. UI plan: leaf
+  button becomes Vegetation / Geology / Neither switcher.
 
 ## Deployed endpoints (2026-08-29)
 
