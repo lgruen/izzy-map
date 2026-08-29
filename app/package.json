@@ -1,0 +1,24 @@
+{
+  "name": "izzymap",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "maplibre-gl": "^5.9.1",
+    "pmtiles": "^4.3.0",
+    "proj4": "^2.19.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/proj4": "^2.19.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "vite-plugin-pwa": "^1.0.3"
+  }
+}

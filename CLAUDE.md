@@ -73,6 +73,18 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   pipeline; GPS (WGS84) vs GDA94 differ by ~1.8 m — irrelevant at this
   scale.
 
+## Future ideas (discussed, not planned)
+
+- **Vector topo**: the raster topo (~3.4 GB z15) could in principle be
+  rebuilt as vector tiles (~500 MB) from the individual LIST open datasets
+  (contours, transport, hydro, …), but that means recreating TASMAP's entire
+  cartography in MapLibre style JSON — weeks of design work. Cheaper hybrid
+  if z15 raster ever feels soft: statewide 10 m contours as a small vector
+  overlay (~100–300 MB) over a z14 raster base (~1 GB), keeping contours
+  sharp at all zooms. Or extend raster to z16 (+~5 GB, resumable fetch).
+- **Geology overlay**: partner interest confirmed; add via layers.json +
+  pipeline run on the MRT geology open data when asked.
+
 ## Status log
 
 - 2026-08-29: repo created; plan approved; Phase 0 (setup) in progress.

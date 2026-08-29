@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>IzzyMap</title>
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#2d5f3f" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="toolbar">
+      <button id="btn-veg" title="Toggle vegetation layer">🌿</button>
+      <button id="btn-legend" title="Legend">🎨</button>
+      <button id="btn-downloads" title="Offline data">⬇️</button>
+      <button id="btn-about" title="About">ℹ️</button>
+    </div>
+    <button id="nudge" hidden>Tap to download offline maps for hiking ⬇</button>
+    <div id="coords" title="Tap to switch coordinates"></div>
+    <div id="sheet" hidden></div>
+    <div id="panel" hidden></div>
+    <script type="module" src="src/main.ts"></script>
+  </body>
+</html>
