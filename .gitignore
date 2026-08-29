@@ -4,6 +4,8 @@ data/
 *.mbtiles
 *.gpkg
 *.fgb
+# …except the small committed test fixture (CC BY data, ~3.5 MB)
+!app/tests/fixtures/*.pmtiles
 
 # From Forest to Fjaeldmark content — NOT redistributable (see docs/LICENSING.md)
 # (only the derived f2f_index.json of page numbers may be committed)
