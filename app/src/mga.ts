@@ -10,7 +10,8 @@ proj4.defs(
 );
 
 export function wireCoordReadout(map: Map): void {
-  const el = document.getElementById("coords")!;
+  const el = document.getElementById("coords-text")!;
+  const btn = document.getElementById("coords")!;
   let showMga = true;
   const update = () => {
     const c = map.getCenter();
@@ -22,7 +23,7 @@ export function wireCoordReadout(map: Map): void {
     }
   };
   map.on("move", update);
-  el.onclick = () => {
+  btn.onclick = () => {
     showMga = !showMga;
     update();
   };

@@ -12,7 +12,13 @@ function devData(): Plugin {
     configureServer(server) {
       server.middlewares.use("/dev-data", (req, res, next) => {
         const file = resolve(dataDir, (req.url ?? "/").replace(/^\/+/, "").split("?")[0]);
-        if (!file.startsWith(dataDir) || !existsSync(file)) return next();
+        if (!file.startsWith(dataDir)) return next();
+        if (!existsSync(file)) {
+          // explicit 404: the SPA fallback would otherwise serve index.html
+          // as a fake archive that gets "successfully" installed into OPFS
+          res.writeHead(404).end("not found");
+          return;
+        }
         const { size } = statSync(file);
         const range = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? "");
         res.setHeader("Accept-Ranges", "bytes");
@@ -45,7 +51,11 @@ export default defineConfig({
       // Precache the app shell + glyphs only. Map data (PMTiles archives,
       // F2F PDFs) lives in OPFS and must NEVER go through the SW cache.
       workbox: {
-        globPatterns: ["**/*.{js,css,html,png,svg,pbf,woff2}"],
+        // .mjs matters: the pdf.js worker is emitted as an .mjs asset — if it
+        // isn't precached, community descriptions silently require network.
+        globPatterns: ["**/*.{js,mjs,css,html,png,svg,pbf,woff2,webmanifest}"],
+        // workbox's 2 MiB default silently drops the pdf.js worker/chunks
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",
         // tile/archive requests bypass the SW entirely
         runtimeCaching: [],

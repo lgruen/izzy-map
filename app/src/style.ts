@@ -37,6 +37,10 @@ export function buildStyle(vegVisible: boolean, vegOpacity: number): StyleSpecif
         type: "vector",
         url: "pmtiles://tasveg",
       },
+      selected: {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      },
     },
     layers: [
       { id: "bg", type: "background", paint: { "background-color": "#eef3f0" } },
@@ -59,11 +63,20 @@ export function buildStyle(vegVisible: boolean, vegOpacity: number): StyleSpecif
         paint: { "line-color": "#c8c800", "line-width": 1 },
       },
       {
+        id: "selected-outline",
+        type: "line",
+        source: "selected",
+        paint: {
+          "line-color": "#ff3b30",
+          "line-width": 3,
+        },
+      },
+      {
         id: "tasveg-label",
         type: "symbol",
         source: "tasveg",
         "source-layer": "tasveg",
-        minzoom: 12,
+        minzoom: 13,
         layout: {
           visibility: vegVisible ? "visible" : "none",
           "text-field": ["get", "VEGCODE"],

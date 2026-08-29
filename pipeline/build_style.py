@@ -88,7 +88,7 @@ def main():
     colors.update(OVERRIDES)
 
     communities = {}
-    with open(WORK / "communities.csv", newline="", encoding="cp1252") as f:
+    with open(WORK / "communities.csv", newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             code = row["VEGCODE"].strip()
             if not code:
@@ -98,7 +98,12 @@ def main():
                 "group": row["VEG_GROUP"].strip(),
             }
 
-    missing_color = sorted(set(communities) - set(colors))
+    # a code counts as missing if absent from the QML OR parsed without a
+    # fill (guards against QML format drift silently greying everything)
+    missing_color = sorted(
+        c for c in communities
+        if c not in colors or not colors[c].get("color")
+    )
     unused_color = sorted(set(colors) - set(communities))
     for code, meta in communities.items():
         c = colors.get(code)

@@ -23,11 +23,18 @@ badge/link. The app shows this on the About screen and map attribution.
 - **From Forest to Fjaeldmark** (Ed. 2) chapter PDFs and any text extracted
   from them. Copyright page verified: "no part may be reproduced … without
   the prior written permission of the publisher and creators."
-- Handling: the app downloads the PDFs **directly from nre.tas.gov.au to the
-  phone** (ordinary private use). This repo may only contain
-  `f2f_index.json` — a mapping of VEGCODE → chapter URL + page number, which
-  is facts, not content. Do not commit PDFs, extracted text, or host either
-  on Pages/R2. `.gitignore` blocks `*.pdf` and `f2f_pdfs/` as a guard.
+- Handling: the phone fetches the PDFs from nre.tas.gov.au for ordinary
+  private use. Because that server sends no CORS headers, the request passes
+  through a **transparent, non-caching relay** (Cloudflare Worker
+  `pipeline/f2f-proxy/`): it forwards GET/HEAD for exactly the 11 known
+  chapter files, only for this app's origins (403 otherwise), with
+  `cache: "no-store"` upstream and `Cache-Control: no-store` downstream so
+  nothing is ever stored at the edge. The relay must stay that way — never
+  add caching, widen the allowlist, or open the Origin check.
+- This repo may only contain `f2f_index.json` — a mapping of VEGCODE →
+  chapter file + page number, which is facts, not content. Do not commit
+  PDFs, extracted text, or host either on Pages/R2. `.gitignore` blocks
+  `*.pdf` and `f2f_pdfs/` as a guard.
 
 ## 3. CC BY-NC-ND — do not use at all
 

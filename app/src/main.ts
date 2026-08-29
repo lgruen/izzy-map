@@ -2,7 +2,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./app.css";
 import { HOME } from "./config";
-import { registerProtocols, refreshArchives } from "./protocol";
+import { bindMap, registerProtocols, refreshArchives } from "./protocol";
 import { buildStyle } from "./style";
 import { wireDetails } from "./details";
 import { wireCoordReadout } from "./mga";
@@ -14,8 +14,11 @@ async function boot(): Promise<void> {
   registerProtocols();
   const status = await refreshArchives();
 
-  const vegOpacity = Number(localStorage.getItem("vegOpacity") ?? "0.5");
-  let vegVisible = localStorage.getItem("vegVisible") !== "0";
+  // Vegetation layer cycles: full (50%) -> light (25%) -> off
+  const VEG_STATES = [0.5, 0.25, 0] as const;
+  let vegState = Number(localStorage.getItem("vegState") ?? "0") % VEG_STATES.length;
+  const vegOpacity = VEG_STATES[vegState] || 0.5;
+  const vegVisible = VEG_STATES[vegState] > 0;
 
   const map = new maplibregl.Map({
     container: "map",
@@ -38,36 +41,80 @@ async function boot(): Promise<void> {
   map.addControl(geolocate, "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }));
 
-  // Open straight at the GPS position (core requirement).
-  map.on("load", () => geolocate.trigger());
+  bindMap(map);
+
+  // Open straight at the GPS position (core requirement). trigger() is a
+  // silent no-op until the control's async permission query resolves, so
+  // retry until it reports success.
+  map.on("load", () => {
+    const tryTrigger = (n: number) => {
+      if (!geolocate.trigger() && n < 20) setTimeout(() => tryTrigger(n + 1), 250);
+    };
+    tryTrigger(0);
+  });
 
   wireDetails(map);
   wireCoordReadout(map);
   window.__map = map;
 
-  // Keep the screen awake while navigating (iOS 18.4+ home-screen apps).
-  const requestWakeLock = async () => {
+  // The compact attribution starts expanded and covers the scale/coords;
+  // collapse it once the map settles (CC BY text stays one tap away).
+  map.once("idle", () => {
+    document
+      .querySelector(".maplibregl-ctrl-attrib.maplibregl-compact-show")
+      ?.classList.remove("maplibregl-compact-show");
+  });
+
+  // Keep the screen awake only while actively following GPS (iOS 18.4+
+  // home-screen apps). Unconditional wake lock would flatten the battery on
+  // an all-day hike; the geolocate control's tracking state is the natural
+  // scope.
+  let wakeLock: WakeLockSentinel | null = null;
+  let tracking = false;
+  const syncWakeLock = async () => {
     try {
-      await navigator.wakeLock?.request("screen");
+      if (tracking && document.visibilityState === "visible" && !wakeLock) {
+        wakeLock = await navigator.wakeLock?.request("screen") ?? null;
+        wakeLock?.addEventListener("release", () => (wakeLock = null));
+      } else if (!tracking && wakeLock) {
+        await wakeLock.release();
+        wakeLock = null;
+      }
     } catch {
       /* not critical */
     }
   };
-  void requestWakeLock();
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") void requestWakeLock();
+  geolocate.on("trackuserlocationstart", () => {
+    tracking = true;
+    void syncWakeLock();
   });
+  geolocate.on("trackuserlocationend", () => {
+    tracking = false;
+    void syncWakeLock();
+  });
+  document.addEventListener("visibilitychange", () => void syncWakeLock());
 
   // Toolbar buttons
   const byId = (id: string) => document.getElementById(id)!;
-  byId("btn-veg").onclick = () => {
-    vegVisible = !vegVisible;
-    localStorage.setItem("vegVisible", vegVisible ? "1" : "0");
+  const applyVegState = () => {
+    const opacity = VEG_STATES[vegState];
+    const visible = opacity > 0;
     for (const l of ["tasveg-fill", "tasveg-outline", "tasveg-label"])
-      map.setLayoutProperty(l, "visibility", vegVisible ? "visible" : "none");
-    byId("btn-veg").classList.toggle("off", !vegVisible);
+      map.setLayoutProperty(l, "visibility", visible ? "visible" : "none");
+    if (visible) map.setPaintProperty("tasveg-fill", "fill-opacity", opacity);
+    byId("btn-veg").classList.toggle("off", !visible);
+    byId("btn-veg").classList.toggle("light", opacity === 0.25);
+    byId("btn-veg").setAttribute("aria-label",
+      opacity === 0.5 ? "Vegetation: full — tap for light" :
+      opacity === 0.25 ? "Vegetation: light — tap to hide" :
+      "Vegetation: hidden — tap to show");
   };
-  byId("btn-veg").classList.toggle("off", !vegVisible);
+  byId("btn-veg").onclick = () => {
+    vegState = (vegState + 1) % VEG_STATES.length;
+    localStorage.setItem("vegState", String(vegState));
+    applyVegState();
+  };
+  map.on("load", applyVegState);
   byId("btn-legend").onclick = () => void openLegend();
   byId("btn-downloads").onclick = () => void openDownloads();
   byId("btn-about").onclick = () => void openAbout();
@@ -75,10 +122,15 @@ async function boot(): Promise<void> {
     if (e.target === byId("panel")) closePanel();
   };
 
-  // First-run nudge: no offline data yet and we're online -> point at ⬇.
-  if (!status.tasvegLocal && !status.topoLocal && navigator.onLine) {
+  // First-run state: no offline data downloaded yet. Shown regardless of
+  // navigator.onLine — a fresh offline launch would otherwise be a blank,
+  // unexplained map (and onLine lies on iOS anyway).
+  if (!status.tasvegLocal && !status.topoLocal) {
     const nudge = byId("nudge");
     nudge.hidden = false;
+    byId("nudge-text").textContent = navigator.onLine
+      ? "Download maps for offline use"
+      : "No maps on this phone yet — connect to Wi-Fi, then tap here";
     nudge.onclick = () => {
       nudge.hidden = true;
       void openDownloads();

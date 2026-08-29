@@ -18,7 +18,7 @@ The LIST service is CC BY 3.0 AU with exportTilesAllowed=true — bulk offline
 caching is explicitly permitted. Attribution embedded in each pack.
 NOTE: ArcGIS tile path is /tile/{z}/{y}/{x} — row (y) BEFORE column (x).
 
-Output: ../data/topo_<id>.pmtiles + ../data/packs.json (manifest for the app).
+Output: ../data/topo_<id>.pmtiles (data-manifest.json is produced by upload_r2.sh).
 
 Stdlib only (urllib + sqlite3 + concurrent.futures).
 """
@@ -56,9 +56,15 @@ def tiles_at(bbox, z):
     return [(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
 
 
-# Tiles smaller than this are blank ocean (measured: pure-ocean PNGs are
-# 179–973 B at z14+; the smallest genuine land-edge tiles are >1.3 KB).
-# With prune on, descendants of such tiles are skipped from z13 down.
+# Tiles below this are treated as blank ocean and their descendants skipped
+# (from z13 down). Empirically validated 2026-08-30 across the full statewide
+# fetch: zero pruned tiles had >=1000 B, and every checked offshore islet
+# (Maatsuyker, Tasman Is, Albatross Is, ...) stays comfortably above it. BUT
+# the distributions overlap: ocean tiles with labels reach ~2.2 KB (false
+# keeps, harmless) and the smallest land-edge tiles sit ~1.3 KB — only ~300 B
+# of margin. Re-validate before raising maxzoom past 15 or reusing for other
+# services. NOTE: 404s are cached as permanently-absent marker files in
+# cache/topo — clear those if the LIST service had an outage during a run.
 PRUNE_THRESHOLD = 1000
 PRUNE_FROM_Z = 13
 
@@ -180,23 +186,12 @@ def main():
     want_all = "--all" in args or not [a for a in args if not a.startswith("--")]
     ids = [a for a in args if not a.startswith("--")]
 
-    manifest_path = DATA / "packs.json"
-    manifest = {}
-    if manifest_path.exists():
-        manifest = {p["id"]: p for p in json.loads(manifest_path.read_text())["packs"]}
-
     for r in cfg["packs"]:
         if not (want_all or r["id"] in ids):
             continue
-        entry = build_pack(r["id"], r["name"], r["bbox"], r.get("minzoom", 12),
-                           r["maxzoom"], prune=r.get("prune", False),
-                           estimate_only=estimate)
-        if entry:
-            manifest[entry["id"]] = entry
-    if not estimate:
-        manifest_path.write_text(json.dumps(
-            {"packs": sorted(manifest.values(), key=lambda p: p["id"])}, indent=1))
-        print(f"wrote {manifest_path}")
+        build_pack(r["id"], r["name"], r["bbox"], r.get("minzoom", 12),
+                   r["maxzoom"], prune=r.get("prune", False),
+                   estimate_only=estimate)
 
 
 if __name__ == "__main__":

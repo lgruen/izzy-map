@@ -53,16 +53,28 @@ def download(name: str) -> Path:
 
 
 def heading_pages(pdf: Path) -> dict:
-    """Return {code: first page index whose leading lines end with (CODE)}."""
-    found = {}
+    """Return {code: page index of the community's section-start page}.
+
+    A section-start page has a leading line ending with "(CODE)" AND contains
+    the "General description" heading. The containment check matters: chapter
+    intro pages can have wrapped body lines ending with a code (verified
+    false positives: GHC, NBA), so first-match-wins is not safe.
+    """
+    candidates: dict[str, list[int]] = {}
+    has_general: dict[int, bool] = {}
     for i, page in enumerate(PdfReader(pdf).pages):
         text = page.extract_text() or ""
+        has_general[i] = "General description" in text
         for line in text.splitlines()[:8]:
             m = re.search(r"\(([A-Z]{3})\)\s*$", line.strip())
-            # skip table-of-contents pages: heading lines there end with a
-            # page number after the code, so the $ anchor already excludes them
-            if m and m.group(1) not in found:
-                found[m.group(1)] = i
+            # table-of-contents lines end with a page number after the code,
+            # so the $ anchor already excludes them
+            if m:
+                candidates.setdefault(m.group(1), []).append(i)
+    found = {}
+    for code, pages in candidates.items():
+        real = [i for i in pages if has_general[i]]
+        found[code] = (real or pages)[0]
     return found
 
 

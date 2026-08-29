@@ -36,15 +36,16 @@ fi
 
 SECRET=$(openssl rand -hex 24)
 echo "== deploying temporary uploader worker =="
-UPLOAD_URL=$(cd pipeline/r2-uploader && npx wrangler@latest deploy --var "UPLOAD_SECRET:$SECRET" 2>/dev/null \
-  | grep -o 'https://[a-z0-9.-]*workers.dev' | head -1)
-[[ -n "$UPLOAD_URL" ]] || { echo "worker deploy failed"; exit 1; }
-echo "uploader at $UPLOAD_URL"
 cleanup() {
   echo "== deleting uploader worker =="
   (cd pipeline/r2-uploader && npx wrangler@latest delete --force 2>/dev/null) || true
 }
-trap cleanup EXIT
+trap cleanup EXIT   # installed BEFORE the URL check: a deploy that succeeded
+                    # but failed to parse must still be torn down
+UPLOAD_URL=$(cd pipeline/r2-uploader && npx wrangler@latest deploy --var "UPLOAD_SECRET:$SECRET" \
+  | grep -o 'https://[a-z0-9.-]*workers.dev' | head -1)
+[[ -n "$UPLOAD_URL" ]] || { echo "worker deploy failed (URL not found in output)"; exit 1; }
+echo "uploader at $UPLOAD_URL"
 sleep 3  # let the route propagate
 
 api() { # api <action> <key> [extra query] [curl args...]

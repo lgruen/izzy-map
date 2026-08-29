@@ -22,3 +22,6 @@ dist/
 *.log
 test-results/
 playwright-report/
+
+# wrangler local state (account metadata)
+.wrangler/

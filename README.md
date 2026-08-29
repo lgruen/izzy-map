@@ -18,11 +18,11 @@ Government.
   ([PMTiles](https://protomaps.com/docs/pmtiles)), downloaded once (statewide)
   into the browser's OPFS storage.
 - **Topo basemap**: fetched live from LIST tile services when online; offline
-  coverage via hand-curated per-region raster packs downloaded in-app.
-- **Community descriptions**: the app downloads the *From Forest to
-  Fjaeldmark* chapter PDFs directly from nre.tas.gov.au onto the phone (they
-  are not redistributable, so they never pass through this repo or its
-  hosting — see `docs/LICENSING.md`).
+  coverage via a single statewide raster pack (zoom ≤ 15) downloaded in-app.
+- **Community descriptions**: the phone fetches the *From Forest to
+  Fjaeldmark* chapter PDFs from nre.tas.gov.au (via a transparent,
+  non-caching CORS relay — the PDFs are not redistributable and are never
+  committed here or stored on our hosting; see `docs/LICENSING.md`).
 
 See `CLAUDE.md` for the full architecture and maintenance guide.
 

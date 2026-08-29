@@ -9,7 +9,9 @@
     <title>IzzyMap</title>
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="theme-color" content="#2d5f3f" />
+    <meta name="theme-color" content="#2d5f3f" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#143024" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="icons/icon-192.png" />
     <link rel="apple-touch-icon" href="icons/icon-192.png" />
   </head>
   <body>
@@ -44,12 +46,15 @@
       </button>
     </div>
     <button id="nudge" hidden>
-      Download maps for offline use
+      <span id="nudge-text">Download maps for offline use</span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 4v14m0 0-5.5-5.5M12 18l5.5-5.5" />
       </svg>
     </button>
-    <div id="coords" title="Tap to switch coordinates"></div>
+    <button id="coords" aria-label="Switch between MGA and latitude/longitude">
+      <span id="coords-text"></span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 10 4 13l3 3M17 10l3 3-3 3M4 13h16"/></svg>
+    </button>
     <div id="sheet" hidden></div>
     <div id="panel" hidden></div>
     <div id="pdfview" hidden></div>

@@ -4,7 +4,7 @@
 // Works identically from an OPFS File (offline) or a URL (online, via the
 // CORS proxy).
 import * as pdfjs from "pdfjs-dist";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -18,11 +18,13 @@ export async function openPdfViewer(
   pageIndex: number,
   title: string,
 ): Promise<void> {
+  close(); // destroy any previous document + worker before opening anew
   const root = el();
   root.innerHTML = `
     <div class="pdf-bar">
       <span class="pdf-title">${title.replace(/</g, "&lt;")}</span>
       <span class="pdf-pageno"></span>
+      <button class="pdf-zoom" aria-label="Zoom">1×</button>
       <button class="pdf-close" aria-label="Close">×</button>
     </div>
     <div class="pdf-scroll"></div>`;
@@ -32,10 +34,11 @@ export async function openPdfViewer(
   const scroll = root.querySelector<HTMLElement>(".pdf-scroll")!;
   let doc: PDFDocumentProxy;
   try {
-    doc = await (typeof source === "string"
+    const task = typeof source === "string"
       ? pdfjs.getDocument({ url: source })
-      : pdfjs.getDocument({ data: await source.arrayBuffer() })
-    ).promise;
+      : pdfjs.getDocument({ data: await source.arrayBuffer() });
+    currentTask = task;
+    doc = await task.promise;
   } catch (e) {
     scroll.innerHTML = `<p class="pdf-error">Couldn't open the document: ${
       e instanceof Error ? e.message : e
@@ -45,10 +48,15 @@ export async function openPdfViewer(
   currentDoc = doc;
 
   // Uniform-size placeholders sized from page 1, lazily rendered on approach.
+  // A4 two-column text at phone width is unreadably small, so a zoom cycle
+  // re-lays-out at wider widths with horizontal panning.
   const first = await doc.getPage(1);
   const baseVp = first.getViewport({ scale: 1 });
-  const width = Math.min(scroll.clientWidth, 900);
-  const scale = width / baseVp.width;
+  const ZOOMS = [1, 1.6, 2.2];
+  let zoomIdx = 0;
+  const fitWidth = Math.min(scroll.clientWidth, 900);
+  let width = fitWidth;
+  let scale = width / baseVp.width;
   const holders: HTMLDivElement[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const holder = document.createElement("div");
@@ -61,18 +69,53 @@ export async function openPdfViewer(
   }
 
   const pageNo = root.querySelector<HTMLElement>(".pdf-pageno")!;
-  const rendered = new Set<number>();
+  // Canvas memory is the iOS killer: ~7 MB per page at dpr 3, and WebKit
+  // enforces a global canvas budget. Clamp the render dpr and keep only a
+  // small LRU window of rendered pages; evicted holders return to
+  // placeholders and re-render on approach.
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const MAX_RENDERED = 10;
+  const rendered: number[] = []; // LRU order, most recent last
   const render = async (n: number) => {
-    if (rendered.has(n) || !currentDoc) return;
-    rendered.add(n);
+    if (!currentDoc) return;
+    const at = rendered.indexOf(n);
+    if (at >= 0) {
+      rendered.splice(at, 1);
+      rendered.push(n);
+      return;
+    }
     const page = await doc.getPage(n);
-    const vp = page.getViewport({ scale: scale * devicePixelRatio });
+    const vp = page.getViewport({ scale: scale * dpr });
     const canvas = document.createElement("canvas");
     canvas.width = vp.width;
     canvas.height = vp.height;
     canvas.style.width = "100%";
     await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp }).promise;
     holders[n - 1].replaceChildren(canvas);
+    rendered.push(n);
+    while (rendered.length > MAX_RENDERED) {
+      const evict = rendered.shift()!;
+      const h = holders[evict - 1];
+      h.replaceChildren();
+    }
+  };
+
+  const zoomBtn = root.querySelector<HTMLButtonElement>(".pdf-zoom")!;
+  zoomBtn.onclick = () => {
+    const keepPage = scroll.scrollTop / pageStride; // fractional page position
+    zoomIdx = (zoomIdx + 1) % ZOOMS.length;
+    width = Math.round(fitWidth * ZOOMS[zoomIdx]);
+    scale = width / baseVp.width;
+    pageStride = baseVp.height * scale + 8;
+    zoomBtn.textContent = `${ZOOMS[zoomIdx]}×`;
+    rendered.length = 0; // all canvases are the wrong size now
+    for (const h of holders) {
+      h.replaceChildren();
+      h.style.width = `${width}px`;
+      h.style.height = `${baseVp.height * scale}px`;
+    }
+    scroll.classList.toggle("zoomed", zoomIdx > 0);
+    scroll.scrollTop = keepPage * pageStride;
   };
 
   const io = new IntersectionObserver(
@@ -86,7 +129,7 @@ export async function openPdfViewer(
   );
   holders.forEach((h) => io.observe(h));
 
-  const pageStride = baseVp.height * scale + 8; // holder height + flex gap
+  let pageStride = baseVp.height * scale + 8; // holder height + flex gap
   scroll.addEventListener("scroll", () => {
     const n = Math.min(doc.numPages, Math.floor(scroll.scrollTop / pageStride) + 1);
     pageNo.textContent = `${n} / ${doc.numPages}`;
@@ -119,9 +162,11 @@ export async function openPdfViewer(
 }
 
 let currentDoc: PDFDocumentProxy | null = null;
+let currentTask: PDFDocumentLoadingTask | null = null;
 function close(): void {
   el().hidden = true;
   el().innerHTML = "";
-  void currentDoc?.cleanup();
+  void currentTask?.destroy(); // frees the worker + document, not just pages
+  currentTask = null;
   currentDoc = null;
 }

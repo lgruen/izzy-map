@@ -4,7 +4,7 @@
     {
       "id": "tas",
       "name": "Tasmania (statewide topo)",
-      "bbox": [143.7, -43.8, 148.6, -39.4],
+      "bbox": [143.7, -43.87, 148.6, -39.19],
       "minzoom": 0,
       "maxzoom": 15,
       "prune": true

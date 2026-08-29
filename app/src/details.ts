@@ -1,8 +1,12 @@
 // Tap -> community details bottom sheet (the offline "identify" panel).
+import type maplibregl from "maplibre-gl";
 import type { Map, MapGeoJSONFeature } from "maplibre-gl";
 import { COMMUNITIES } from "./style";
 import f2f from "./generated/f2f_index.json";
 import { opfsFile } from "./storage";
+// Static import (not dynamic): a skipWaiting SW update while the app is
+// resident would purge an old lazy chunk and strand descriptions offline.
+import { openPdfViewer } from "./viewer";
 
 const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page: number }> };
 
@@ -12,12 +16,25 @@ const esc = (s: string) =>
 export function wireDetails(map: Map): void {
   const sheet = document.getElementById("sheet")!;
 
+  const selection = () => map.getSource("selected") as maplibregl.GeoJSONSource | undefined;
+  const clearSelection = () => {
+    sheet.hidden = true;
+    selection()?.setData({ type: "FeatureCollection", features: [] });
+  };
+
   map.on("click", (e) => {
     const feats = map.queryRenderedFeatures(e.point, { layers: ["tasveg-fill"] });
     if (!feats.length) {
-      sheet.hidden = true;
+      clearSelection();
       return;
     }
+    // Outline the answering polygon (tile-clipped geometry is fine for a
+    // highlight) so near boundaries it's clear which one was identified.
+    selection()?.setData({
+      type: "Feature",
+      geometry: feats[0].geometry,
+      properties: {},
+    });
     show(feats[0]);
   });
 
@@ -50,7 +67,7 @@ export function wireDetails(map: Map): void {
       <button class="sheet-desc" data-code="${esc(code)}">Read the full description
         <small>From Forest to Fjaeldmark</small></button>`;
     sheet.hidden = false;
-    sheet.querySelector<HTMLButtonElement>(".sheet-close")!.onclick = () => (sheet.hidden = true);
+    sheet.querySelector<HTMLButtonElement>(".sheet-close")!.onclick = clearSelection;
     sheet.querySelector<HTMLButtonElement>(".sheet-desc")!.onclick = () => openDescription(code);
   }
 }
@@ -61,7 +78,6 @@ export function wireDetails(map: Map): void {
 async function openDescription(code: string): Promise<void> {
   const entry = F2F.index[code];
   if (!entry) return;
-  const { openPdfViewer } = await import("./viewer");
   const local = await opfsFile("f2f/" + entry.file).catch(() => null);
   const proxy = (import.meta.env.VITE_F2F_PROXY as string | undefined) ?? "";
   const title = COMMUNITIES[code]?.label ?? code;
