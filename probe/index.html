@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>IzzyMap device probe</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="IzzyProbe">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.45 -apple-system, system-ui, sans-serif; margin: 0; padding: 12px calc(12px + env(safe-area-inset-right)) 40px calc(12px + env(safe-area-inset-left)); max-width: 640px; }
+  h1 { font-size: 1.2rem; margin: 8px 0; }
+  .card { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+  .card h2 { font-size: 1rem; margin: 0 0 6px; }
+  .row { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0; }
+  .row .k { opacity: .75; }
+  .row .v { text-align: right; font-variant-numeric: tabular-nums; word-break: break-word; }
+  .ok { color: #1a7f37; font-weight: 600; }
+  .bad { color: #cf222e; font-weight: 600; }
+  .warn { color: #9a6700; font-weight: 600; }
+  button { font: inherit; padding: 10px 14px; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: color-mix(in srgb, currentColor 8%, transparent); color: inherit; margin: 4px 6px 4px 0; }
+  button:active { opacity: .6; }
+  #summary { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
+  .big { width: 100%; font-weight: 600; }
+  small { opacity: .7; }
+</style>
+</head>
+<body>
+<h1>IzzyMap device probe</h1>
+<p><small>Runs a few checks for the offline hiking map. Steps 1–3 run by
+themselves; press the buttons in 4–6. Then tap <b>Copy results</b> at the
+bottom and send them to Leo. Nothing here leaves the phone by itself.</small></p>
+
+<div class="card"><h2>1. Environment</h2><div id="env"></div></div>
+<div class="card"><h2>2. Storage quota &amp; persistence</h2><div id="storage"></div></div>
+<div class="card"><h2>3. Data survival marker</h2><div id="marker"></div>
+  <small>Shows whether data written on an earlier visit is still here. For the
+  full test: open this page again in a few days, and also after using
+  Settings → Apps → Safari → Clear History and Website Data.</small></div>
+<div class="card"><h2>4. Big-file write &amp; read (OPFS)</h2>
+  <div id="opfs"></div>
+  <button id="opfs100">Write 100 MB</button>
+  <button id="opfs600">Write 600 MB</button>
+  <button id="opfsDel">Delete test file</button>
+  <div><small>Writes a dummy file the way the app will store map data, then
+  times random reads. Delete it afterwards to free space.</small></div></div>
+<div class="card"><h2>5. Location</h2>
+  <div id="geo"></div>
+  <button id="geoBtn">Get GPS position</button>
+  <div><small>Should show a permission prompt (first time) and then
+  coordinates. If nothing appears at all, that's important — copy results
+  anyway.</small></div></div>
+<div class="card"><h2>6. Keep screen awake</h2>
+  <div id="wake"></div>
+  <button id="wakeBtn">Request wake lock</button></div>
+<div class="card"><h2>Results</h2>
+  <div id="summary"></div>
+  <button class="big" id="copyBtn">Copy results</button>
+  <div id="copyMsg"></div></div>
+
+<script>
+'use strict';
+const results = {};   // key -> {label, value, cls}
+const $ = id => document.getElementById(id);
+const fmtGB = b => (b / 1e9).toFixed(2) + ' GB';
+const fmtMB = b => (b / 1e6).toFixed(1) + ' MB';
+
+function set(section, key, label, value, cls) {
+  results[key] = { label, value: String(value), cls };
+  render(section);
+  renderSummary();
+}
+const sections = { env: [], storage: [], marker: [], opfs: [], geo: [], wake: [] };
+function track(section, key) { if (!sections[section].includes(key)) sections[section].push(key); }
+function row(section, key, label, value, cls) { track(section, key); set(section, key, label, value, cls); }
+function render(section) {
+  $(section).innerHTML = sections[section].map(k => {
+    const r = results[k];
+    return `<div class="row"><span class="k">${r.label}</span><span class="v ${r.cls || ''}">${r.value}</span></div>`;
+  }).join('');
+}
+function renderSummary() {
+  $('summary').textContent = Object.values(results)
+    .map(r => `${r.label}: ${r.value}`).join('\n');
+}
+
+// ---- 1. Environment ----
+(function envProbe() {
+  const standalone = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+  row('env', 'ua', 'Browser', navigator.userAgent.replace(/Mozilla\/5\.0 \(/, '('));
+  row('env', 'standalone', 'Opened from home screen', standalone ? 'yes' : 'no (open via Add to Home Screen for the real test)', standalone ? 'ok' : 'warn');
+  row('env', 'online', 'Online', navigator.onLine ? 'yes' : 'no');
+})();
+
+// ---- 2. Storage ----
+(async function storageProbe() {
+  try {
+    const est = await navigator.storage.estimate();
+    row('storage', 'quota', 'Storage quota', fmtGB(est.quota), est.quota > 5e9 ? 'ok' : 'bad');
+    row('storage', 'usage', 'Currently used', fmtGB(est.usage || 0));
+  } catch (e) { row('storage', 'quota', 'Storage quota', 'error: ' + e.message, 'bad'); }
+  try {
+    const was = await navigator.storage.persisted();
+    const now = was || await navigator.storage.persist();
+    row('storage', 'persist', 'Persistent storage granted', now ? 'yes' : 'no', now ? 'ok' : 'warn');
+  } catch (e) { row('storage', 'persist', 'Persistent storage granted', 'error: ' + e.message, 'bad'); }
+})();
+
+// ---- 3. Survival marker ----
+(async function markerProbe() {
+  const now = new Date().toISOString();
+  let ls = null;
+  try {
+    ls = localStorage.getItem('izzy-probe-first-seen');
+    if (!ls) { localStorage.setItem('izzy-probe-first-seen', now); }
+  } catch (e) {}
+  let opfsMarker = 'missing';
+  try {
+    const root = await navigator.storage.getDirectory();
+    try {
+      const fh = await root.getFileHandle('izzy-marker.txt');
+      opfsMarker = (await (await fh.getFile()).text()).trim();
+    } catch {
+      const fh = await root.getFileHandle('izzy-marker.txt', { create: true });
+      const w = await fh.createWritable();
+      await w.write(now); await w.close();
+      opfsMarker = 'created just now';
+    }
+  } catch (e) { opfsMarker = 'OPFS error: ' + e.message; }
+  row('marker', 'firstSeen', 'First visit (localStorage)', ls || 'created just now', ls ? 'ok' : '');
+  row('marker', 'opfsMarker', 'Marker file (OPFS)', opfsMarker,
+      opfsMarker.startsWith('OPFS error') ? 'bad' : (opfsMarker.startsWith('20') ? 'ok' : ''));
+})();
+
+// ---- 4. OPFS big file via worker (createSyncAccessHandle needs a worker on older iOS) ----
+const workerCode = `
+  onmessage = async (e) => {
+    const { size } = e.data;
+    try {
+      const root = await navigator.storage.getDirectory();
+      const fh = await root.getFileHandle('izzy-bigfile.bin', { create: true });
+      const h = await fh.createSyncAccessHandle();
+      const chunk = new Uint8Array(8 * 1024 * 1024);
+      for (let i = 0; i < chunk.length; i += 4096) chunk[i] = i & 0xff;
+      const t0 = performance.now();
+      let written = 0;
+      h.truncate(0);
+      while (written < size) {
+        const n = Math.min(chunk.length, size - written);
+        h.write(chunk.subarray(0, n), { at: written });
+        written += n;
+        if (written % (64 * 1024 * 1024) < chunk.length) postMessage({ progress: written });
+      }
+      h.flush();
+      const tWrite = performance.now() - t0;
+      // random-range reads, like PMTiles tile lookups
+      const buf = new Uint8Array(64 * 1024);
+      const t1 = performance.now();
+      const N = 200;
+      for (let i = 0; i < N; i++) {
+        const at = Math.floor(Math.random() * (size - buf.length));
+        h.read(buf, { at });
+      }
+      const tRead = (performance.now() - t1) / N;
+      h.close();
+      postMessage({ done: true, tWrite, tRead, size });
+    } catch (err) { postMessage({ error: err.message }); }
+  };`;
+let worker = null;
+function opfsTest(size) {
+  if (worker) worker.terminate();
+  row('opfs', 'opfsWrite', 'Write ' + fmtMB(size), 'running…');
+  worker = new Worker(URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' })));
+  worker.onmessage = (e) => {
+    const d = e.data;
+    if (d.progress) { set('opfs', 'opfsWrite', 'Write ' + fmtMB(size), fmtMB(d.progress) + '…'); }
+    else if (d.error) { set('opfs', 'opfsWrite', 'Write ' + fmtMB(size), 'FAILED: ' + d.error, 'bad'); }
+    else if (d.done) {
+      set('opfs', 'opfsWrite', 'Write ' + fmtMB(size),
+          (d.tWrite / 1000).toFixed(1) + ' s (' + (d.size / 1e6 / (d.tWrite / 1000)).toFixed(0) + ' MB/s)', 'ok');
+      row('opfs', 'opfsRead', 'Random 64 KB read', d.tRead.toFixed(1) + ' ms avg',
+          d.tRead < 20 ? 'ok' : 'warn');
+      navigator.storage.estimate().then(est => set('storage', 'usage', 'Currently used', fmtGB(est.usage || 0)));
+    }
+  };
+  worker.postMessage({ size });
+}
+$('opfs100').onclick = () => opfsTest(100 * 1e6);
+$('opfs600').onclick = () => opfsTest(600 * 1e6);
+$('opfsDel').onclick = async () => {
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry('izzy-bigfile.bin');
+    row('opfs', 'opfsWrite', 'Test file', 'deleted', 'ok');
+    const est = await navigator.storage.estimate();
+    set('storage', 'usage', 'Currently used', fmtGB(est.usage || 0));
+  } catch (e) { row('opfs', 'opfsWrite', 'Test file', 'delete failed: ' + e.message, 'warn'); }
+};
+
+// ---- 5. Geolocation ----
+(async function geoPermState() {
+  try {
+    const st = await navigator.permissions.query({ name: 'geolocation' });
+    row('geo', 'geoPerm', 'Location permission state', st.state);
+    st.onchange = () => set('geo', 'geoPerm', 'Location permission state', st.state);
+  } catch (e) { row('geo', 'geoPerm', 'Location permission state', 'query unsupported'); }
+})();
+$('geoBtn').onclick = () => {
+  row('geo', 'geoFix', 'GPS fix', 'requesting…');
+  const t0 = performance.now();
+  navigator.geolocation.getCurrentPosition(
+    p => set('geo', 'geoFix', 'GPS fix',
+      p.coords.latitude.toFixed(5) + ', ' + p.coords.longitude.toFixed(5) +
+      ' (±' + Math.round(p.coords.accuracy) + ' m, ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)', 'ok'),
+    err => set('geo', 'geoFix', 'GPS fix', 'FAILED: ' + err.message + ' (code ' + err.code + ')', 'bad'),
+    { enableHighAccuracy: true, timeout: 30000 });
+};
+
+// ---- 6. Wake lock ----
+$('wakeBtn').onclick = async () => {
+  try {
+    const lock = await navigator.wakeLock.request('screen');
+    row('wake', 'wake', 'Screen wake lock', 'granted', 'ok');
+    lock.addEventListener('release', () => set('wake', 'wake', 'Screen wake lock', 'released'));
+  } catch (e) { row('wake', 'wake', 'Screen wake lock', 'FAILED: ' + e.message, 'bad'); }
+};
+
+// ---- Copy ----
+$('copyBtn').onclick = async () => {
+  const text = 'IzzyMap probe ' + new Date().toISOString() + '\n' + $('summary').textContent;
+  try { await navigator.clipboard.writeText(text); $('copyMsg').innerHTML = '<small class="ok">Copied — paste it in a message to Leo.</small>'; }
+  catch { $('copyMsg').innerHTML = '<small class="warn">Copy failed — screenshot this page instead.</small>'; }
+};
+</script>
+</body>
+</html>

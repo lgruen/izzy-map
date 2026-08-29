@@ -1,0 +1,8 @@
+{
+  "name": "IzzyMap device probe",
+  "short_name": "IzzyProbe",
+  "display": "standalone",
+  "start_url": ".",
+  "background_color": "#ffffff",
+  "theme_color": "#1a7f37"
+}
