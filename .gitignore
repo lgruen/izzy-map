@@ -1,0 +1,22 @@
+# Data artifacts — large, rebuilt by pipeline/, uploaded to R2 (never committed)
+data/
+*.pmtiles
+*.mbtiles
+*.gpkg
+*.fgb
+
+# From Forest to Fjaeldmark content — NOT redistributable (see docs/LICENSING.md)
+# (only the derived f2f_index.json of page numbers may be committed)
+f2f_pdfs/
+*.pdf
+
+# Pipeline caches
+pipeline/cache/
+pipeline/work/
+
+node_modules/
+dist/
+.DS_Store
+*.log
+test-results/
+playwright-report/
