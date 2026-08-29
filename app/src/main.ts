@@ -4,7 +4,7 @@ import "./app.css";
 import { HOME } from "./config";
 import { bindMap, registerProtocols, refreshArchives } from "./protocol";
 import { buildStyle, type OverlayMode } from "./style";
-import { wireDetails } from "./details";
+import { clearDetails, wireDetails } from "./details";
 import { wireCoordReadout } from "./mga";
 import { openAbout, openDownloads, openLegend, closePanel, setOverlayAccess } from "./ui";
 import { ensurePersistence } from "./storage";
@@ -118,7 +118,14 @@ async function boot(): Promise<void> {
         : mode === "geo" ? "Overlay: geology — tap to hide overlays"
         : "Overlays hidden — tap for vegetation",
     );
-    if (!map.isStyleLoaded() && !map.loaded()) return; // applied again on load
+    // isStyleLoaded() is false during ordinary tile streaming too — the only
+    // real precondition is that the style's layers exist. Before first load,
+    // defer to the load event; after that, always apply (review H1: bailing
+    // here silently dropped switcher taps made while tiles were loading).
+    if (!map.getLayer("tasveg-fill")) {
+      map.once("load", applyOverlay);
+      return;
+    }
     for (const l of ["tasveg-fill", "tasveg-outline", "tasveg-label"])
       map.setLayoutProperty(l, "visibility", mode === "veg" ? "visible" : "none");
     for (const l of ["geology-fill", "geology-outline"])
@@ -129,7 +136,15 @@ async function boot(): Promise<void> {
   byId("btn-veg").onclick = () => {
     mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
     localStorage.setItem("overlayMode", mode);
+    clearDetails(); // a veg answer over a geology map (or vice versa) lies
     applyOverlay();
+    // transient pill naming the new mode — the icon alone is ambiguous
+    const pill = byId("mode-pill");
+    pill.textContent =
+      mode === "veg" ? "Vegetation" : mode === "geo" ? "Geology" : "Overlay hidden";
+    pill.classList.remove("show");
+    void pill.offsetWidth; // restart the animation
+    pill.classList.add("show");
   };
   map.on("load", applyOverlay);
   setOverlayAccess({

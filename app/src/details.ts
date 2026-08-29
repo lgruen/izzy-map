@@ -10,8 +10,24 @@ import { openPdfViewer } from "./viewer";
 
 const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page: number }> };
 
+/** Plain-English age for a lay reader: numbers first, no stage jargon.
+ * The common cases (statewide dolerite, beach sand) must read well. */
+export function formatAge(maxMa: number | null, minMa: number | null): string {
+  if (maxMa == null) return "";
+  const fmt = (ma: number) => (ma >= 10 ? String(Math.round(ma)) : ma.toFixed(1));
+  if (maxMa < 0.02) return "Geologically recent (roughly the last 12,000 years)";
+  const hi = fmt(maxMa);
+  if (minMa == null || fmt(minMa) === hi) return `About ${hi} million years old`;
+  if (minMa < 0.02) return `About ${hi} million years ago – recent`;
+  return `About ${hi}–${fmt(minMa)} million years old`;
+}
+
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+/** Closes the sheet and clears the highlight — assigned by wireDetails so
+ * the overlay switcher can dismiss a stale answer on mode change. */
+export let clearDetails: () => void = () => {};
 
 export function wireDetails(map: Map): void {
   const sheet = document.getElementById("sheet")!;
@@ -21,6 +37,8 @@ export function wireDetails(map: Map): void {
     sheet.hidden = true;
     selection()?.setData({ type: "FeatureCollection", features: [] });
   };
+
+  clearDetails = clearSelection;
 
   map.on("click", (e) => {
     // Hidden layers yield nothing, so this naturally answers for whichever
@@ -47,15 +65,9 @@ export function wireDetails(map: Map): void {
     const p = f.properties as Record<string, string>;
     const symb = p.SYMB ?? "?";
     const unit = GEOLOGY_UNITS[symb];
-    const ages =
-      unit && (unit.maxAge || unit.minAge)
-        ? `${unit.maxAge}${unit.minAge && unit.minAge !== unit.maxAge ? " – " + unit.minAge : ""}` +
-          (unit.maxMa != null && unit.minMa != null
-            ? ` (≈${Math.round(unit.maxMa)}–${Math.round(unit.minMa)} Ma)`
-            : "")
-        : "";
+    const ages = formatAge(unit?.maxMa ?? null, unit?.minMa ?? null);
     const rows: [string, string | undefined][] = [
-      ["Stratigraphy", p.STRAT || unit?.strat],
+      ["Stratigraphy", unit?.strat],
       ["Age", ages],
       ["Group", unit?.group],
     ];
@@ -66,7 +78,7 @@ export function wireDetails(map: Map): void {
         <span class="swatch" style="background:${unit?.color ?? "#c8c8c8"}"></span>
         <div>
           <span class="sheet-code">${esc(symb)}</span>
-          <div class="sheet-name">${esc(p.DESC || unit?.description || "Unknown unit")}</div>
+          <div class="sheet-name">${esc(unit?.description || "Unknown unit")}</div>
         </div>
       </div>
       ${rows
@@ -80,6 +92,10 @@ export function wireDetails(map: Map): void {
     sheet.hidden = false;
     sheet.querySelector<HTMLButtonElement>(".sheet-close")!.onclick = clearSelection;
     sheet.querySelector<HTMLButtonElement>(".sheet-desc")?.addEventListener("click", () => {
+      if (!navigator.onLine) {
+        alert("This link needs reception — try again when you have signal.");
+        return;
+      }
       window.open(unit!.link, "_blank");
     });
   }

@@ -87,19 +87,24 @@ test("overlay switcher cycles vegetation -> geology -> off", async ({ page }) =>
 });
 
 test("geology tap shows unit details with official colour", async ({ page }) => {
+  const UNITS = JSON.parse(
+    readFileSync(join(HERE, "../src/generated/geology_units.json"), "utf8"),
+  ) as Record<string, { description: string; color: string }>;
   await page.locator("#btn-veg").click(); // vegetation -> geology
   await expect.poll(() => centerFeature(page, "geology-fill"), { timeout: 20_000 }).not.toBeNull();
   const geo = await centerFeature(page, "geology-fill");
+  const unit = UNITS[geo!.SYMB];
+  expect(unit).toBeTruthy();
   const viewport = page.viewportSize()!;
   await page.mouse.click(viewport.width / 2, viewport.height / 2);
   const sheet = page.locator("#sheet");
   await expect(sheet).toBeVisible();
   await expect(sheet).toContainText(geo!.SYMB);
-  await expect(sheet).toContainText(geo!.DESC.slice(0, 20));
+  await expect(sheet).toContainText(unit.description.slice(0, 20));
   const swatchColor = await sheet
     .locator(".swatch")
     .evaluate((el) => getComputedStyle(el).backgroundColor);
-  const hex = (geo as { color: string }).color;
+  const hex = unit.color;
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
   expect(swatchColor.replace(/\s/g, "")).toBe(`rgb(${r},${g},${b})`);
 });

@@ -2,7 +2,7 @@
 // live-network fallback while online.
 //
 //   topo://{z}/{x}/{y}   raster: OPFS topo archive -> LIST service -> blank
-//   pmtiles://...        vector: TASVEG archive (OPFS file or remote URL)
+//   pmtiles://...        vector overlays: TASVEG + geology (OPFS or remote)
 import maplibregl, { type Map as MlMap } from "maplibre-gl";
 import { FetchSource, FileSource, PMTiles, Protocol } from "pmtiles";
 import { ARCHIVES, DATA_BASE, LIST_TOPO, VECTOR_ARCHIVES, type VectorKey } from "./config";
@@ -17,6 +17,7 @@ const BLANK_PNG = Uint8Array.from(atob(BLANK_PNG_B64), (c) => c.charCodeAt(0));
 
 let topoArchive: PMTiles | null = null;
 let boundMap: MlMap | null = null;
+const lastBacking = new Map<string, string>();
 const pmProtocol = new Protocol();
 
 /** Give the protocol layer a map handle so archive changes (download,
@@ -44,6 +45,10 @@ export async function refreshArchives(): Promise<ArchiveStatus> {
   for (const key of VECTOR_ARCHIVES) {
     const file = await opfsFile(ARCHIVES[key]);
     status.vectorLocal[key] = !!file;
+    const backing = file ? `local:${file.size}:${file.lastModified}` : "remote";
+    const changed = lastBacking.get(key) !== backing;
+    lastBacking.set(key, backing);
+    if (!changed) continue; // avoid pointless TileJSON/tile refetch churn
     // Remote fallback (range requests against R2/dev server) when no local
     // file — registered regardless of navigator.onLine (it lies on iOS),
     // and a failing fetch is handled anyway. Stable keys keep the style's

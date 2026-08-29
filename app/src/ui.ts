@@ -17,6 +17,8 @@ const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page
 // relay adds it (see docs/LICENSING.md and pipeline/f2f-proxy/).
 const F2F_PROXY: string = import.meta.env.VITE_F2F_PROXY ?? "";
 
+const esc = (s: string) =>
+  s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const fmtMB = (b: number) => (b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : Math.round(b / 1e6) + " MB");
 const fmtProgress = (p: { received: number; total: number | null }) =>
   `${fmtMB(p.received)}${p.total ? " of " + fmtMB(p.total) : ""}`;
@@ -53,6 +55,7 @@ export function setOverlayAccess(a: OverlayAccess): void {
 const panel = () => document.getElementById("panel")!;
 export function closePanel(): void {
   panel().hidden = true;
+  panel().classList.remove("see-through");
 }
 function openPanel(html: string): HTMLElement {
   const el = panel();
@@ -90,7 +93,7 @@ export async function openDownloads(): Promise<void> {
   const items: Item[] = [];
   for (const [key, label, hint] of [
     ["tasveg", "Vegetation map (TASVEG 5.0)", "statewide — the colour overlay + tap details"],
-    ["geology", "Geology map (1:500k, MRT)", "statewide — what rock am I standing on?"],
+    ["geology", "Geology map", "what rock am I standing on? Statewide 1:500,000 (Mineral Resources Tasmania); boundaries approximate"],
     ["topo", "Topographic base map", "statewide to zoom 15 — the map under it. Large!"],
   ] as const) {
     const name = ARCHIVES[key];
@@ -256,8 +259,8 @@ export function openLegend(): void {
     }
     row = (symb) => {
       const u = GEOLOGY_UNITS[symb];
-      return `<div class="leg-row"><span class="swatch" style="background:${u.color}"></span>
-        <span><b>${symb}</b> ${u.description}</span></div>`;
+      return `<div class="leg-row"><span class="swatch" style="background:${esc(u.color)}"></span>
+        <span><b>${esc(symb)}</b> ${esc(u.description)}</span></div>`;
     };
   } else {
     groups = new Map();
@@ -270,12 +273,43 @@ export function openLegend(): void {
        <span><b>${c}</b> ${COMMUNITIES[c].name.replace(/^\([A-Z]{3}\)\s*/, "")}</span></div>`;
   }
 
-  const sorted = [...groups.entries()].sort();
+  // Vegetation sorts alphabetically; geology sorts oldest -> youngest (the
+  // narrative a geology map implies), "Other units" last.
+  const groupAge = (ids: string[]) =>
+    Math.max(...ids.map((id) => GEOLOGY_UNITS[id]?.maxMa ?? 0));
+  const sorted =
+    mode === "geo"
+      ? [...groups.entries()].sort((a, b) => {
+          if (a[0] === "Other units") return 1;
+          if (b[0] === "Other units") return -1;
+          return groupAge(b[1]) - groupAge(a[1]);
+        })
+      : [...groups.entries()].sort();
   const opacity = overlay.getOpacity();
-  // Chip labels: veg group first-words are unique; geology groups need more
-  // (three start with "Devonian"/"Late"/"Early") — truncate the full name.
+  // Chip labels: veg group first-words are unique; geology groups get
+  // hand-curated short names (truncation produced near-identical twins).
+  const GEO_CHIPS: Record<string, string> = {
+    "Proterozoic basement and parautochthonous rocks": "Proterozoic",
+    "Middle-Late Cambrian Volcanic and volcano-sedimentary sequences": "Cambrian volcanics",
+    "Devonian - Carboniferous granitoids and related rocks": "Granites",
+    "Late Carboniferous to Triassic sedimentary sequences": "Permian–Triassic",
+    "Undifferentiated Cenozoic sequences": "Recent",
+    "Late Cambrian - Lower Devonian sedimentary sequences": "Camb–Dev. seds",
+    "Early Ordovician to Early Devonian turbidite sequence": "Turbidites",
+    "Early Cambrian Allochthonous sequences": "Early Cambrian",
+    "Jurassic igneous rocks": "Dolerite",
+    "Cretaceous igneous rocks": "Cretaceous igneous",
+    "Devonian cavern fillings": "Cavern fillings",
+    "Other units": "Other",
+  };
   const chipLabel = (g: string) =>
-    mode === "geo" ? (g.length > 22 ? g.slice(0, 21).trimEnd() + "…" : g) : g.split(/[ ,]/)[0];
+    mode === "geo"
+      ? GEO_CHIPS[g] ?? (g.length > 22 ? g.slice(0, 21).trimEnd() + "…" : g)
+      : g.split(/[ ,]/)[0];
+  const hiddenNote =
+    overlay.getMode() === "off"
+      ? `<p class="muted">The overlay is currently hidden — tap the leaf button to show it.</p>`
+      : "";
   const el = openPanel(
     `<div class="leg-top"><div class="leg-head"><h2>${mode === "geo" ? "Geology" : "Vegetation"} legend</h2>
       <div class="leg-opacity" role="group" aria-label="Overlay strength">
@@ -284,7 +318,7 @@ export function openLegend(): void {
       </div></div>
       <div class="leg-chips">${sorted
         .map(([g]) => `<button class="leg-chip" data-target="${slug(g)}">${chipLabel(g)}</button>`)
-        .join("")}</div></div>` +
+        .join("")}</div>${hiddenNote}</div>` +
       sorted
         .map(
           ([g, ids]) =>
@@ -293,6 +327,7 @@ export function openLegend(): void {
         )
         .join(""),
   );
+  el.classList.add("see-through"); // lighter scrim: opacity changes stay visible
   const inner = el.querySelector<HTMLElement>(".panel-inner")!;
   for (const chip of el.querySelectorAll<HTMLButtonElement>(".leg-chip")) {
     chip.onclick = () => {

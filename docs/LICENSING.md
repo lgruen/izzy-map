@@ -8,6 +8,15 @@ shaped around keeping them separate.
 - **TASVEG 5.0** vector data and everything derived from it: the PMTiles
   archives, the colour table extracted from `TASVEG_5_0.qml`, community
   codes/names/groups. Source: listdata.thelist.tas.gov.au/opendata/.
+- **MRT 1:500,000 geology units** and everything derived from them: the
+  geology PMTiles (incl. the committed test fixture), `geology_units.json`.
+  Licence evidence: the LIST metadata records for MRT's sibling 1:250k
+  geology product state "Creative Commons Attribution 3.0 Australia", and
+  the 500k product is derived from that mapping (verified 2026-08-30; the
+  MapServer's own copyrightText says only "Mineral Resources Tasmania" and
+  mrt.tas.gov.au blocks scripted access — re-verify against the LIST
+  records if this ever matters). Attribution: "Geology: Mineral Resources
+  Tasmania © State of Tasmania".
 - **LIST Topographic basemap tiles** (`Basemaps/Topographic` MapServer) and
   Hillshade. The service explicitly advertises bulk export
   (`exportTilesAllowed: true`); the LIST Web Services T&C (Dec 2014, 8

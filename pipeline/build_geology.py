@@ -35,6 +35,7 @@ def fetch_page(offset: int) -> dict:
         "outFields": FIELDS,
         "outSR": "4326",
         "f": "geojson",
+        "orderByFields": "OBJECTID",  # explicit stable paging order
         "resultOffset": offset,
         "resultRecordCount": PAGE,
     })
@@ -44,7 +45,10 @@ def fetch_page(offset: int) -> dict:
     for attempt in range(3):
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
-                return json.load(r)
+                body = json.load(r)
+            if "error" in body:  # ArcGIS reports errors in HTTP-200 bodies
+                raise RuntimeError(f"server error: {body['error']}")
+            return body
         except Exception as e:  # noqa: BLE001
             if attempt == 2:
                 raise
@@ -53,14 +57,24 @@ def fetch_page(offset: int) -> dict:
     raise AssertionError
 
 
+import re
+
+
 def normalise_color(rgbhex: str | None) -> str:
-    """'#RRGGBBAA' -> '#rrggbb' (alpha comes from the layer's fill-opacity)."""
-    if not rgbhex or not rgbhex.startswith("#") or len(rgbhex) < 7:
+    """'#RRGGBBAA' -> '#rrggbb', or an rgba() string when MRT's alpha is not
+    FF (only 'Geology not mapped' uses 50% white — keep it half-strength
+    instead of tinting the topo like a real unit)."""
+    if not rgbhex or not re.fullmatch(r"#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", rgbhex):
         return "#c8c8c8"
-    return rgbhex[:7].lower()
+    rgb = rgbhex[:7].lower()
+    alpha = int(rgbhex[7:9], 16) if len(rgbhex) == 9 else 255
+    if alpha == 255:
+        return rgb
+    r, g, b = (int(rgb[i : i + 2], 16) for i in (1, 3, 5))
+    return f"rgba({r},{g},{b},{alpha / 255:.2f})"
 
 
-def group_of(strat_name: str | None, description: str) -> str:
+def group_of(strat_name: str | None) -> str:
     """Legend bucket: the top level of the '>'-delimited stratigraphy."""
     if strat_name and strat_name.strip():
         return strat_name.split(">")[0].strip()
@@ -94,11 +108,12 @@ def main():
             color = normalise_color(p.get("RGBHex"))
             strat = (p.get("strat_name") or "").strip()
             link = (p.get("ga_strat_no") or "").strip()
-            if link.endswith("/UNK") or "asud" not in link.lower():
+            # strict allowlist: only real ASUD record URLs may reach the app
+            if link.endswith("/UNK") or not link.startswith("https://asud.ga.gov.au/"):
                 link = ""
             unit = units.setdefault(symb, {
                 "description": desc,
-                "group": group_of(strat, desc),
+                "group": group_of(strat),
                 "strat": strat.split(">")[-1].strip() if strat else "",
                 "maxAge": (p.get("max_age") or "").strip(),
                 "minAge": (p.get("min_age") or "").strip(),
@@ -110,14 +125,10 @@ def main():
             # keep a link if any polygon of the unit has one
             if link and not unit["link"]:
                 unit["link"] = link
-            f["properties"] = {
-                "SYMB": symb,
-                "DESC": desc,
-                "STRAT": strat.split(">")[-1].strip() if strat else "",
-                "AGE_MAX": unit["maxAge"],
-                "AGE_MIN": unit["minAge"],
-                "color": color,
-            }
+            # tiles carry only what rendering needs; everything the details
+            # sheet shows comes from geology_units.json keyed by SYMB
+            # (verified constant per unit in the source data)
+            f["properties"] = {"SYMB": symb, "color": color}
             out.write(json.dumps(f, ensure_ascii=False) + "\n")
 
     GEN.mkdir(parents=True, exist_ok=True)
@@ -128,14 +139,24 @@ def main():
     print(f"wrote {units_path}")
 
     # 1:500k linework: z11 native detail is ample; overzoom renders beyond.
+    # NO coalescing flags: coalescing can merge polygons ACROSS units (wrong
+    # colour + wrong tap answer, silently). At 7.7k features the tiles stay
+    # far below the size limit; if that ever changes, tippecanoe erroring
+    # out is the correct failure mode.
     subprocess.run([
         "tippecanoe", "-o", str(WORK / "geology.mbtiles"), "--force",
         "-l", "geology", "-n", "Geology 1:500k (MRT)",
         "-A", ATTRIBUTION,
         "-Z0", "-z11",
-        "--coalesce-densest-as-needed", "--detect-shared-borders", "--hilbert",
+        "--detect-shared-borders", "--hilbert",
         str(ndjson_path),
     ], check=True)
+    # belt-and-braces: fail loudly if any feature-merging strategy fired
+    import sqlite3
+    with sqlite3.connect(WORK / "geology.mbtiles") as db:
+        row = db.execute("SELECT value FROM metadata WHERE name='strategies'").fetchone()
+    if row and "coalesce" in row[0]:
+        raise SystemExit(f"tile build coalesced features across units: {row[0]}")
     subprocess.run(["pmtiles", "convert", str(WORK / "geology.mbtiles"),
                     str(DATA / "geology.pmtiles")], check=True)
     size = (DATA / "geology.pmtiles").stat().st_size

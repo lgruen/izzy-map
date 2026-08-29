@@ -19,6 +19,8 @@ Government.
   into the browser's OPFS storage.
 - **Topo basemap**: fetched live from LIST tile services when online; offline
   coverage via a single statewide raster pack (zoom ≤ 15) downloaded in-app.
+- **Geology overlay**: MRT's statewide 1:500,000 units as a second vector
+  layer, switched with vegetation (one overlay at a time).
 - **Community descriptions**: the phone fetches the *From Forest to
   Fjaeldmark* chapter PDFs from nre.tas.gov.au (via a transparent,
   non-caching CORS relay — the PDFs are not redistributable and are never
@@ -33,6 +35,8 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
 - TASVEG 5.0 from [theLIST](https://listdata.thelist.tas.gov.au/opendata/)
   © State of Tasmania —
+  [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
+- Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania —
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
 - Kitchener, A. and Harris, S. (2013). *From Forest to Fjaeldmark:
   Descriptions of Tasmania's Vegetation*. Edition 2. DPIPWE, Tasmania.

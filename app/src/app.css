@@ -73,6 +73,19 @@ button { font-family: var(--sans); color: inherit; }
 }
 #toolbar button:active { transform: scale(0.94); }
 #toolbar button.off { color: var(--stone); opacity: 0.62; }
+/* slash crosses the leaf midrib perpendicularly (rotate(-45deg) hid it ON
+   the midrib), with a paper casing so it separates from the icon strokes */
+#toolbar button.off::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  top: 50%;
+  height: 7px;
+  margin-top: -3.5px;
+  background: var(--chrome-bg);
+  transform: rotate(45deg);
+}
 #toolbar button.off::after {
   content: "";
   position: absolute;
@@ -80,20 +93,12 @@ button { font-family: var(--sans); color: inherit; }
   right: 10px;
   top: 50%;
   height: 2.5px;
+  margin-top: -1.25px;
   background: currentColor;
-  transform: rotate(-45deg);
+  transform: rotate(45deg);
   border-radius: 2px;
 }
 #toolbar button { position: relative; }
-#toolbar button.light { opacity: 0.85; }
-#toolbar button.light::after {
-  content: "½";
-  position: absolute;
-  right: 4px;
-  bottom: 2px;
-  font-size: 11px;
-  font-weight: 700;
-}
 #toolbar svg { width: 24px; height: 24px; display: block; }
 /* space between map-layer buttons and app buttons */
 #btn-downloads { margin-top: 10px; }
@@ -473,3 +478,30 @@ button { font-family: var(--sans); color: inherit; }
   padding: 8px 12px;
 }
 .leg-op.on { background: var(--accent); color: var(--accent-contrast); }
+
+/* ---------- overlay mode pill ---------- */
+
+#mode-pill {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  left: calc(64px + env(safe-area-inset-left));
+  z-index: 5;
+  background: var(--pine);
+  color: #fcfbf6;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 9px 14px;
+  opacity: 0;
+  pointer-events: none;
+}
+#mode-pill.show { animation: pill 1.8s ease-out; }
+@keyframes pill {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* legend keeps the map visible so the Full/Light toggle reads immediately */
+#panel.see-through { background: rgba(12, 20, 15, 0.12); }
