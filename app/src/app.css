@@ -184,6 +184,7 @@ button { font-family: var(--sans); color: inherit; }
 }
 .sheet-close, .panel-close {
   position: absolute;
+  z-index: 5; /* above sticky panel headers (legend .leg-top is z-index 2) */
   top: 8px;
   right: 8px;
   width: 44px;
