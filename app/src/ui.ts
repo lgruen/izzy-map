@@ -18,6 +18,8 @@ const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page
 const F2F_PROXY: string = import.meta.env.VITE_F2F_PROXY ?? "";
 
 const fmtMB = (b: number) => (b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : Math.round(b / 1e6) + " MB");
+const fmtProgress = (p: { received: number; total: number | null }) =>
+  `${fmtMB(p.received)}${p.total ? " of " + fmtMB(p.total) : ""}`;
 
 interface DataManifest {
   version: string;
@@ -119,84 +121,107 @@ export async function openDownloads(): Promise<void> {
     },
   });
 
-  const render = async () => {
+  // Last error per item, shown until the next attempt.
+  const errors = new Map<string, string>();
+  // Downloads whose completion already triggers a re-render.
+  const watched = new Set<string>();
+
+  const liveStatus = (key: string): HTMLElement | null =>
+    list.querySelector(`[data-key="${key}"] .dl-status`);
+
+  const render = () => {
     if (panel().hidden) return; // user closed the panel — nothing to draw into
     list.innerHTML = items
       .map((it) => {
         const inflight = it.archive ? activeDownload(it.archive) : null;
-        const btn = inflight
-          ? "Cancel"
-          : it.present
-            ? "Delete"
-            : it.partial > 0
-              ? "Resume"
-              : "Download";
-        const status = inflight
-          ? "downloading…"
-          : it.present
-            ? "✓ downloaded"
-            : it.partial > 0
-              ? `paused at ${fmtMB(it.partial)}${it.bytes ? " of " + fmtMB(it.bytes) : ""}`
-              : "";
-        const size = it.bytes
-          ? " · " + fmtMB(it.bytes)
-          : it.present
-            ? ""
-            : " · not available yet";
+        const btn = inflight ? "Cancel" : it.present ? "Delete" : it.partial > 0 ? "Resume" : "Download";
+        const status = errors.get(it.key)
+          ?? (inflight
+            ? fmtProgress(inflight.progress)
+            : it.present
+              ? "✓ downloaded"
+              : it.partial > 0
+                ? `paused at ${fmtMB(it.partial)}${it.bytes ? " of " + fmtMB(it.bytes) : ""}`
+                : "");
+        const size = it.bytes ? " · " + fmtMB(it.bytes) : it.present ? "" : " · not available yet";
+        const disabled = !inflight && !it.present && it.partial === 0 && it.bytes === null && it.key !== "f2f";
         return `<div class="dl-item" data-key="${it.key}">
           <div class="dl-info"><b>${it.label}</b><small>${it.hint}${size}</small><small class="dl-status">${status}</small></div>
-          <button class="dl-btn" ${!it.present && !inflight && it.bytes === null && it.key !== "f2f" ? "disabled" : ""}>${btn}</button>
+          <button class="dl-btn" ${disabled ? "disabled" : ""}>${btn}</button>
         </div>`;
       })
       .join("");
-    const { usage, quota } = await storageInfo();
-    el.querySelector("#storage-line")!.textContent =
-      `Storage: ${fmtMB(usage)} used, ${fmtMB(Math.max(0, quota - usage))} available`;
-
+    void storageInfo().then(({ usage, quota }) => {
+      const line = el.querySelector("#storage-line");
+      if (line) line.textContent =
+        `Storage: ${fmtMB(usage)} used, ${fmtMB(Math.max(0, quota - usage))} available`;
+    });
+    // any in-flight download must re-render this panel when it settles
     for (const it of items) {
-      const row = list.querySelector(`[data-key="${it.key}"]`);
-      if (!row) continue;
-      const btn = row.querySelector<HTMLButtonElement>(".dl-btn")!;
-      const status = row.querySelector<HTMLElement>(".dl-status")!;
-
-      const inflight = it.archive ? activeDownload(it.archive) : null;
-      if (inflight) {
-        // re-attach progress from a download started before the panel reopened
-        inflight.attach((p) => {
-          status.textContent = `${fmtMB(p.received)}${p.total ? " of " + fmtMB(p.total) : ""}`;
+      const act = it.archive ? activeDownload(it.archive) : null;
+      if (act && it.archive && !watched.has(it.archive)) {
+        watched.add(it.archive);
+        act.attach((pr) => {
+          const stat = liveStatus(it.key);
+          if (stat && !errors.get(it.key)) stat.textContent = fmtProgress(pr);
         });
-        btn.onclick = () => {
-          inflight.cancel();
-          void render();
-        };
-        continue;
-      }
-
-      btn.onclick = async () => {
-        btn.disabled = true;
-        try {
-          if (it.present) {
-            await it.remove();
-            it.present = false;
-            it.partial = 0;
-          } else {
-            void render(); // show the Cancel state immediately
-            await it.action((msg) => (status.textContent = msg));
+        void act.promise
+          .then(() => {
             it.present = true;
             it.partial = 0;
-          }
-        } catch (e) {
-          it.partial = it.archive ? await partialBytes(it.archive) : 0;
-          status.textContent = e instanceof Error ? e.message : String(e);
-          await new Promise((r) => setTimeout(r, 50));
-          btn.disabled = false;
-          return;
-        }
-        await render();
-      };
+          })
+          .catch(async (e: Error) => {
+            it.partial = it.archive ? await partialBytes(it.archive) : 0;
+            errors.set(it.key, e.message);
+          })
+          .finally(() => {
+            if (it.archive) watched.delete(it.archive);
+            render();
+          });
+      }
     }
   };
-  await render();
+
+  // Event delegation: handlers never go stale, state read at tap time.
+  list.onclick = async (ev) => {
+    const row = (ev.target as HTMLElement).closest<HTMLElement>(".dl-item");
+    if (!row || !(ev.target as HTMLElement).closest(".dl-btn")) return;
+    const it = items.find((x) => x.key === row.dataset.key);
+    if (!it) return;
+    errors.delete(it.key);
+
+    const act = it.archive ? activeDownload(it.archive) : null;
+    if (act) {
+      act.cancel();
+      await act.promise.catch(() => {}); // settles via the watcher above
+      return;
+    }
+    if (it.present) {
+      await it.remove();
+      it.present = false;
+      it.partial = 0;
+      render();
+      return;
+    }
+    // start (or resume): it.action registers the download synchronously,
+    // so the immediate render shows Cancel + live progress.
+    const p = it.action((msg) => {
+      const stat = liveStatus(it.key);
+      if (stat) stat.textContent = msg;
+    });
+    render();
+    try {
+      await p;
+      it.present = true;
+      it.partial = 0;
+    } catch (e) {
+      it.partial = it.archive ? await partialBytes(it.archive) : 0;
+      errors.set(it.key, e instanceof Error ? e.message : String(e));
+    }
+    render();
+  };
+
+  render();
 }
 
 // ---------- Legend ----------

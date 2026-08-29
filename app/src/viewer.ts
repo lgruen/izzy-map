@@ -32,6 +32,7 @@ export async function openPdfViewer(
   root.querySelector<HTMLButtonElement>(".pdf-close")!.onclick = close;
 
   const scroll = root.querySelector<HTMLElement>(".pdf-scroll")!;
+  let userScrolled = false;
   let doc: PDFDocumentProxy;
   try {
     const task = typeof source === "string"
@@ -76,28 +77,44 @@ export async function openPdfViewer(
   const dpr = Math.min(devicePixelRatio || 1, 2);
   const MAX_RENDERED = 10;
   const rendered: number[] = []; // LRU order, most recent last
+  const inFlight = new Set<number>();
+  let generation = 0; // bumped by zoom: in-flight renders at old scale discard
   const render = async (n: number) => {
-    if (!currentDoc) return;
+    if (!currentDoc || inFlight.has(n)) return;
     const at = rendered.indexOf(n);
     if (at >= 0) {
       rendered.splice(at, 1);
       rendered.push(n);
       return;
     }
-    const page = await doc.getPage(n);
-    const vp = page.getViewport({ scale: scale * dpr });
-    const canvas = document.createElement("canvas");
-    canvas.width = vp.width;
-    canvas.height = vp.height;
-    canvas.style.width = "100%";
-    await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp }).promise;
-    holders[n - 1].replaceChildren(canvas);
-    rendered.push(n);
-    while (rendered.length > MAX_RENDERED) {
-      const evict = rendered.shift()!;
-      const h = holders[evict - 1];
-      h.replaceChildren();
+    inFlight.add(n);
+    const gen = generation;
+    try {
+      const page = await doc.getPage(n);
+      const vp = page.getViewport({ scale: scale * dpr });
+      const canvas = document.createElement("canvas");
+      canvas.width = vp.width;
+      canvas.height = vp.height;
+      canvas.style.width = "100%";
+      await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp }).promise;
+      if (gen !== generation) return; // zoomed while rendering — stale size
+      holders[n - 1].replaceChildren(canvas);
+      rendered.push(n);
+      while (rendered.length > MAX_RENDERED) {
+        const evict = rendered.shift()!;
+        holders[evict - 1].replaceChildren();
+      }
+    } finally {
+      inFlight.delete(n);
     }
+  };
+
+  /** Render the pages around the current scroll position (IO only fires on
+   * boundary crossings, so pages already inside the window need this after
+   * a zoom re-layout). */
+  const renderViewport = () => {
+    const first = Math.max(1, Math.floor(scroll.scrollTop / pageStride));
+    for (let n = first; n <= Math.min(doc.numPages, first + 3); n++) void render(n);
   };
 
   const zoomBtn = root.querySelector<HTMLButtonElement>(".pdf-zoom")!;
@@ -108,7 +125,9 @@ export async function openPdfViewer(
     scale = width / baseVp.width;
     pageStride = baseVp.height * scale + 8;
     zoomBtn.textContent = `${ZOOMS[zoomIdx]}×`;
+    generation++; // in-flight renders at the old scale must discard
     rendered.length = 0; // all canvases are the wrong size now
+    userScrolled = true; // a zoom must also stop the initial jump loop
     for (const h of holders) {
       h.replaceChildren();
       h.style.width = `${width}px`;
@@ -116,6 +135,9 @@ export async function openPdfViewer(
     }
     scroll.classList.toggle("zoomed", zoomIdx > 0);
     scroll.scrollTop = keepPage * pageStride;
+    // IO won't re-fire for holders that never left its window — render the
+    // visible ones explicitly or the page being read stays blank.
+    renderViewport();
   };
 
   const io = new IntersectionObserver(
@@ -144,7 +166,6 @@ export async function openPdfViewer(
   // scrolls themselves.
   const idx = Math.min(pageIndex, doc.numPages - 1);
   const want = Math.round(pageStride * idx);
-  let userScrolled = false;
   for (const ev of ["touchstart", "wheel"])
     scroll.addEventListener(ev, () => (userScrolled = true), { once: true, passive: true });
   let settled = 0;

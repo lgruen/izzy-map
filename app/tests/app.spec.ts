@@ -87,18 +87,15 @@ test("veg layer cycles full -> light -> off -> full", async ({ page }) => {
 
 test("fallback tile is fully transparent (never fake ocean)", async ({ page }) => {
   // Regression: an earlier constant decoded to a half-opaque BLUE pixel, so
-  // offline gaps rendered as water. Fetch a topo tile with all networks
-  // dead and no archive: the protocol must answer with alpha-0 pixels.
+  // offline gaps rendered as water. Decode the constant the protocol module
+  // actually exports and assert alpha 0.
   const alpha = await page.evaluate(async () => {
-    const res = await fetch("topo://0/0/0").catch(() => null); // not fetchable directly
-    void res;
-    // decode the same constant the protocol uses, via the module under test
+    const mod = await import("/src/protocol.ts");
     const png = await new Promise<HTMLImageElement>((ok, err) => {
       const img = new Image();
       img.onload = () => ok(img);
       img.onerror = err;
-      img.src =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";
+      img.src = "data:image/png;base64," + (mod as { BLANK_PNG_B64: string }).BLANK_PNG_B64;
     });
     const c = document.createElement("canvas");
     c.width = c.height = 1;
@@ -107,7 +104,7 @@ test("fallback tile is fully transparent (never fake ocean)", async ({ page }) =
     return ctx.getImageData(0, 0, 1, 1).data[3];
   });
   expect(alpha).toBe(0);
-});
+})
 
 test("offline: OPFS archive keeps serving vegetation tiles", async ({ page, browserName }) => {
   test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
@@ -189,29 +186,48 @@ test("offline: descriptions open from OPFS via the in-app viewer", async ({ page
   await expect(page.locator(".pdf-page canvas").first()).toBeVisible({ timeout: 20_000 });
 });
 
-test("interrupted archive download resumes and validates", async ({ page, browserName }) => {
+test("interrupted archive download resumes from completed chunks", async ({ page, browserName }) => {
   test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
-  await routeTasvegFixture(page);
-  await page.goto("/");
-  await waitForMapIdle(page);
-  const result = await page.evaluate(async () => {
-    const { download, opfsFile, partialBytes } = await import("/src/storage.ts");
-    // First attempt: abort partway by racing a cancel via the registry.
-    const { activeDownload } = await import("/src/storage.ts");
-    const p1 = download("/dev-data/tasveg.pmtiles", "resume-test.pmtiles");
-    await new Promise((r) => setTimeout(r, 30)); // let some bytes land
-    activeDownload("resume-test.pmtiles")?.cancel();
-    const firstError = await p1.then(() => null, (e: Error) => e.message);
-    const partAfterCancel = await partialBytes("resume-test.pmtiles");
-    // Second attempt: must resume (or restart) and complete with valid magic.
-    await download("/dev-data/tasveg.pmtiles", "resume-test.pmtiles");
-    const file = await opfsFile("resume-test.pmtiles");
-    const head = new TextDecoder().decode(
-      new Uint8Array(await file!.slice(0, 7).arrayBuffer()),
-    );
-    return { firstError, partAfterCancel, size: file!.size, head };
+  const CHUNK = 256 * 1024;
+  const rangeStarts: number[] = [];
+  let served = 0;
+  const FIXTURE_LEN = 3_460_947; // committed Hobart-clip fixture
+  await page.route("**/dev-data/resume-src.pmtiles", async (route) => {
+    const m = /bytes=(\d+)-(\d*)/.exec(route.request().headers()["range"] ?? "");
+    const start = m ? Number(m[1]) : 0;
+    rangeStarts.push(start);
+    served++;
+    if (served === 4) return route.abort(); // simulated connection loss
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const fx = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "tasveg_test.pmtiles"));
+    const end = m && m[2] ? Math.min(Number(m[2]), fx.length - 1) : fx.length - 1;
+    await route.fulfill({
+      status: 206,
+      headers: {
+        "Content-Range": `bytes ${start}-${end}/${fx.length}`,
+        ETag: '"fixture-v1"',
+      },
+      body: fx.subarray(start, end + 1),
+    });
   });
+  const result = await page.evaluate(async (chunk) => {
+    const { download, opfsFile, partialBytes } = await import("/src/storage.ts");
+    const err = await download("/dev-data/resume-src.pmtiles", "resume-test.pmtiles", undefined, { chunkSize: chunk })
+      .then(() => null, (e: Error) => e.message);
+    const partial = await partialBytes("resume-test.pmtiles");
+    await download("/dev-data/resume-src.pmtiles", "resume-test.pmtiles", undefined, { chunkSize: chunk });
+    const file = await opfsFile("resume-test.pmtiles");
+    const head = await file!.slice(0, 7).text();
+    const partsAfter = await partialBytes("resume-test.pmtiles");
+    return { err, partial, size: file!.size, head, partsAfter };
+  }, CHUNK);
+  expect(result.err).toContain("Connection lost");
+  expect(result.partial).toBe(3 * CHUNK); // three committed chunks survive
+  // the resume's first request continued exactly at the committed boundary
+  expect(rangeStarts[4]).toBe(3 * CHUNK);
   expect(result.head).toBe("PMTiles");
-  expect(result.size).toBeGreaterThan(3_000_000);
-  expect(result.firstError?.toLowerCase()).toMatch(/paused|resume/);
-});
+  expect(result.size).toBe(FIXTURE_LEN);
+  expect(result.partsAfter).toBe(0); // parts cleaned up after assembly
+})

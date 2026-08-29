@@ -16,7 +16,8 @@ async function boot(): Promise<void> {
 
   // Vegetation layer cycles: full (50%) -> light (25%) -> off
   const VEG_STATES = [0.5, 0.25, 0] as const;
-  let vegState = Number(localStorage.getItem("vegState") ?? "0") % VEG_STATES.length;
+  const storedVeg = Number(localStorage.getItem("vegState") ?? "0");
+  let vegState = Number.isInteger(storedVeg) ? ((storedVeg % VEG_STATES.length) + VEG_STATES.length) % VEG_STATES.length : 0;
   const vegOpacity = VEG_STATES[vegState] || 0.5;
   const vegVisible = VEG_STATES[vegState] > 0;
 
@@ -46,8 +47,12 @@ async function boot(): Promise<void> {
   // Open straight at the GPS position (core requirement). trigger() is a
   // silent no-op until the control's async permission query resolves, so
   // retry until it reports success.
+  let locating = false;
+  geolocate.on("trackuserlocationstart", () => (locating = true));
   map.on("load", () => {
     const tryTrigger = (n: number) => {
+      // stop as soon as tracking is on (a user tap counts — never toggle it off)
+      if (locating) return;
       if (!geolocate.trigger() && n < 20) setTimeout(() => tryTrigger(n + 1), 250);
     };
     tryTrigger(0);
@@ -71,7 +76,10 @@ async function boot(): Promise<void> {
   // scope.
   let wakeLock: WakeLockSentinel | null = null;
   let tracking = false;
+  let acquiring = false;
   const syncWakeLock = async () => {
+    if (acquiring) return;
+    acquiring = true;
     try {
       if (tracking && document.visibilityState === "visible" && !wakeLock) {
         wakeLock = await navigator.wakeLock?.request("screen") ?? null;
@@ -82,6 +90,8 @@ async function boot(): Promise<void> {
       }
     } catch {
       /* not critical */
+    } finally {
+      acquiring = false;
     }
   };
   geolocate.on("trackuserlocationstart", () => {
@@ -97,6 +107,7 @@ async function boot(): Promise<void> {
   // Toolbar buttons
   const byId = (id: string) => document.getElementById(id)!;
   const applyVegState = () => {
+    if (!map.isStyleLoaded() && !map.loaded()) return; // applied again on load
     const opacity = VEG_STATES[vegState];
     const visible = opacity > 0;
     for (const l of ["tasveg-fill", "tasveg-outline", "tasveg-label"])
@@ -121,6 +132,10 @@ async function boot(): Promise<void> {
   byId("panel").onclick = (e) => {
     if (e.target === byId("panel")) closePanel();
   };
+
+  // Regaining reception should restore a missing veg overlay without a
+  // relaunch (setUrl re-kick clears the errored source).
+  window.addEventListener("online", () => void refreshArchives());
 
   // First-run state: no offline data downloaded yet. Shown regardless of
   // navigator.onLine — a fresh offline launch would otherwise be a blank,

@@ -46,18 +46,41 @@ UPLOAD_URL=$(cd pipeline/r2-uploader && npx wrangler@latest deploy --var "UPLOAD
   | grep -o 'https://[a-z0-9.-]*workers.dev' | head -1)
 [[ -n "$UPLOAD_URL" ]] || { echo "worker deploy failed (URL not found in output)"; exit 1; }
 echo "uploader at $UPLOAD_URL"
-sleep 3  # let the route propagate
+# wait until the fresh route actually answers (403/400 = alive; 000/5xx = not yet)
+for i in $(seq 1 30); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$UPLOAD_URL/" || echo 000)
+  [[ "$code" == "403" || "$code" == "400" ]] && break
+  sleep 2
+done
 
-api() { # api <action> <key> [extra query] [curl args...]
+api() { # api <action> <key> [extra query] [curl args...] — retries transient failures
   local action=$1 key=$2 extra=${3:-}
   shift 3 || shift 2
-  curl -sf -H "x-auth: $SECRET" "$@" "$UPLOAD_URL/?action=$action&key=$key$extra"
+  local out
+  for attempt in 1 2 3; do
+    if out=$(curl -sf --retry 2 -H "x-auth: $SECRET" "$@" "$UPLOAD_URL/?action=$action&key=$key$extra"); then
+      printf '%s' "$out"
+      return 0
+    fi
+    echo "  api $action attempt $attempt failed, retrying…" >&2
+    sleep $((attempt * 3))
+  done
+  echo "  api $action failed after 3 attempts" >&2
+  return 1
+}
+
+remote_size() { # current size of an object on the public bucket, or 0
+  curl -sI "$PUBLIC_URL/$1" | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {gsub(/\r/,""); print $2}' | tail -1
 }
 
 for f in "${files[@]}"; do
   [[ -f "$f" ]] || { echo "skip missing $f"; continue; }
   key=$(basename "$f")
   size=$(stat -f%z "$f")
+  if [[ "$key" == *.pmtiles && "$(remote_size "$key")" == "$size" ]]; then
+    echo "== $key already up to date ($((size / 1000000)) MB) =="
+    continue
+  fi
   echo "== $key ($((size / 1000000)) MB) =="
   if (( size < 90 * 1024 * 1024 )); then
     api put "$key" "" --data-binary "@$f" >/dev/null
@@ -71,10 +94,17 @@ for f in "${files[@]}"; do
   chunk=$((PART_MB * 1024 * 1024))
   while (( offset < size )); do
     n=$(( size - offset < chunk ? size - offset : chunk ))
-    resp=$(dd if="$f" bs=1m iseek=$((offset / 1024 / 1024)) count=$PART_MB 2>/dev/null \
-      | curl -sf -H "x-auth: $SECRET" --data-binary @- \
-        "$UPLOAD_URL/?action=part&key=$key&uploadId=$uploadId&part=$part")
-    etag=$(echo "$resp" | python3 -c "import sys,json;print(json.load(sys.stdin)['etag'])")
+    etag=""
+    for attempt in 1 2 3; do
+      resp=$(dd if="$f" bs=1m iseek=$((offset / 1024 / 1024)) count=$PART_MB 2>/dev/null \
+        | curl -sf -H "x-auth: $SECRET" --data-binary @- \
+          "$UPLOAD_URL/?action=part&key=$key&uploadId=$uploadId&part=$part") \
+        && etag=$(echo "$resp" | python3 -c "import sys,json;print(json.load(sys.stdin)['etag'])" 2>/dev/null) \
+        && [[ -n "$etag" ]] && break
+      echo "  part $part attempt $attempt failed, retrying…"
+      sleep $((attempt * 5))
+    done
+    [[ -n "$etag" ]] || { echo "FAILED: part $part gave no etag after 3 attempts"; exit 1; }
     [[ $part -gt 1 ]] && parts_json+=","
     parts_json+="{\"partNumber\":$part,\"etag\":\"$etag\"}"
     offset=$((offset + n))

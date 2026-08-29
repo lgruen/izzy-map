@@ -4,29 +4,16 @@
 //   topo://{z}/{x}/{y}   raster: OPFS topo archive -> LIST service -> blank
 //   pmtiles://...        vector: TASVEG archive (OPFS file or remote URL)
 import maplibregl, { type Map as MlMap } from "maplibre-gl";
-import { FetchSource, FileSource, PMTiles, Protocol, type Source, type RangeResponse } from "pmtiles";
+import { FetchSource, FileSource, PMTiles, Protocol } from "pmtiles";
 import { ARCHIVES, DATA_BASE, LIST_TOPO } from "./config";
 import { opfsFile } from "./storage";
 
 // 1x1 FULLY TRANSPARENT PNG for tiles we can't provide (offline + not
 // downloaded). Review caught the previous constant decoding to a
 // half-opaque BLUE pixel — offline gaps rendered as convincing fake ocean.
-const BLANK_PNG = Uint8Array.from(
-  atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="),
-  (c) => c.charCodeAt(0),
-);
-
-// Registered under "tasveg" when no archive is reachable: the pmtiles
-// Protocol would otherwise self-register a FetchSource against the RELATIVE
-// url "tasveg" on first tile request, poisoning the key.
-class UnavailableSource implements Source {
-  getKey(): string {
-    return "tasveg";
-  }
-  getBytes(): Promise<RangeResponse> {
-    return Promise.reject(new Error("archive not downloaded"));
-  }
-}
+export const BLANK_PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";
+const BLANK_PNG = Uint8Array.from(atob(BLANK_PNG_B64), (c) => c.charCodeAt(0));
 
 let topoArchive: PMTiles | null = null;
 let tasvegArchive: PMTiles | null = null;
@@ -71,8 +58,9 @@ export async function refreshArchives(): Promise<ArchiveStatus> {
     status.tasvegAvailable = true;
   }
   // Register under the stable key "tasveg" regardless of backing source
-  // (OPFS file vs remote URL), so the style can always say pmtiles://tasveg.
-  pmProtocol.tiles.set("tasveg", tasvegArchive ?? new PMTiles(new UnavailableSource()));
+  // (OPFS file vs remote URL), so the style can always say pmtiles://tasveg
+  // and the pmtiles Protocol never self-registers a relative-URL fetch.
+  pmProtocol.tiles.set("tasveg", tasvegArchive!);
 
   if (boundMap) {
     // Re-kick the vector source (clears MapLibre's permanent errored state)
@@ -97,10 +85,14 @@ export function registerProtocols(): void {
     const [z, x, y] = [Number(m[1]), Number(m[2]), Number(m[3])];
 
     if (topoArchive) {
-      const t = await topoArchive.getZxy(z, x, y);
-      if (t?.data) return { data: t.data };
-      // In-bbox gaps are pruned ocean -> blank is correct offline behaviour;
-      // fall through to network when online for anything outside the archive.
+      try {
+        const t = await topoArchive.getZxy(z, x, y);
+        if (t?.data) return { data: t.data };
+        // In-bbox gaps are pruned ocean -> blank is correct offline
+        // behaviour; fall through to network for anything outside.
+      } catch {
+        /* corrupt/unreadable archive must not block the network fallback */
+      }
     }
     try {
       // Always attempt (no navigator.onLine gate — it lies on iOS after
