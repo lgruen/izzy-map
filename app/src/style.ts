@@ -3,13 +3,32 @@
 // pipeline). Mimics LISTmap's "TASVEG 5.0" + "Outlines and Labels" look.
 import type { StyleSpecification, ExpressionSpecification } from "maplibre-gl";
 import communities from "./generated/tasveg_communities.json";
+import geologyUnits from "./generated/geology_units.json";
 import { ATTRIBUTION, TOPO_MAXZOOM } from "./config";
+
+export type OverlayMode = "veg" | "geo" | "off";
 
 export type Communities = Record<
   string,
   { name: string; group: string; color: string; outline: string; label: string }
 >;
 export const COMMUNITIES = communities as Communities;
+
+export type GeologyUnits = Record<
+  string,
+  {
+    description: string;
+    group: string;
+    strat: string;
+    maxAge: string;
+    minAge: string;
+    maxMa: number | null;
+    minMa: number | null;
+    color: string;
+    link: string;
+  }
+>;
+export const GEOLOGY_UNITS = geologyUnits as GeologyUnits;
 
 function colorMatch(): ExpressionSpecification {
   const pairs: string[] = [];
@@ -19,7 +38,10 @@ function colorMatch(): ExpressionSpecification {
   return ["match", ["get", "VEGCODE"], ...pairs, "#c8c8c8"] as unknown as ExpressionSpecification;
 }
 
-export function buildStyle(vegVisible: boolean, vegOpacity: number): StyleSpecification {
+export function buildStyle(mode: OverlayMode, opacity: number): StyleSpecification {
+  const vegVisible = mode === "veg";
+  const geoVisible = mode === "geo";
+  const vegOpacity = opacity;
   return {
     version: 8,
     // relative glyph path keeps it self-hosted (offline requirement)
@@ -36,6 +58,10 @@ export function buildStyle(vegVisible: boolean, vegOpacity: number): StyleSpecif
       tasveg: {
         type: "vector",
         url: "pmtiles://tasveg",
+      },
+      geology: {
+        type: "vector",
+        url: "pmtiles://geology",
       },
       selected: {
         type: "geojson",
@@ -61,6 +87,24 @@ export function buildStyle(vegVisible: boolean, vegOpacity: number): StyleSpecif
         minzoom: 11,
         layout: { visibility: vegVisible ? "visible" : "none" },
         paint: { "line-color": "#c8c800", "line-width": 1 },
+      },
+      {
+        id: "geology-fill",
+        type: "fill",
+        source: "geology",
+        "source-layer": "geology",
+        layout: { visibility: geoVisible ? "visible" : "none" },
+        // official MRT unit colour ships per-feature in the tiles
+        paint: { "fill-color": ["get", "color"], "fill-opacity": opacity },
+      },
+      {
+        id: "geology-outline",
+        type: "line",
+        source: "geology",
+        "source-layer": "geology",
+        minzoom: 9,
+        layout: { visibility: geoVisible ? "visible" : "none" },
+        paint: { "line-color": "#5a5147", "line-width": 0.8 },
       },
       {
         id: "selected-outline",

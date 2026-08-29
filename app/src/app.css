@@ -458,3 +458,18 @@ button { font-family: var(--sans); color: inherit; }
   font-size: 13px;
   font-weight: 600;
 }
+
+/* ---------- legend header controls ---------- */
+
+.leg-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-right: 40px; }
+.leg-head h2 { margin: 0 0 8px; }
+.leg-opacity { display: flex; border: 1px solid var(--hairline); border-radius: 9px; overflow: hidden; }
+.leg-op {
+  border: none;
+  background: none;
+  color: var(--stone);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+.leg-op.on { background: var(--accent); color: var(--accent-contrast); }

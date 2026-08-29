@@ -20,7 +20,7 @@ import json, time
 from pathlib import Path
 data = Path("data")
 archives = {}
-for key, fname in [("tasveg", "tasveg.pmtiles"), ("topo", "topo_tas.pmtiles")]:
+for key, fname in [("tasveg", "tasveg.pmtiles"), ("geology", "geology.pmtiles"), ("topo", "topo_tas.pmtiles")]:
     p = data / fname
     if p.exists():
         archives[key] = {"file": fname, "bytes": p.stat().st_size}
@@ -31,7 +31,7 @@ EOF
 
 files=("$@")
 if [[ ${#files[@]} -eq 0 ]]; then
-  files=(data/tasveg.pmtiles data/topo_tas.pmtiles data/data-manifest.json)
+  files=(data/tasveg.pmtiles data/geology.pmtiles data/topo_tas.pmtiles data/data-manifest.json)
 fi
 
 SECRET=$(openssl rand -hex 24)

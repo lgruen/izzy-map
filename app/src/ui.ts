@@ -8,7 +8,7 @@ import {
   partialBytes,
   storageInfo,
 } from "./storage";
-import { COMMUNITIES } from "./style";
+import { COMMUNITIES, GEOLOGY_UNITS, type OverlayMode } from "./style";
 import { refreshArchives } from "./protocol";
 import f2f from "./generated/f2f_index.json";
 
@@ -33,6 +33,21 @@ async function fetchManifest(): Promise<DataManifest | null> {
   } catch {
     return null;
   }
+}
+
+// Wired by main.ts so the legend can read/set the live overlay state.
+interface OverlayAccess {
+  getMode: () => OverlayMode;
+  getOpacity: () => number;
+  setOpacity: (v: number) => void;
+}
+let overlay: OverlayAccess = {
+  getMode: () => "veg",
+  getOpacity: () => 0.5,
+  setOpacity: () => {},
+};
+export function setOverlayAccess(a: OverlayAccess): void {
+  overlay = a;
 }
 
 const panel = () => document.getElementById("panel")!;
@@ -75,6 +90,7 @@ export async function openDownloads(): Promise<void> {
   const items: Item[] = [];
   for (const [key, label, hint] of [
     ["tasveg", "Vegetation map (TASVEG 5.0)", "statewide — the colour overlay + tap details"],
+    ["geology", "Geology map (1:500k, MRT)", "statewide — what rock am I standing on?"],
     ["topo", "Topographic base map", "statewide to zoom 15 — the map under it. Large!"],
   ] as const) {
     const name = ARCHIVES[key];
@@ -227,29 +243,53 @@ export async function openDownloads(): Promise<void> {
 // ---------- Legend ----------
 
 export function openLegend(): void {
-  const groups = new Map<string, string[]>();
-  for (const [code, m] of Object.entries(COMMUNITIES)) {
-    if (!groups.has(m.group)) groups.set(m.group, []);
-    groups.get(m.group)!.push(code);
+  const mode = overlay.getMode() === "geo" ? "geo" : "veg";
+  const slug = (g: string) => g.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+
+  let groups: Map<string, string[]>;
+  let row: (id: string) => string;
+  if (mode === "geo") {
+    groups = new Map();
+    for (const [symb, u] of Object.entries(GEOLOGY_UNITS)) {
+      if (!groups.has(u.group)) groups.set(u.group, []);
+      groups.get(u.group)!.push(symb);
+    }
+    row = (symb) => {
+      const u = GEOLOGY_UNITS[symb];
+      return `<div class="leg-row"><span class="swatch" style="background:${u.color}"></span>
+        <span><b>${symb}</b> ${u.description}</span></div>`;
+    };
+  } else {
+    groups = new Map();
+    for (const [code, m] of Object.entries(COMMUNITIES)) {
+      if (!groups.has(m.group)) groups.set(m.group, []);
+      groups.get(m.group)!.push(code);
+    }
+    row = (c) =>
+      `<div class="leg-row"><span class="swatch" style="background:${COMMUNITIES[c].color}"></span>
+       <span><b>${c}</b> ${COMMUNITIES[c].name.replace(/^\([A-Z]{3}\)\s*/, "")}</span></div>`;
   }
+
   const sorted = [...groups.entries()].sort();
-  const slug = (g: string) => g.replace(/[^a-z]+/gi, "-").toLowerCase();
+  const opacity = overlay.getOpacity();
+  // Chip labels: veg group first-words are unique; geology groups need more
+  // (three start with "Devonian"/"Late"/"Early") — truncate the full name.
+  const chipLabel = (g: string) =>
+    mode === "geo" ? (g.length > 22 ? g.slice(0, 21).trimEnd() + "…" : g) : g.split(/[ ,]/)[0];
   const el = openPanel(
-    `<div class="leg-top"><h2>Legend</h2>
+    `<div class="leg-top"><div class="leg-head"><h2>${mode === "geo" ? "Geology" : "Vegetation"} legend</h2>
+      <div class="leg-opacity" role="group" aria-label="Overlay strength">
+        <button class="leg-op ${opacity === 0.5 ? "on" : ""}" data-op="0.5">Full</button>
+        <button class="leg-op ${opacity === 0.25 ? "on" : ""}" data-op="0.25">Light</button>
+      </div></div>
       <div class="leg-chips">${sorted
-        .map(([g]) => `<button class="leg-chip" data-target="${slug(g)}">${g.split(/[ ,]/)[0]}</button>`)
+        .map(([g]) => `<button class="leg-chip" data-target="${slug(g)}">${chipLabel(g)}</button>`)
         .join("")}</div></div>` +
       sorted
         .map(
-          ([g, codes]) =>
-            `<h3 class="leg-h" id="leg-${slug(g)}">${g}<span class="leg-count">${codes.length}</span></h3>` +
-            codes
-              .map(
-                (c) =>
-                  `<div class="leg-row"><span class="swatch" style="background:${COMMUNITIES[c].color}"></span>
-                   <span><b>${c}</b> ${COMMUNITIES[c].name.replace(/^\([A-Z]{3}\)\s*/, "")}</span></div>`,
-              )
-              .join(""),
+          ([g, ids]) =>
+            `<h3 class="leg-h" id="leg-${slug(g)}">${g}<span class="leg-count">${ids.length}</span></h3>` +
+            ids.map(row).join(""),
         )
         .join(""),
   );
@@ -258,6 +298,13 @@ export function openLegend(): void {
     chip.onclick = () => {
       const h = el.querySelector<HTMLElement>(`#leg-${chip.dataset.target}`);
       if (h) inner.scrollTop = h.offsetTop - inner.querySelector<HTMLElement>(".leg-top")!.offsetHeight - 8;
+    };
+  }
+  for (const op of el.querySelectorAll<HTMLButtonElement>(".leg-op")) {
+    op.onclick = () => {
+      overlay.setOpacity(Number(op.dataset.op));
+      for (const b of el.querySelectorAll(".leg-op"))
+        b.classList.toggle("on", b === op);
     };
   }
 }
@@ -273,6 +320,7 @@ export function openAbout(): void {
     following — close the app or press the side button to save battery.</p>
     <p>Topographic Basemap from theLIST © State of Tasmania<br>
     TASVEG 5.0 from theLIST © State of Tasmania<br>
+    Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania<br>
     <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a></p>
     <p>Community descriptions: Kitchener &amp; Harris (2013), <i>From Forest to
     Fjaeldmark</i>, Ed. 2, DPIPWE — © Government of Tasmania.</p>

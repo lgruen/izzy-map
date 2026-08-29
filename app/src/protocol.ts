@@ -5,7 +5,7 @@
 //   pmtiles://...        vector: TASVEG archive (OPFS file or remote URL)
 import maplibregl, { type Map as MlMap } from "maplibre-gl";
 import { FetchSource, FileSource, PMTiles, Protocol } from "pmtiles";
-import { ARCHIVES, DATA_BASE, LIST_TOPO } from "./config";
+import { ARCHIVES, DATA_BASE, LIST_TOPO, VECTOR_ARCHIVES, type VectorKey } from "./config";
 import { opfsFile } from "./storage";
 
 // 1x1 FULLY TRANSPARENT PNG for tiles we can't provide (offline + not
@@ -16,7 +16,6 @@ export const BLANK_PNG_B64 =
 const BLANK_PNG = Uint8Array.from(atob(BLANK_PNG_B64), (c) => c.charCodeAt(0));
 
 let topoArchive: PMTiles | null = null;
-let tasvegArchive: PMTiles | null = null;
 let boundMap: MlMap | null = null;
 const pmProtocol = new Protocol();
 
@@ -29,13 +28,11 @@ export function bindMap(map: MlMap): void {
 
 export interface ArchiveStatus {
   topoLocal: boolean;
-  tasvegLocal: boolean;
-  tasvegAvailable: boolean; // local or remote reachable
+  vectorLocal: Record<VectorKey, boolean>;
 }
 export const status: ArchiveStatus = {
   topoLocal: false,
-  tasvegLocal: false,
-  tasvegAvailable: false,
+  vectorLocal: { tasveg: false, geology: false },
 };
 
 /** (Re)open archives from OPFS. Call at startup and after downloads. */
@@ -44,29 +41,23 @@ export async function refreshArchives(): Promise<ArchiveStatus> {
   topoArchive = topoFile ? new PMTiles(new FileSource(topoFile)) : null;
   status.topoLocal = !!topoFile;
 
-  const tasvegFile = await opfsFile(ARCHIVES.tasveg);
-  if (tasvegFile) {
-    tasvegArchive = new PMTiles(new FileSource(tasvegFile));
-    status.tasvegLocal = true;
-    status.tasvegAvailable = true;
-  } else {
-    status.tasvegLocal = false;
-    // Remote fallback (range requests against R2/dev server). Registered
-    // regardless of navigator.onLine — iOS standalone apps report stale
-    // offline states, and a failing fetch is handled anyway.
-    tasvegArchive = new PMTiles(new FetchSource(`${DATA_BASE}/${ARCHIVES.tasveg}`));
-    status.tasvegAvailable = true;
+  for (const key of VECTOR_ARCHIVES) {
+    const file = await opfsFile(ARCHIVES[key]);
+    status.vectorLocal[key] = !!file;
+    // Remote fallback (range requests against R2/dev server) when no local
+    // file — registered regardless of navigator.onLine (it lies on iOS),
+    // and a failing fetch is handled anyway. Stable keys keep the style's
+    // pmtiles://<key> urls valid and stop the pmtiles Protocol from
+    // self-registering a relative-URL fetch.
+    const archive = file
+      ? new PMTiles(new FileSource(file))
+      : new PMTiles(new FetchSource(`${DATA_BASE}/${ARCHIVES[key]}`));
+    pmProtocol.tiles.set(key, archive);
+    // Re-kick the live source (clears MapLibre's permanent errored state).
+    (boundMap?.getSource(key) as { setUrl?: (u: string) => void } | undefined)
+      ?.setUrl?.(`pmtiles://${key}`);
   }
-  // Register under the stable key "tasveg" regardless of backing source
-  // (OPFS file vs remote URL), so the style can always say pmtiles://tasveg
-  // and the pmtiles Protocol never self-registers a relative-URL fetch.
-  pmProtocol.tiles.set("tasveg", tasvegArchive!);
-
   if (boundMap) {
-    // Re-kick the vector source (clears MapLibre's permanent errored state)
-    // and drop cached raster tiles so a fresh topo archive shows up.
-    const src = boundMap.getSource("tasveg") as { setUrl?: (u: string) => void } | undefined;
-    src?.setUrl?.("pmtiles://tasveg");
     try {
       (boundMap as unknown as { refreshTiles: (id: string) => void }).refreshTiles("topo");
     } catch {

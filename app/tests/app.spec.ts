@@ -65,25 +65,57 @@ test("legend lists all 156 communities in 11 groups", async ({ page }) => {
   await expect(panel.locator("h3")).toHaveCount(11);
 });
 
-test("veg layer cycles full -> light -> off -> full", async ({ page }) => {
-  const opacity = () =>
-    page.evaluate(() => {
-      const map = (window as never as { __map: import("maplibre-gl").Map }).__map;
-      return map.getLayoutProperty("tasveg-fill", "visibility") === "none"
-        ? 0
-        : (map.getPaintProperty("tasveg-fill", "fill-opacity") as number);
-    });
-  expect(await opacity()).toBe(0.5);
-  await page.locator("#btn-veg").click(); // light
-  await expect.poll(opacity).toBe(0.25);
-  expect(await centerFeature(page)).not.toBeNull();
-  await page.locator("#btn-veg").click(); // off
-  await expect.poll(opacity).toBe(0);
-  await expect.poll(() => centerFeature(page), { timeout: 15_000 }).toBeNull();
-  await page.locator("#btn-veg").click(); // back to full
-  await expect.poll(opacity).toBe(0.5);
-  await expect.poll(() => centerFeature(page), { timeout: 15_000 }).not.toBeNull();
+test("overlay switcher cycles vegetation -> geology -> off", async ({ page }) => {
+  const vis = (layer: string) =>
+    page.evaluate(
+      (l) => (window as never as { __map: import("maplibre-gl").Map }).__map.getLayoutProperty(l, "visibility"),
+      layer,
+    );
+  expect(await vis("tasveg-fill")).toBe("visible");
+  expect(await vis("geology-fill")).toBe("none");
+  await page.locator("#btn-veg").click(); // -> geology
+  expect(await vis("tasveg-fill")).toBe("none");
+  expect(await vis("geology-fill")).toBe("visible");
+  await expect.poll(() => centerFeature(page, "geology-fill"), { timeout: 20_000 }).not.toBeNull();
+  const geo = await centerFeature(page, "geology-fill");
+  expect(geo!.SYMB).toBeTruthy();
+  await page.locator("#btn-veg").click(); // -> off
+  expect(await vis("tasveg-fill")).toBe("none");
+  expect(await vis("geology-fill")).toBe("none");
+  await page.locator("#btn-veg").click(); // -> vegetation again
+  expect(await vis("tasveg-fill")).toBe("visible");
 });
+
+test("geology tap shows unit details with official colour", async ({ page }) => {
+  await page.locator("#btn-veg").click(); // vegetation -> geology
+  await expect.poll(() => centerFeature(page, "geology-fill"), { timeout: 20_000 }).not.toBeNull();
+  const geo = await centerFeature(page, "geology-fill");
+  const viewport = page.viewportSize()!;
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  const sheet = page.locator("#sheet");
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toContainText(geo!.SYMB);
+  await expect(sheet).toContainText(geo!.DESC.slice(0, 20));
+  const swatchColor = await sheet
+    .locator(".swatch")
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  const hex = (geo as { color: string }).color;
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  expect(swatchColor.replace(/\s/g, "")).toBe(`rgb(${r},${g},${b})`);
+});
+
+test("legend follows the active overlay and sets opacity", async ({ page }) => {
+  await page.locator("#btn-veg").click(); // -> geology
+  await page.locator("#btn-legend").click();
+  const panel = page.locator("#panel");
+  await expect(panel).toContainText("Geology legend");
+  await expect(panel.locator("h3")).toHaveCount(12);
+  await panel.locator('.leg-op[data-op="0.25"]').click();
+  const opacity = await page.evaluate(
+    () => (window as never as { __map: import("maplibre-gl").Map }).__map.getPaintProperty("geology-fill", "fill-opacity"),
+  );
+  expect(opacity).toBe(0.25);
+})
 
 test("fallback tile is fully transparent (never fake ocean)", async ({ page }) => {
   // Regression: an earlier constant decoded to a half-opaque BLUE pixel, so

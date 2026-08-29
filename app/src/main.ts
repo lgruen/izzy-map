@@ -3,10 +3,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "./app.css";
 import { HOME } from "./config";
 import { bindMap, registerProtocols, refreshArchives } from "./protocol";
-import { buildStyle } from "./style";
+import { buildStyle, type OverlayMode } from "./style";
 import { wireDetails } from "./details";
 import { wireCoordReadout } from "./mga";
-import { openAbout, openDownloads, openLegend, closePanel } from "./ui";
+import { openAbout, openDownloads, openLegend, closePanel, setOverlayAccess } from "./ui";
 import { ensurePersistence } from "./storage";
 
 async function boot(): Promise<void> {
@@ -14,16 +14,18 @@ async function boot(): Promise<void> {
   registerProtocols();
   const status = await refreshArchives();
 
-  // Vegetation layer cycles: full (50%) -> light (25%) -> off
-  const VEG_STATES = [0.5, 0.25, 0] as const;
-  const storedVeg = Number(localStorage.getItem("vegState") ?? "0");
-  let vegState = Number.isInteger(storedVeg) ? ((storedVeg % VEG_STATES.length) + VEG_STATES.length) % VEG_STATES.length : 0;
-  const vegOpacity = VEG_STATES[vegState] || 0.5;
-  const vegVisible = VEG_STATES[vegState] > 0;
+  // Overlay switcher: Vegetation -> Geology -> Off. Opacity (Full/Light)
+  // lives in the legend panel.
+  const MODES = ["veg", "geo", "off"] as const;
+  const storedMode = localStorage.getItem("overlayMode");
+  let mode: OverlayMode = (MODES as readonly string[]).includes(storedMode ?? "")
+    ? (storedMode as OverlayMode)
+    : "veg";
+  let opacity = Number(localStorage.getItem("overlayOpacity")) === 0.25 ? 0.25 : 0.5;
 
   const map = new maplibregl.Map({
     container: "map",
-    style: buildStyle(vegVisible, vegOpacity),
+    style: buildStyle(mode, opacity),
     center: HOME.center,
     zoom: HOME.zoom,
     maxBounds: [
@@ -106,26 +108,39 @@ async function boot(): Promise<void> {
 
   // Toolbar buttons
   const byId = (id: string) => document.getElementById(id)!;
-  const applyVegState = () => {
+  const applyOverlay = () => {
+    byId("btn-veg").classList.toggle("off", mode === "off");
+    byId("btn-veg").querySelector(".icon-veg")!.toggleAttribute("hidden", mode === "geo");
+    byId("btn-veg").querySelector(".icon-geo")!.toggleAttribute("hidden", mode !== "geo");
+    byId("btn-veg").setAttribute(
+      "aria-label",
+      mode === "veg" ? "Overlay: vegetation — tap for geology"
+        : mode === "geo" ? "Overlay: geology — tap to hide overlays"
+        : "Overlays hidden — tap for vegetation",
+    );
     if (!map.isStyleLoaded() && !map.loaded()) return; // applied again on load
-    const opacity = VEG_STATES[vegState];
-    const visible = opacity > 0;
     for (const l of ["tasveg-fill", "tasveg-outline", "tasveg-label"])
-      map.setLayoutProperty(l, "visibility", visible ? "visible" : "none");
-    if (visible) map.setPaintProperty("tasveg-fill", "fill-opacity", opacity);
-    byId("btn-veg").classList.toggle("off", !visible);
-    byId("btn-veg").classList.toggle("light", opacity === 0.25);
-    byId("btn-veg").setAttribute("aria-label",
-      opacity === 0.5 ? "Vegetation: full — tap for light" :
-      opacity === 0.25 ? "Vegetation: light — tap to hide" :
-      "Vegetation: hidden — tap to show");
+      map.setLayoutProperty(l, "visibility", mode === "veg" ? "visible" : "none");
+    for (const l of ["geology-fill", "geology-outline"])
+      map.setLayoutProperty(l, "visibility", mode === "geo" ? "visible" : "none");
+    if (mode === "veg") map.setPaintProperty("tasveg-fill", "fill-opacity", opacity);
+    if (mode === "geo") map.setPaintProperty("geology-fill", "fill-opacity", opacity);
   };
   byId("btn-veg").onclick = () => {
-    vegState = (vegState + 1) % VEG_STATES.length;
-    localStorage.setItem("vegState", String(vegState));
-    applyVegState();
+    mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+    localStorage.setItem("overlayMode", mode);
+    applyOverlay();
   };
-  map.on("load", applyVegState);
+  map.on("load", applyOverlay);
+  setOverlayAccess({
+    getMode: () => mode,
+    getOpacity: () => opacity,
+    setOpacity: (v: number) => {
+      opacity = v;
+      localStorage.setItem("overlayOpacity", String(v));
+      applyOverlay();
+    },
+  });
   byId("btn-legend").onclick = () => void openLegend();
   byId("btn-downloads").onclick = () => void openDownloads();
   byId("btn-about").onclick = () => void openAbout();
@@ -140,7 +155,7 @@ async function boot(): Promise<void> {
   // First-run state: no offline data downloaded yet. Shown regardless of
   // navigator.onLine — a fresh offline launch would otherwise be a blank,
   // unexplained map (and onLine lies on iOS anyway).
-  if (!status.tasvegLocal && !status.topoLocal) {
+  if (!status.vectorLocal.tasveg && !status.topoLocal) {
     const nudge = byId("nudge");
     nudge.hidden = false;
     byId("nudge-text").textContent = navigator.onLine

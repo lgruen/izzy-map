@@ -1,7 +1,7 @@
 // Tap -> community details bottom sheet (the offline "identify" panel).
 import type maplibregl from "maplibre-gl";
 import type { Map, MapGeoJSONFeature } from "maplibre-gl";
-import { COMMUNITIES } from "./style";
+import { COMMUNITIES, GEOLOGY_UNITS } from "./style";
 import f2f from "./generated/f2f_index.json";
 import { opfsFile } from "./storage";
 // Static import (not dynamic): a skipWaiting SW update while the app is
@@ -23,7 +23,11 @@ export function wireDetails(map: Map): void {
   };
 
   map.on("click", (e) => {
-    const feats = map.queryRenderedFeatures(e.point, { layers: ["tasveg-fill"] });
+    // Hidden layers yield nothing, so this naturally answers for whichever
+    // overlay is active.
+    const feats = map.queryRenderedFeatures(e.point, {
+      layers: ["tasveg-fill", "geology-fill"],
+    });
     if (!feats.length) {
       clearSelection();
       return;
@@ -35,8 +39,50 @@ export function wireDetails(map: Map): void {
       geometry: feats[0].geometry,
       properties: {},
     });
-    show(feats[0]);
+    if (feats[0].layer.id === "geology-fill") showGeology(feats[0]);
+    else show(feats[0]);
   });
+
+  function showGeology(f: MapGeoJSONFeature) {
+    const p = f.properties as Record<string, string>;
+    const symb = p.SYMB ?? "?";
+    const unit = GEOLOGY_UNITS[symb];
+    const ages =
+      unit && (unit.maxAge || unit.minAge)
+        ? `${unit.maxAge}${unit.minAge && unit.minAge !== unit.maxAge ? " – " + unit.minAge : ""}` +
+          (unit.maxMa != null && unit.minMa != null
+            ? ` (≈${Math.round(unit.maxMa)}–${Math.round(unit.minMa)} Ma)`
+            : "")
+        : "";
+    const rows: [string, string | undefined][] = [
+      ["Stratigraphy", p.STRAT || unit?.strat],
+      ["Age", ages],
+      ["Group", unit?.group],
+    ];
+    sheet.innerHTML = `
+      <div class="handle"></div>
+      <button class="sheet-close" aria-label="Close">×</button>
+      <div class="sheet-head">
+        <span class="swatch" style="background:${unit?.color ?? "#c8c8c8"}"></span>
+        <div>
+          <span class="sheet-code">${esc(symb)}</span>
+          <div class="sheet-name">${esc(p.DESC || unit?.description || "Unknown unit")}</div>
+        </div>
+      </div>
+      ${rows
+        .filter(([, v]) => v && v.trim())
+        .map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(v!)}</span></div>`)
+        .join("")}
+      ${unit?.link
+        ? `<button class="sheet-desc" data-link="${esc(unit.link)}">More about this unit
+             <small>Geoscience Australia — needs reception</small></button>`
+        : ""}`;
+    sheet.hidden = false;
+    sheet.querySelector<HTMLButtonElement>(".sheet-close")!.onclick = clearSelection;
+    sheet.querySelector<HTMLButtonElement>(".sheet-desc")?.addEventListener("click", () => {
+      window.open(unit!.link, "_blank");
+    });
+  }
 
   function show(f: MapGeoJSONFeature) {
     const p = f.properties as Record<string, string>;
