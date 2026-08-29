@@ -221,6 +221,27 @@ test("offline: descriptions open from OPFS via the in-app viewer", async ({ page
   await page.locator(".sheet-desc").click();
   await expect(page.locator("#pdfview")).toBeVisible();
   await expect(page.locator(".pdf-page canvas").first()).toBeVisible({ timeout: 20_000 });
+
+  // Pinch out (fingers spread to 2× apart): pages must re-lay-out at twice
+  // the width and re-render sharp at the new scale.
+  const before = await page.locator(".pdf-page").first().evaluate((el) => el.clientWidth);
+  await page.evaluate(() => {
+    const scroll = document.querySelector<HTMLElement>(".pdf-scroll")!;
+    const send = (type: string, pts: [number, number][]) => {
+      const touches = pts.map(
+        ([clientX, clientY], identifier) =>
+          new Touch({ identifier, target: scroll, clientX, clientY }),
+      );
+      scroll.dispatchEvent(
+        new TouchEvent(type, { touches, changedTouches: touches, bubbles: true, cancelable: true }),
+      );
+    };
+    send("touchstart", [[150, 300], [250, 300]]);
+    send("touchmove", [[100, 300], [300, 300]]);
+    send("touchend", []);
+  });
+  await expect(page.locator(".pdf-page").first()).toHaveJSProperty("clientWidth", before * 2);
+  await expect(page.locator(".pdf-page canvas").first()).toBeVisible({ timeout: 20_000 });
 });
 
 test("interrupted archive download resumes from completed chunks", async ({ page, browserName }) => {

@@ -422,21 +422,17 @@ button { font-family: var(--sans); color: inherit; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
   padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
   background: #8a8f88;
+  touch-action: pan-x pan-y; /* native panning; pinch-zoom is ours (viewer.ts) */
+}
+.pdf-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .pdf-page { flex: none; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,0.35); }
 .pdf-scroll.zoomed { align-items: flex-start; }
-.pdf-zoom {
-  min-width: 44px;
-  height: 44px;
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  background: none;
-  color: var(--accent);
-  font: 600 13px/1 var(--mono);
-}
 .pdf-error { color: var(--stone); padding: 20px; }
 
 /* ---------- legend navigation ---------- */

@@ -24,14 +24,14 @@ export async function openPdfViewer(
     <div class="pdf-bar">
       <span class="pdf-title">${title.replace(/</g, "&lt;")}</span>
       <span class="pdf-pageno"></span>
-      <button class="pdf-zoom" aria-label="Zoom">1×</button>
       <button class="pdf-close" aria-label="Close">×</button>
     </div>
-    <div class="pdf-scroll"></div>`;
+    <div class="pdf-scroll"><div class="pdf-pages"></div></div>`;
   root.hidden = false;
   root.querySelector<HTMLButtonElement>(".pdf-close")!.onclick = close;
 
   const scroll = root.querySelector<HTMLElement>(".pdf-scroll")!;
+  const pages = root.querySelector<HTMLElement>(".pdf-pages")!;
   let userScrolled = false;
   let doc: PDFDocumentProxy;
   try {
@@ -49,12 +49,11 @@ export async function openPdfViewer(
   currentDoc = doc;
 
   // Uniform-size placeholders sized from page 1, lazily rendered on approach.
-  // A4 two-column text at phone width is unreadably small, so a zoom cycle
-  // re-lays-out at wider widths with horizontal panning.
+  // A4 two-column text at phone width is unreadably small, so pinch-zoom
+  // re-lays-out at wider widths with two-axis panning (native scrolling).
   const first = await doc.getPage(1);
   const baseVp = first.getViewport({ scale: 1 });
-  const ZOOMS = [1, 1.6, 2.2];
-  let zoomIdx = 0;
+  const MAX_ZOOM = 3;
   const fitWidth = Math.min(scroll.clientWidth, 900);
   let width = fitWidth;
   let scale = width / baseVp.width;
@@ -65,7 +64,7 @@ export async function openPdfViewer(
     holder.dataset.page = String(i);
     holder.style.width = `${width}px`;
     holder.style.height = `${baseVp.height * scale}px`;
-    scroll.appendChild(holder);
+    pages.appendChild(holder);
     holders.push(holder);
   }
 
@@ -75,7 +74,11 @@ export async function openPdfViewer(
   // small LRU window of rendered pages; evicted holders return to
   // placeholders and re-render on approach.
   const dpr = Math.min(devicePixelRatio || 1, 2);
-  const MAX_RENDERED = 10;
+  // A page at zoom z costs z² the pixels, so the LRU window shrinks as zoom
+  // grows to keep total canvas memory roughly flat (10 pages at fit width,
+  // ~5 at 3×; 48 ≈ the old ceiling of 10 pages at 2.2×).
+  const maxRendered = () =>
+    Math.min(10, Math.max(4, Math.floor(48 / (width / fitWidth) ** 2)));
   const rendered: number[] = []; // LRU order, most recent last
   const inFlight = new Set<number>();
   let generation = 0; // bumped by zoom: in-flight renders at old scale discard
@@ -100,7 +103,7 @@ export async function openPdfViewer(
       if (gen !== generation) return; // zoomed while rendering — stale size
       holders[n - 1].replaceChildren(canvas);
       rendered.push(n);
-      while (rendered.length > MAX_RENDERED) {
+      while (rendered.length > maxRendered()) {
         const evict = rendered.shift()!;
         holders[evict - 1].replaceChildren();
       }
@@ -117,28 +120,122 @@ export async function openPdfViewer(
     for (let n = first; n <= Math.min(doc.numPages, first + 3); n++) void render(n);
   };
 
-  const zoomBtn = root.querySelector<HTMLButtonElement>(".pdf-zoom")!;
-  zoomBtn.onclick = () => {
-    const keepPage = scroll.scrollTop / pageStride; // fractional page position
-    zoomIdx = (zoomIdx + 1) % ZOOMS.length;
-    width = Math.round(fitWidth * ZOOMS[zoomIdx]);
-    scale = width / baseVp.width;
-    pageStride = baseVp.height * scale + 8;
-    zoomBtn.textContent = `${ZOOMS[zoomIdx]}×`;
-    generation++; // in-flight renders at the old scale must discard
-    rendered.length = 0; // all canvases are the wrong size now
-    userScrolled = true; // a zoom must also stop the initial jump loop
-    for (const h of holders) {
-      h.replaceChildren();
-      h.style.width = `${width}px`;
-      h.style.height = `${baseVp.height * scale}px`;
+  // Continuous zoom: pinch on touch, ctrl+wheel on desktop (trackpads report
+  // pinches that way). Re-rendering pages on every finger move would melt the
+  // phone, so during the gesture only the pages container is scaled with a
+  // CSS transform (cheap but blurry); when the gesture ends the layout
+  // re-flows at the final width and pages re-render sharp. Panning needs no
+  // code at all — it's native two-axis scrolling.
+  const clampF = (f: number) =>
+    Math.min(Math.max(f, fitWidth / width), (fitWidth * MAX_ZOOM) / width);
+
+  type Gesture = { xw: number; yw: number; xRel: number; yRel: number; f: number };
+  /** Anchor a gesture at a viewport point: xw/yw is the document point under
+   * it in pages-container coordinates, xRel/yRel its position in the scroll
+   * viewport. The preview transform and the final re-layout both pin xw/yw
+   * to xRel/yRel, so the spot under the fingers never jumps. */
+  const startGesture = (clientX: number, clientY: number): Gesture => {
+    const r = scroll.getBoundingClientRect();
+    const xRel = clientX - r.left;
+    const yRel = clientY - r.top;
+    const g = {
+      xw: scroll.scrollLeft + xRel - pages.offsetLeft,
+      yw: scroll.scrollTop + yRel - pages.offsetTop,
+      xRel,
+      yRel,
+      f: 1,
+    };
+    pages.style.transformOrigin = `${g.xw}px ${g.yw}px`;
+    return g;
+  };
+
+  const relayout = (g: Gesture) => {
+    const newWidth = Math.round(width * clampF(g.f));
+    const ratio = newWidth / width;
+    if (ratio !== 1) {
+      width = newWidth;
+      scale = width / baseVp.width;
+      pageStride = baseVp.height * scale + 8;
+      generation++; // in-flight renders at the old scale must discard
+      rendered.length = 0; // all canvases are the wrong size now
+      for (const h of holders) {
+        h.replaceChildren();
+        h.style.width = `${width}px`;
+        h.style.height = `${baseVp.height * scale}px`;
+      }
+      // Centering a wider-than-viewport flex child makes its left edge
+      // unreachable — switch to flex-start once pages overflow.
+      scroll.classList.toggle("zoomed", width > scroll.clientWidth);
     }
-    scroll.classList.toggle("zoomed", zoomIdx > 0);
-    scroll.scrollTop = keepPage * pageStride;
+    userScrolled = true; // a zoom must also stop the initial jump loop
+    pages.style.transform = "";
+    // Reading offsetLeft/Top here forces layout, so the centering offset is
+    // the post-zoom one.
+    scroll.scrollLeft = g.xw * ratio + pages.offsetLeft - g.xRel;
+    scroll.scrollTop = g.yw * ratio + pages.offsetTop - g.yRel;
     // IO won't re-fire for holders that never left its window — render the
     // visible ones explicitly or the page being read stays blank.
     renderViewport();
   };
+
+  let pinch: (Gesture & { dist: number; startX: number; startY: number }) | null = null;
+  const mid = (t: TouchList) => ({
+    x: (t[0].clientX + t[1].clientX) / 2,
+    y: (t[0].clientY + t[1].clientY) / 2,
+    dist: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY),
+  });
+  scroll.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length !== 2) return;
+      e.preventDefault(); // our pinch, not Safari's page zoom
+      const m = mid(e.touches);
+      pinch = { ...startGesture(m.x, m.y), dist: m.dist, startX: m.x, startY: m.y };
+    },
+    { passive: false },
+  );
+  scroll.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const m = mid(e.touches);
+      const r = scroll.getBoundingClientRect();
+      pinch.f = clampF(m.dist / pinch.dist);
+      // Follow the midpoint too, so two-finger panning works mid-pinch.
+      pinch.xRel = m.x - r.left;
+      pinch.yRel = m.y - r.top;
+      pages.style.transform = `translate(${m.x - pinch.startX}px, ${
+        m.y - pinch.startY
+      }px) scale(${pinch.f})`;
+    },
+    { passive: false },
+  );
+  const endPinch = () => {
+    if (!pinch) return;
+    relayout(pinch);
+    pinch = null;
+  };
+  scroll.addEventListener("touchend", endPinch);
+  scroll.addEventListener("touchcancel", endPinch);
+
+  let wheel: (Gesture & { timer: number }) | null = null;
+  scroll.addEventListener(
+    "wheel",
+    (e) => {
+      if (!e.ctrlKey) return; // plain wheel keeps scrolling natively
+      e.preventDefault(); // don't zoom the whole app
+      wheel ??= { ...startGesture(e.clientX, e.clientY), timer: 0 };
+      clearTimeout(wheel.timer);
+      wheel.f = clampF(wheel.f * Math.exp(-e.deltaY / 100));
+      pages.style.transform = `scale(${wheel.f})`;
+      wheel.timer = window.setTimeout(() => {
+        relayout(wheel!);
+        wheel = null;
+      }, 140);
+    },
+    { passive: false },
+  );
 
   const io = new IntersectionObserver(
     (entries) => {
