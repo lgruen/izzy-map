@@ -67,6 +67,26 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 ## Gotchas discovered so far
 
 - LIST ArcGIS tile path is `{z}/{y}/{x}` (row before column).
+- Author CSS `display:` on an element defeats the `hidden` attribute — the
+  app.css `[hidden]{display:none!important}` rule guards this.
+- `wrangler r2 bucket cors set` wants `{"rules":[{"allowed":{...}}]}`, NOT
+  the S3-style `[{AllowedOrigins:...}]` — the wrong shape fails silently if
+  you pipe the output away. Always verify with a curl -H "Origin:".
+- iOS Safari can paint inline SVGs at viewBox scale before author CSS
+  applies — give toolbar/inline SVGs explicit width/height attributes.
+- Playwright's WebKit build has NO OPFS write support (and desktop WebKit
+  quirks around it) — all OPFS-write tests run in the Chromium project;
+  real-iOS verification happens on the partner's phone.
+- OPFS `createWritable({keepExistingData:true})` copies the whole file into
+  its swap on every open — never use it for incremental appends to large
+  files (hence the chunked part-file download design in storage.ts).
+- WebKit scroll anchoring walks scrollTop as content renders above the
+  viewport; the PDF viewer computes scroll targets arithmetically and
+  re-asserts (see viewer.ts).
+- pmtiles `Protocol` self-registers a FetchSource for unknown keys against a
+  RELATIVE url — always keep the "tasveg" key registered.
+- MapLibre never retries an errored source — after archive changes call
+  `setUrl()` to re-kick (protocol.ts refreshArchives does this).
 - The ArcGIS `drawingInfo` colours are wrong for 67 hatch-patterned
   communities (they give the hatch-line colour, often black) — always use
   the QML.
@@ -118,3 +138,12 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   adversarial review round in flight. Xcode + iOS 26.5 simulator installed
   (Leo has no iPhone — simulator is the iOS test bed, partner's phone the
   target).
+- 2026-08-30 (early): both archives live on R2 (topo_tas 2.04 GB z0-15 incl.
+  Bass Strait islands, tasveg 360 MB); TWO adversarial review rounds (~40
+  findings) fixed — highlights: SW precache missed the pdf.js worker,
+  half-opaque-blue "blank" tile, downloads state machine, chunked resumable
+  download redesign, F2F proxy made non-caching, GHC/NBA page anchors, R2
+  CORS never actually applied. 15 Playwright tests green. Remaining known
+  minors: no drag-to-dismiss on sheets (handle is decorative), F2F size
+  hardcoded 37 MB, veg-state apply skipped if style mid-load (self-heals),
+  px-fixed chrome text (no Dynamic Type).

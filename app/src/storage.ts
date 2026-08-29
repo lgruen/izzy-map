@@ -111,7 +111,13 @@ async function partsDirOf(
   try {
     const { dir, base } = await resolvePath(name, create);
     return await dir.getDirectoryHandle(base + ".parts", { create });
-  } catch {
+  } catch (e) {
+    if (create) {
+      // probing (create=false) returns null; a real download must surface
+      // a meaningful error instead of crashing on a null handle later
+      throw new Error("Offline storage isn't available in this browser");
+    }
+    void e;
     return null;
   }
 }
@@ -177,7 +183,7 @@ async function runDownload(
     // Cancels can surface as raw AbortErrors from any await — normalize.
     // (But never mask a deliberate pre-abort error like the quota check.)
     if (entry.controller.signal.aborted && (e as Error).name === "AbortError")
-      throw new Error("paused — tap Resume to continue");
+      throw new Error("paused — tap the button to continue");
     throw e;
   }
 }
@@ -189,7 +195,7 @@ async function runDownloadInner(
   chunkSize: number,
 ): Promise<void> {
   const signal = entry.controller.signal;
-  const pd = (await partsDirOf(name, true))!;
+  const pd = (await partsDirOf(name, true))!; // throws with a clear message if OPFS is missing
 
   let chunks = await completedChunks(pd);
   // contiguous prefix of completed chunks is the resume point
