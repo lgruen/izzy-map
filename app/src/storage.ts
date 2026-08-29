@@ -94,6 +94,17 @@ export function download(
 }
 
 async function runDownload(url: string, name: string, entry: Inflight): Promise<void> {
+  try {
+    await runDownloadInner(url, name, entry);
+  } catch (e) {
+    // Cancels can surface as raw AbortErrors from any await — normalize.
+    if (entry.controller.signal.aborted)
+      throw new Error("paused — tap Resume to continue");
+    throw e;
+  }
+}
+
+async function runDownloadInner(url: string, name: string, entry: Inflight): Promise<void> {
   const signal = entry.controller.signal;
   const { dir, base } = await resolvePath(name, true);
   const tmp = await dir.getFileHandle(base + ".part", { create: true });
@@ -156,8 +167,8 @@ async function runDownload(url: string, name: string, entry: Inflight): Promise<
     await writable.close();
   } catch (e) {
     await writable.abort().catch(() => {});
-    if (signal.aborted) throw new Error("cancelled — tap Download to resume");
-    throw new Error("Connection lost — tap Download to resume where it left off");
+    if (signal.aborted) throw new Error("paused — tap Resume to continue");
+    throw new Error("Connection lost — tap Resume to continue where it left off");
   }
 
   if (total && offset !== total)

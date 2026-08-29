@@ -188,3 +188,30 @@ test("offline: descriptions open from OPFS via the in-app viewer", async ({ page
   await expect(page.locator("#pdfview")).toBeVisible();
   await expect(page.locator(".pdf-page canvas").first()).toBeVisible({ timeout: 20_000 });
 });
+
+test("interrupted archive download resumes and validates", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  await routeTasvegFixture(page);
+  await page.goto("/");
+  await waitForMapIdle(page);
+  const result = await page.evaluate(async () => {
+    const { download, opfsFile, partialBytes } = await import("/src/storage.ts");
+    // First attempt: abort partway by racing a cancel via the registry.
+    const { activeDownload } = await import("/src/storage.ts");
+    const p1 = download("/dev-data/tasveg.pmtiles", "resume-test.pmtiles");
+    await new Promise((r) => setTimeout(r, 30)); // let some bytes land
+    activeDownload("resume-test.pmtiles")?.cancel();
+    const firstError = await p1.then(() => null, (e: Error) => e.message);
+    const partAfterCancel = await partialBytes("resume-test.pmtiles");
+    // Second attempt: must resume (or restart) and complete with valid magic.
+    await download("/dev-data/tasveg.pmtiles", "resume-test.pmtiles");
+    const file = await opfsFile("resume-test.pmtiles");
+    const head = new TextDecoder().decode(
+      new Uint8Array(await file!.slice(0, 7).arrayBuffer()),
+    );
+    return { firstError, partAfterCancel, size: file!.size, head };
+  });
+  expect(result.head).toBe("PMTiles");
+  expect(result.size).toBeGreaterThan(3_000_000);
+  expect(result.firstError?.toLowerCase()).toMatch(/paused|resume/);
+});
