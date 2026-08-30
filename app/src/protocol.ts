@@ -33,11 +33,13 @@ export interface ArchiveStatus {
 }
 export const status: ArchiveStatus = {
   topoLocal: false,
-  vectorLocal: { tasveg: false, geology: false },
+  vectorLocal: { tasveg: false, geology: false, pre1750: false },
 };
 
-/** (Re)open archives from OPFS. Call at startup and after downloads. */
-export async function refreshArchives(): Promise<ArchiveStatus> {
+/** (Re)open archives from OPFS. Call at startup and after downloads; pass
+ * rekickRemote on offline->online transitions so remote-backed sources that
+ * errored while offline get retried (MapLibre never retries on its own). */
+export async function refreshArchives(rekickRemote = false): Promise<ArchiveStatus> {
   const topoFile = await opfsFile(ARCHIVES.topo);
   topoArchive = topoFile ? new PMTiles(new FileSource(topoFile)) : null;
   status.topoLocal = !!topoFile;
@@ -48,7 +50,24 @@ export async function refreshArchives(): Promise<ArchiveStatus> {
     const backing = file ? `local:${file.size}:${file.lastModified}` : "remote";
     const changed = lastBacking.get(key) !== backing;
     lastBacking.set(key, backing);
-    if (!changed) continue; // avoid pointless TileJSON/tile refetch churn
+    if (!changed) {
+      // Unchanged backing: keep the PMTiles instance (its header/directory
+      // cache) and normally skip the setUrl churn (TileJSON + in-view tile
+      // refetch). Exception: an unchanged "remote" on an explicit online
+      // re-kick — a remote source that errored while offline is never
+      // retried by MapLibre, and "remote" -> "remote" is exactly the state
+      // the window 'online' listener fires in (review finding — without
+      // this the listener was dead code for remote-only archives).
+      if (!(rekickRemote && !file)) continue;
+      // A FRESH instance is required: pmtiles' SharedPromiseCache memoizes
+      // even a REJECTED header promise, so re-kicking the retained instance
+      // would replay the offline error forever (verified in pmtiles source).
+      pmProtocol.tiles.set(
+        key, new PMTiles(new FetchSource(`${DATA_BASE}/${ARCHIVES[key]}`)));
+      (boundMap?.getSource(key) as { setUrl?: (u: string) => void } | undefined)
+        ?.setUrl?.(`pmtiles://${key}`);
+      continue;
+    }
     // Remote fallback (range requests against R2/dev server) when no local
     // file — registered regardless of navigator.onLine (it lies on iOS),
     // and a failing fetch is handled anyway. Stable keys keep the style's

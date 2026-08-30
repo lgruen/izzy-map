@@ -15,6 +15,7 @@ f2f_pdfs/
 # Pipeline caches
 pipeline/cache/
 pipeline/work/
+__pycache__/
 
 node_modules/
 dist/

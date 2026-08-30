@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { blockTopoNetwork, centerFeature, routeTasvegFixture, waitForMapIdle } from "./helpers";
+import { PRE_CHIPS } from "../src/chips";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMUNITIES = JSON.parse(
@@ -65,32 +66,81 @@ test("legend lists all 156 communities in 11 groups", async ({ page }) => {
   await expect(panel.locator("h3")).toHaveCount(11);
 });
 
-test("overlay switcher cycles vegetation -> geology -> off", async ({ page }) => {
+test("overlay switcher cycles vegetation -> pre-1750 -> geology -> off", async ({ page }) => {
   const vis = (layer: string) =>
     page.evaluate(
       (l) => (window as never as { __map: import("maplibre-gl").Map }).__map.getLayoutProperty(l, "visibility"),
       layer,
     );
   expect(await vis("tasveg-fill")).toBe("visible");
+  expect(await vis("pre1750-fill")).toBe("none");
   expect(await vis("geology-fill")).toBe("none");
+  await page.locator("#btn-veg").click(); // -> pre-1750
+  expect(await vis("tasveg-fill")).toBe("none");
+  expect(await vis("pre1750-fill")).toBe("visible");
+  await expect.poll(() => centerFeature(page, "pre1750-fill"), { timeout: 20_000 }).not.toBeNull();
+  const pre = await centerFeature(page, "pre1750-fill");
+  expect(pre!.MVS).toBeTruthy();
   await page.locator("#btn-veg").click(); // -> geology
   expect(await vis("tasveg-fill")).toBe("none");
+  expect(await vis("pre1750-fill")).toBe("none");
   expect(await vis("geology-fill")).toBe("visible");
   await expect.poll(() => centerFeature(page, "geology-fill"), { timeout: 20_000 }).not.toBeNull();
   const geo = await centerFeature(page, "geology-fill");
   expect(geo!.SYMB).toBeTruthy();
   await page.locator("#btn-veg").click(); // -> off
   expect(await vis("tasveg-fill")).toBe("none");
+  expect(await vis("pre1750-fill")).toBe("none");
   expect(await vis("geology-fill")).toBe("none");
   await page.locator("#btn-veg").click(); // -> vegetation again
   expect(await vis("tasveg-fill")).toBe("visible");
+});
+
+test("pre-1750 tap shows subgroup details with official colour", async ({ page }) => {
+  const UNITS = JSON.parse(
+    readFileSync(join(HERE, "../src/generated/pre1750_units.json"), "utf8"),
+  ) as Record<string, { name: string; group: string; color: string }>;
+  await page.locator("#btn-veg").click(); // vegetation -> pre-1750
+  await expect.poll(() => centerFeature(page, "pre1750-fill"), { timeout: 20_000 }).not.toBeNull();
+  const pre = await centerFeature(page, "pre1750-fill");
+  const unit = UNITS[pre!.MVS];
+  expect(unit).toBeTruthy();
+  const viewport = page.viewportSize()!;
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  const sheet = page.locator("#sheet");
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toContainText(unit.name.slice(0, 20));
+  await expect(sheet).toContainText(unit.group.slice(0, 20));
+  const swatchColor = await sheet
+    .locator(".swatch")
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(unit.color.slice(i, i + 2), 16));
+  expect(swatchColor.replace(/\s/g, "")).toBe(`rgb(${r},${g},${b})`);
+});
+
+test("pre-1750 legend groups by NVIS Major Vegetation Group", async ({ page }) => {
+  const UNITS = JSON.parse(
+    readFileSync(join(HERE, "../src/generated/pre1750_units.json"), "utf8"),
+  ) as Record<string, { group: string }>;
+  const groups = new Set(Object.values(UNITS).map((u) => u.group));
+  await page.locator("#btn-veg").click(); // -> pre-1750
+  await page.locator("#btn-legend").click();
+  const panel = page.locator("#panel");
+  await expect(panel).toContainText("Pre-1750 legend");
+  await expect(panel.locator(".leg-row")).toHaveCount(Object.keys(UNITS).length);
+  await expect(panel.locator("h3")).toHaveCount(groups.size);
+  // hand-curated chips must track the generated groups EXACTLY (both
+  // directions): a renamed/added group silently falls back to truncation
+  // (long names) or a raw name (short ones), and dead keys hide the drift
+  expect(Object.keys(PRE_CHIPS).sort()).toEqual([...groups].sort());
 });
 
 test("geology tap shows unit details with official colour", async ({ page }) => {
   const UNITS = JSON.parse(
     readFileSync(join(HERE, "../src/generated/geology_units.json"), "utf8"),
   ) as Record<string, { description: string; color: string }>;
-  await page.locator("#btn-veg").click(); // vegetation -> geology
+  await page.locator("#btn-veg").click(); // vegetation -> pre-1750
+  await page.locator("#btn-veg").click(); // -> geology
   await expect.poll(() => centerFeature(page, "geology-fill"), { timeout: 20_000 }).not.toBeNull();
   const geo = await centerFeature(page, "geology-fill");
   const unit = UNITS[geo!.SYMB];
@@ -110,6 +160,7 @@ test("geology tap shows unit details with official colour", async ({ page }) => 
 });
 
 test("legend follows the active overlay and sets opacity", async ({ page }) => {
+  await page.locator("#btn-veg").click(); // -> pre-1750
   await page.locator("#btn-veg").click(); // -> geology
   await page.locator("#btn-legend").click();
   const panel = page.locator("#panel");

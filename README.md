@@ -21,6 +21,9 @@ Government.
   coverage via a single statewide raster pack (zoom ≤ 15) downloaded in-app.
 - **Geology overlay**: MRT's statewide 1:500,000 units as a second vector
   layer, switched with vegetation (one overlay at a time).
+- **Pre-1750 overlay**: the NVIS estimate of vegetation before European
+  clearing (Major Vegetation Subgroups, 100 m cells), polygonized into
+  vector tiles with per-zoom majority-resampled generalisation.
 - **Community descriptions**: the phone fetches the *From Forest to
   Fjaeldmark* chapter PDFs from nre.tas.gov.au (via a transparent,
   non-caching CORS relay — the PDFs are not redistributable and are never
@@ -38,6 +41,10 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
 - Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania —
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
+- Pre-1750 (pre-European) vegetation from the
+  [National Vegetation Information System V7.0](https://www.dcceew.gov.au/environment/land/native-vegetation/national-vegetation-information-system)
+  © Commonwealth of Australia (DCCEEW) —
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 - Kitchener, A. and Harris, S. (2013). *From Forest to Fjaeldmark:
   Descriptions of Tasmania's Vegetation*. Edition 2. DPIPWE, Tasmania.
   © Government of Tasmania — all rights reserved (not included in this repo).

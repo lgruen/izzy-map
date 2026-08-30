@@ -1,0 +1,335 @@
+{
+ "1": {
+  "name": "Cool temperate rainforest",
+  "group": "Rainforests and Vine Thickets",
+  "groupDesc": "rainforests",
+  "color": "#df7f7f",
+  "order": 1,
+  "groupOrder": 1,
+  "ha": 768371
+ },
+ "3": {
+  "name": "Eucalyptus (+/- tall) open forest with a dense broad-leaved and/or tree-fern understorey (wet sclerophyll)",
+  "group": "Eucalypt Tall Open Forests",
+  "groupDesc": "tall eucalypt forests (trees taller than 30 m)",
+  "color": "#005f00",
+  "order": 6,
+  "groupOrder": 2,
+  "ha": 895404
+ },
+ "4": {
+  "name": "Eucalyptus open forests with a shrubby understorey",
+  "group": "Eucalypt Open Forests",
+  "groupDesc": "eucalypt forests (trees 10 to 30 m tall)",
+  "color": "#007f00",
+  "order": 9,
+  "groupOrder": 3,
+  "ha": 1411689
+ },
+ "5": {
+  "name": "Eucalyptus open forests with a grassy understorey",
+  "group": "Eucalypt Open Forests",
+  "groupDesc": "eucalypt forests (trees 10 to 30 m tall)",
+  "color": "#007f5f",
+  "order": 10,
+  "groupOrder": 3,
+  "ha": 106365
+ },
+ "8": {
+  "name": "Eucalyptus woodlands with a shrubby understorey",
+  "group": "Eucalypt Woodlands",
+  "groupDesc": "eucalypt woodlands (tree crowns not touching)",
+  "color": "#9f9f00",
+  "order": 11,
+  "groupOrder": 5,
+  "ha": 956614
+ },
+ "9": {
+  "name": "Eucalyptus woodlands with a tussock grass understorey",
+  "group": "Eucalypt Woodlands",
+  "groupDesc": "eucalypt woodlands (tree crowns not touching)",
+  "color": "#9f9f5f",
+  "order": 13,
+  "groupOrder": 5,
+  "ha": 143480
+ },
+ "12": {
+  "name": "Callitris forests and woodlands",
+  "group": "Callitris Forests and Woodlands",
+  "groupDesc": "cypress pine forests and woodlands",
+  "color": "#bfbf00",
+  "order": 20,
+  "groupOrder": 7,
+  "ha": 864
+ },
+ "14": {
+  "name": "Other Acacia forests and woodlands",
+  "group": "Acacia Forests and Woodlands",
+  "groupDesc": "acacia forests and woodlands",
+  "color": "#dfbf5f",
+  "order": 19,
+  "groupOrder": 6,
+  "ha": 23927
+ },
+ "15": {
+  "name": "Melaleuca open forests and woodlands",
+  "group": "Melaleuca Forests and Woodlands",
+  "groupDesc": "paperbark forests and woodlands",
+  "color": "#9fbfdf",
+  "order": 22,
+  "groupOrder": 9,
+  "ha": 13618
+ },
+ "16": {
+  "name": "Other forests and woodlands",
+  "group": "Other Forests and Woodlands",
+  "groupDesc": "other forests and woodlands",
+  "color": "#9f7f7f",
+  "order": 27,
+  "groupOrder": 10,
+  "ha": 23129
+ },
+ "17": {
+  "name": "Boulders/rock with algae, lichen or scattered plants, or alpine fjaeldmarks",
+  "group": "Naturally bare - sand, rock, claypan, mudflat",
+  "groupDesc": "naturally bare",
+  "color": "#7fbfbf",
+  "order": 75,
+  "groupOrder": 30,
+  "ha": 16984
+ },
+ "21": {
+  "name": "Other Acacia tall open shrublands and shrublands",
+  "group": "Acacia Shrublands",
+  "groupDesc": "acacia shrublands",
+  "color": "#dfdf5f",
+  "order": 39,
+  "groupOrder": 19,
+  "ha": 2509
+ },
+ "26": {
+  "name": "Casuarina and Allocasuarina forests and woodlands",
+  "group": "Casuarina Forests and Woodlands",
+  "groupDesc": "she-oak forests and woodlands",
+  "color": "#bfbf7f",
+  "order": 21,
+  "groupOrder": 8,
+  "ha": 70
+ },
+ "28": {
+  "name": "Low closed forest or tall closed shrublands (including Acacia, Melaleuca and Banksia)",
+  "group": "Low Closed Forests and Tall Closed Shrublands",
+  "groupDesc": "tall dense thickets",
+  "color": "#ffbf5f",
+  "order": 32,
+  "groupOrder": 18,
+  "ha": 513411
+ },
+ "29": {
+  "name": "Mallee with a dense shrubby understorey",
+  "group": "Mallee Woodlands and Shrublands",
+  "groupDesc": "mallee eucalypt woodlands and shrublands",
+  "color": "#df9f5f",
+  "order": 28,
+  "groupOrder": 12,
+  "ha": 25
+ },
+ "30": {
+  "name": "Heathlands",
+  "group": "Heathlands",
+  "groupDesc": "heathlands (low, dense, fine-leaved shrublands)",
+  "color": "#ff9f7f",
+  "order": 44,
+  "groupOrder": 21,
+  "ha": 303772
+ },
+ "32": {
+  "name": "Other shrublands",
+  "group": "Other Shrublands",
+  "groupDesc": "other shrublands",
+  "color": "#bfbf9f",
+  "order": 45,
+  "groupOrder": 20,
+  "ha": 73461
+ },
+ "36": {
+  "name": "Temperate tussock grasslands",
+  "group": "Tussock Grasslands",
+  "groupDesc": "grasslands",
+  "color": "#ffdf9f",
+  "order": 66,
+  "groupOrder": 22,
+  "ha": 105590
+ },
+ "37": {
+  "name": "Other tussock grasslands",
+  "group": "Tussock Grasslands",
+  "groupDesc": "grasslands",
+  "color": "#ffdfbf",
+  "order": 67,
+  "groupOrder": 22,
+  "ha": 10852
+ },
+ "38": {
+  "name": "Wet tussock grassland with herbs, sedges or rushes, herblands or ferns",
+  "group": "Other Grasslands, Herblands, Sedgelands and Rushlands",
+  "groupDesc": "swampy grasses, sedges, etc.",
+  "color": "#7fffbf",
+  "order": 69,
+  "groupOrder": 24,
+  "ha": 45217
+ },
+ "39": {
+  "name": "Mixed chenopod, samphire +/- forbs",
+  "group": "Chenopod Shrublands, Samphire Shrublands and Forblands",
+  "groupDesc": "saltbushes and salt marshes",
+  "color": "#bfdfff",
+  "order": 74,
+  "groupOrder": 25,
+  "ha": 7374
+ },
+ "41": {
+  "name": "Saline or brackish sedgelands or grasslands",
+  "group": "Other Grasslands, Herblands, Sedgelands and Rushlands",
+  "groupDesc": "swampy grasses, sedges, etc.",
+  "color": "#7fff9f",
+  "order": 72,
+  "groupOrder": 24,
+  "ha": 3547
+ },
+ "42": {
+  "name": "Naturally bare, sand, rock, claypan, mudflat",
+  "group": "Naturally bare - sand, rock, claypan, mudflat",
+  "groupDesc": "naturally bare",
+  "color": "#ffff9f",
+  "order": 78,
+  "groupOrder": 30,
+  "ha": 11988
+ },
+ "47": {
+  "name": "Eucalyptus open woodlands with shrubby understorey",
+  "group": "Eucalypt Open Woodlands",
+  "groupDesc": "sparse eucalypt woodlands",
+  "color": "#9fbf00",
+  "order": 33,
+  "groupOrder": 14,
+  "ha": 22306
+ },
+ "48": {
+  "name": "Eucalyptus open woodlands with a grassy understorey",
+  "group": "Eucalypt Open Woodlands",
+  "groupDesc": "sparse eucalypt woodlands",
+  "color": "#9fbf3f",
+  "order": 34,
+  "groupOrder": 14,
+  "ha": 75
+ },
+ "49": {
+  "name": "Melaleuca shrublands and open shrublands",
+  "group": "Other Shrublands",
+  "groupDesc": "other shrublands",
+  "color": "#bfdfdf",
+  "order": 40,
+  "groupOrder": 20,
+  "ha": 4200
+ },
+ "50": {
+  "name": "Banksia woodlands",
+  "group": "Other Forests and Woodlands",
+  "groupDesc": "other forests and woodlands",
+  "color": "#9f7f5f",
+  "order": 25,
+  "groupOrder": 10,
+  "ha": 450
+ },
+ "53": {
+  "name": "Eucalyptus low open woodlands with a shrubby understorey",
+  "group": "Eucalypt Open Woodlands",
+  "groupDesc": "sparse eucalypt woodlands",
+  "color": "#c4bf5f",
+  "order": 35,
+  "groupOrder": 14,
+  "ha": 4422
+ },
+ "54": {
+  "name": "Eucalyptus tall open forest with a fine-leaved shrubby understorey",
+  "group": "Eucalypt Tall Open Forests",
+  "groupDesc": "tall eucalypt forests (trees taller than 30 m)",
+  "color": "#005f5f",
+  "order": 7,
+  "groupOrder": 2,
+  "ha": 250789
+ },
+ "58": {
+  "name": "Leptospermum forests and woodlands",
+  "group": "Other Forests and Woodlands",
+  "groupDesc": "other forests and woodlands",
+  "color": "#9f7f00",
+  "order": 26,
+  "groupOrder": 10,
+  "ha": 74259
+ },
+ "59": {
+  "name": "Eucalyptus woodlands with ferns, herbs, sedges, rushes or wet tussock grassland",
+  "group": "Eucalypt Woodlands",
+  "groupDesc": "eucalypt woodlands (tree crowns not touching)",
+  "color": "#9f9f9f",
+  "order": 15,
+  "groupOrder": 5,
+  "ha": 200975
+ },
+ "60": {
+  "name": "Eucalyptus tall open forests and open forests with ferns, herbs, sedges, rushes or wet tussock grasses",
+  "group": "Eucalypt Open Forests",
+  "groupDesc": "eucalypt forests (trees 10 to 30 m tall)",
+  "color": "#007f7f",
+  "order": 8,
+  "groupOrder": 3,
+  "ha": 98679
+ },
+ "61": {
+  "name": "Mallee with a tussock grass understorey",
+  "group": "Mallee Woodlands and Shrublands",
+  "groupDesc": "mallee eucalypt woodlands and shrublands",
+  "color": "#df9f9f",
+  "order": 30,
+  "groupOrder": 12,
+  "ha": 90
+ },
+ "63": {
+  "name": "Sedgelands, rushs or reeds",
+  "group": "Other Grasslands, Herblands, Sedgelands and Rushlands",
+  "groupDesc": "swampy grasses, sedges, etc.",
+  "color": "#7fffdf",
+  "order": 70,
+  "groupOrder": 24,
+  "ha": 534839
+ },
+ "64": {
+  "name": "Other grasslands",
+  "group": "Other Grasslands, Herblands, Sedgelands and Rushlands",
+  "groupDesc": "swampy grasses, sedges, etc.",
+  "color": "#7fff7f",
+  "order": 71,
+  "groupOrder": 24,
+  "ha": 209
+ },
+ "79": {
+  "name": "Other open woodlands",
+  "group": "Other Open Woodlands",
+  "groupDesc": "other sparse woodlands",
+  "color": "#bf9f7f",
+  "order": 62,
+  "groupOrder": 17,
+  "ha": 16230
+ },
+ "97": {
+  "name": "Unclassified native vegetation",
+  "group": "Unclassified native vegetation",
+  "groupDesc": "unclassified native vegetation",
+  "color": "#bfbfbf",
+  "order": 85,
+  "groupOrder": 29,
+  "ha": 9793
+ }
+}

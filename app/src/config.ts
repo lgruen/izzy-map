@@ -12,15 +12,16 @@ export const TOPO_MAXZOOM = 15; // raster archive ceiling; overzooms beyond
 export const ARCHIVES = {
   tasveg: "tasveg.pmtiles",
   geology: "geology.pmtiles",
+  pre1750: "pre1750.pmtiles",
   topo: "topo_tas.pmtiles",
 } as const;
 
 /** Vector overlay archives served through the pmtiles protocol. */
-export const VECTOR_ARCHIVES = ["tasveg", "geology"] as const;
+export const VECTOR_ARCHIVES = ["tasveg", "geology", "pre1750"] as const;
 export type VectorKey = (typeof VECTOR_ARCHIVES)[number];
 
 export const ATTRIBUTION =
-  '<a href="https://www.thelist.tas.gov.au">Topographic Basemap &amp; TASVEG 5.0 from theLIST</a>, Geology from Mineral Resources Tasmania — © State of Tasmania (CC BY 3.0 AU)';
+  '<a href="https://www.thelist.tas.gov.au">Topographic Basemap &amp; TASVEG 5.0 from theLIST</a>, Geology from Mineral Resources Tasmania — © State of Tasmania (CC BY 3.0 AU); Pre-1750 vegetation: NVIS V7.0 © Commonwealth of Australia, DCCEEW (CC BY 4.0)';
 
 // Tasmania-ish default view for before the first GPS fix
 export const HOME = { center: [146.6, -42.2] as [number, number], zoom: 7 };

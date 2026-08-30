@@ -265,6 +265,16 @@ button { font-family: var(--sans); color: inherit; }
   font-size: 16px;
   font-weight: 600;
 }
+.sheet-note {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+  color: var(--stone);
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--serif);
+  font-style: italic;
+}
 .sheet-desc:active { transform: scale(0.985); }
 .sheet-desc small {
   display: block;
@@ -481,6 +491,10 @@ button { font-family: var(--sans); color: inherit; }
   position: absolute;
   top: calc(14px + env(safe-area-inset-top));
   left: calc(64px + env(safe-area-inset-left));
+  /* the "— not downloaded yet" variant must wrap short of the top-right
+     map controls (~54px wide) instead of painting under them */
+  right: calc(64px + env(safe-area-inset-right));
+  width: fit-content;
   z-index: 5;
   background: var(--pine);
   color: #fcfbf6;

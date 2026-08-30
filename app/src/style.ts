@@ -4,9 +4,10 @@
 import type { StyleSpecification, ExpressionSpecification } from "maplibre-gl";
 import communities from "./generated/tasveg_communities.json";
 import geologyUnits from "./generated/geology_units.json";
+import pre1750Units from "./generated/pre1750_units.json";
 import { ATTRIBUTION, TOPO_MAXZOOM } from "./config";
 
-export type OverlayMode = "veg" | "geo" | "off";
+export type OverlayMode = "veg" | "pre" | "geo" | "off";
 
 export type Communities = Record<
   string,
@@ -30,6 +31,22 @@ export type GeologyUnits = Record<
 >;
 export const GEOLOGY_UNITS = geologyUnits as GeologyUnits;
 
+/** NVIS Major Vegetation Subgroups present in the Tasmanian pre-1750
+ * reconstruction, keyed by MVS number (as string, matching tile props). */
+export type Pre1750Units = Record<
+  string,
+  {
+    name: string;
+    group: string;
+    groupDesc: string;
+    color: string;
+    order: number;
+    groupOrder: number;
+    ha: number;
+  }
+>;
+export const PRE1750_UNITS = pre1750Units as Pre1750Units;
+
 function colorMatch(): ExpressionSpecification {
   const pairs: string[] = [];
   for (const [code, meta] of Object.entries(COMMUNITIES)) {
@@ -41,6 +58,7 @@ function colorMatch(): ExpressionSpecification {
 export function buildStyle(mode: OverlayMode, opacity: number): StyleSpecification {
   const vegVisible = mode === "veg";
   const geoVisible = mode === "geo";
+  const preVisible = mode === "pre";
   const vegOpacity = opacity;
   return {
     version: 8,
@@ -62,6 +80,10 @@ export function buildStyle(mode: OverlayMode, opacity: number): StyleSpecificati
       geology: {
         type: "vector",
         url: "pmtiles://geology",
+      },
+      pre1750: {
+        type: "vector",
+        url: "pmtiles://pre1750",
       },
       selected: {
         type: "geojson",
@@ -105,6 +127,16 @@ export function buildStyle(mode: OverlayMode, opacity: number): StyleSpecificati
         minzoom: 9,
         layout: { visibility: geoVisible ? "visible" : "none" },
         paint: { "line-color": "#5a5147", "line-width": 0.8 },
+      },
+      {
+        id: "pre1750-fill",
+        type: "fill",
+        source: "pre1750",
+        "source-layer": "pre1750",
+        layout: { visibility: preVisible ? "visible" : "none" },
+        // official NVIS class colour ships per-feature in the tiles; no
+        // outline layer — the 1-ha cell edges would read as noise
+        paint: { "fill-color": ["get", "color"], "fill-opacity": opacity },
       },
       {
         id: "selected-outline",

@@ -6,6 +6,7 @@ import type { Page } from "@playwright/test";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = readFileSync(join(HERE, "fixtures", "tasveg_test.pmtiles"));
 const GEO_FIXTURE = readFileSync(join(HERE, "fixtures", "geology.pmtiles"));
+const PRE_FIXTURE = readFileSync(join(HERE, "fixtures", "pre1750_test.pmtiles"));
 
 /** Serve the committed Hobart-clip TASVEG fixture (with HTTP Range support,
  * which the pmtiles FetchSource depends on) regardless of whether the local
@@ -33,6 +34,7 @@ function serveFixture(buf: Buffer) {
 export async function routeTasvegFixture(page: Page): Promise<void> {
   await page.route("**/dev-data/tasveg.pmtiles", serveFixture(FIXTURE));
   await page.route("**/dev-data/geology.pmtiles", serveFixture(GEO_FIXTURE));
+  await page.route("**/dev-data/pre1750.pmtiles", serveFixture(PRE_FIXTURE));
 }
 
 /** Block LIST topo tile fetches so tests don't depend on the network. */

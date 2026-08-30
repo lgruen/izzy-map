@@ -8,7 +8,8 @@ import {
   partialBytes,
   storageInfo,
 } from "./storage";
-import { COMMUNITIES, GEOLOGY_UNITS, type OverlayMode } from "./style";
+import { COMMUNITIES, GEOLOGY_UNITS, PRE1750_UNITS, type OverlayMode } from "./style";
+import { GEO_CHIPS, PRE_CHIPS } from "./chips";
 import { refreshArchives } from "./protocol";
 import f2f from "./generated/f2f_index.json";
 
@@ -93,6 +94,7 @@ export async function openDownloads(): Promise<void> {
   const items: Item[] = [];
   for (const [key, label, hint] of [
     ["tasveg", "Vegetation map (TASVEG 5.0)", "statewide — the colour overlay + tap details"],
+    ["pre1750", "Pre-1750 vegetation", "what grew here before European clearing? Statewide reconstruction (NVIS), modelled in 1 ha cells"],
     ["geology", "Geology map", "what rock am I standing on? Statewide 1:500,000 (Mineral Resources Tasmania); boundaries approximate"],
     ["topo", "Topographic base map", "statewide to zoom 15 — the map under it. Large!"],
   ] as const) {
@@ -246,35 +248,49 @@ export async function openDownloads(): Promise<void> {
 // ---------- Legend ----------
 
 export function openLegend(): void {
-  const mode = overlay.getMode() === "geo" ? "geo" : "veg";
+  const live = overlay.getMode();
+  const mode = live === "geo" ? "geo" : live === "pre" ? "pre" : "veg";
   const slug = (g: string) => g.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+
+  const groupBy = (ids: string[], groupOf: (id: string) => string) => {
+    const m = new Map<string, string[]>();
+    for (const id of ids) {
+      const g = groupOf(id);
+      if (!m.has(g)) m.set(g, []);
+      m.get(g)!.push(id);
+    }
+    return m;
+  };
 
   let groups: Map<string, string[]>;
   let row: (id: string) => string;
-  if (mode === "geo") {
-    groups = new Map();
-    for (const [symb, u] of Object.entries(GEOLOGY_UNITS)) {
-      if (!groups.has(u.group)) groups.set(u.group, []);
-      groups.get(u.group)!.push(symb);
-    }
+  if (mode === "pre") {
+    const codes = Object.keys(PRE1750_UNITS).sort(
+      (a, b) => PRE1750_UNITS[a].order - PRE1750_UNITS[b].order,
+    );
+    groups = groupBy(codes, (c) => PRE1750_UNITS[c].group);
+    row = (c) => {
+      const u = PRE1750_UNITS[c];
+      return `<div class="leg-row"><span class="swatch" style="background:${esc(u.color)}"></span>
+        <span>${esc(u.name)}</span></div>`;
+    };
+  } else if (mode === "geo") {
+    groups = groupBy(Object.keys(GEOLOGY_UNITS), (s) => GEOLOGY_UNITS[s].group);
     row = (symb) => {
       const u = GEOLOGY_UNITS[symb];
       return `<div class="leg-row"><span class="swatch" style="background:${esc(u.color)}"></span>
         <span><b>${esc(symb)}</b> ${esc(u.description)}</span></div>`;
     };
   } else {
-    groups = new Map();
-    for (const [code, m] of Object.entries(COMMUNITIES)) {
-      if (!groups.has(m.group)) groups.set(m.group, []);
-      groups.get(m.group)!.push(code);
-    }
+    groups = groupBy(Object.keys(COMMUNITIES), (c) => COMMUNITIES[c].group);
     row = (c) =>
-      `<div class="leg-row"><span class="swatch" style="background:${COMMUNITIES[c].color}"></span>
-       <span><b>${c}</b> ${COMMUNITIES[c].name.replace(/^\([A-Z]{3}\)\s*/, "")}</span></div>`;
+      `<div class="leg-row"><span class="swatch" style="background:${esc(COMMUNITIES[c].color)}"></span>
+       <span><b>${esc(c)}</b> ${esc(COMMUNITIES[c].name.replace(/^\([A-Z]{3}\)\s*/, ""))}</span></div>`;
   }
 
   // Vegetation sorts alphabetically; geology sorts oldest -> youngest (the
-  // narrative a geology map implies), "Other units" last.
+  // narrative a geology map implies), "Other units" last; pre-1750 follows
+  // the official NVIS group order (structurally tallest -> sparsest).
   const groupAge = (ids: string[]) =>
     Math.max(...ids.map((id) => GEOLOGY_UNITS[id]?.maxMa ?? 0));
   const sorted =
@@ -284,34 +300,30 @@ export function openLegend(): void {
           if (b[0] === "Other units") return -1;
           return groupAge(b[1]) - groupAge(a[1]);
         })
-      : [...groups.entries()].sort();
+      : mode === "pre"
+        ? [...groups.entries()].sort(
+            (a, b) => PRE1750_UNITS[a[1][0]].groupOrder - PRE1750_UNITS[b[1][0]].groupOrder,
+          )
+        : [...groups.entries()].sort();
   const opacity = overlay.getOpacity();
-  // Chip labels: veg group first-words are unique; geology groups get
-  // hand-curated short names (truncation produced near-identical twins).
-  const GEO_CHIPS: Record<string, string> = {
-    "Proterozoic basement and parautochthonous rocks": "Proterozoic",
-    "Middle-Late Cambrian Volcanic and volcano-sedimentary sequences": "Cambrian volcanics",
-    "Devonian - Carboniferous granitoids and related rocks": "Granites",
-    "Late Carboniferous to Triassic sedimentary sequences": "Permian–Triassic",
-    "Undifferentiated Cenozoic sequences": "Recent",
-    "Late Cambrian - Lower Devonian sedimentary sequences": "Camb–Dev. seds",
-    "Early Ordovician to Early Devonian turbidite sequence": "Turbidites",
-    "Early Cambrian Allochthonous sequences": "Early Cambrian",
-    "Jurassic igneous rocks": "Dolerite",
-    "Cretaceous igneous rocks": "Cretaceous igneous",
-    "Devonian cavern fillings": "Cavern fillings",
-    "Other units": "Other",
-  };
+  // Chip labels: veg group first-words are unique; geology + pre-1750
+  // groups get hand-curated short names from chips.ts (truncation produced
+  // near-identical twins; tests pin PRE_CHIPS to the generated groups).
   const chipLabel = (g: string) =>
-    mode === "geo"
-      ? GEO_CHIPS[g] ?? (g.length > 22 ? g.slice(0, 21).trimEnd() + "…" : g)
-      : g.split(/[ ,]/)[0];
+    mode === "veg"
+      ? g.split(/[ ,]/)[0]
+      : (mode === "geo" ? GEO_CHIPS[g] : PRE_CHIPS[g])
+        ?? (g.length > 22 ? g.slice(0, 21).trimEnd() + "…" : g);
   const hiddenNote =
     overlay.getMode() === "off"
       ? `<p class="muted">The overlay is currently hidden — tap the leaf button to show it.</p>`
-      : "";
+      : mode === "pre"
+        ? `<p class="muted">An estimate of the plant communities here before European
+           clearing, modelled from remnants and historical records (NVIS, 1&nbsp;ha cells).</p>`
+        : "";
+  const TITLES = { veg: "Vegetation", pre: "Pre-1750", geo: "Geology" } as const;
   const el = openPanel(
-    `<div class="leg-top"><div class="leg-head"><h2>${mode === "geo" ? "Geology" : "Vegetation"} legend</h2>
+    `<div class="leg-top"><div class="leg-head"><h2>${TITLES[mode]} legend</h2>
       <div class="leg-opacity" role="group" aria-label="Overlay strength">
         <button class="leg-op ${opacity === 0.5 ? "on" : ""}" data-op="0.5">Full</button>
         <button class="leg-op ${opacity === 0.25 ? "on" : ""}" data-op="0.25">Light</button>
@@ -357,6 +369,11 @@ export function openAbout(): void {
     TASVEG 5.0 from theLIST © State of Tasmania<br>
     Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania<br>
     <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a></p>
+    <p>Pre-1750 vegetation: National Vegetation Information System V7.0<br>
+    © Commonwealth of Australia (DCCEEW)
+    <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> —
+    an estimate of what grew where before European clearing, modelled from
+    remnant vegetation and historical records.</p>
     <p>Community descriptions: Kitchener &amp; Harris (2013), <i>From Forest to
     Fjaeldmark</i>, Ed. 2, DPIPWE — © Government of Tasmania.</p>
     <p class="muted">TASVEG mapping boundaries are indicative only.

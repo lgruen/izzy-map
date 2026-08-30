@@ -1,6 +1,6 @@
 # Licensing boundaries (read before touching data flows)
 
-This repo is **public**. Three licence regimes apply — the architecture is
+This repo is **public**. Four licence regimes apply — the architecture is
 shaped around keeping them separate.
 
 ## 1. CC BY 3.0 AU — free to use, redistribute, derive (with attribution)
@@ -26,6 +26,19 @@ shaped around keeping them separate.
 Required attribution format (from the Land Tasmania attribution guidelines):
 `<dataset/service name> from theLIST © State of Tasmania` + CC BY 3.0 AU
 badge/link. The app shows this on the About screen and map attribution.
+
+## 1b. CC BY 4.0 (Commonwealth) — free to use, redistribute, derive (with attribution)
+
+- **NVIS V7.0 Estimated Pre-1750 vegetation** rasters and everything
+  derived from them: the pre1750 PMTiles on R2 (incl. the committed test
+  fixture `app/tests/fixtures/pre1750_test.pmtiles`), `pre1750_units.json`
+  (class names/groups/colours/areas). Source: DCCEEW via Find Environmental
+  Data / ArcGIS Online item d82f6eab808542ee9d9a0ea09ea36567; the item's
+  licence field reads CC-BY-4.0 (verified 2026-08-30). Note this is a
+  **different regime from the CC BY 3.0 AU state data**: attribution goes
+  to the Commonwealth, not the State — "© Commonwealth of Australia
+  (Department of Climate Change, Energy, the Environment and Water)" +
+  CC BY 4.0 link. Shown on the About screen and in the map attribution.
 
 ## 2. © All rights reserved — must NEVER enter this repo or our hosting
 

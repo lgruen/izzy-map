@@ -14,25 +14,49 @@ cd "$(dirname "$0")/.."
 PUBLIC_URL="https://pub-0ef9b8ef1e7541f8814d3e4374485b76.r2.dev"
 PART_MB=64
 
-# Regenerate the manifest from what's in data/
-python3 - <<'EOF'
-import json, time
+files=("$@")
+if [[ ${#files[@]} -eq 0 ]]; then
+  files=(data/tasveg.pmtiles data/geology.pmtiles data/pre1750.pmtiles data/topo_tas.pmtiles)
+fi
+
+# Regenerate the manifest as remote-manifest ∪ facts-of-THIS-upload:
+# - remote entries first, so a machine with a partial data/ (topo is 2 GB
+#   and gets deleted to reclaim disk) can't clobber keys it doesn't hold;
+# - then override ONLY the archives being uploaded in this invocation —
+#   overriding from mere local presence would advertise bytes R2 doesn't
+#   have yet. (Consequence: removing an archive needs a manual R2 edit —
+#   this script can only add/update keys.)
+UPLOADING="$(for f in "${files[@]}"; do basename "$f"; done)" \
+PUBLIC_URL="$PUBLIC_URL" python3 - <<'EOF'
+import json, os, time, urllib.request
 from pathlib import Path
 data = Path("data")
 archives = {}
-for key, fname in [("tasveg", "tasveg.pmtiles"), ("geology", "geology.pmtiles"), ("topo", "topo_tas.pmtiles")]:
+try:
+    # r2.dev 403s python-urllib's default User-Agent; no-cache dodges a
+    # stale edge copy of the very file we're about to overwrite
+    req = urllib.request.Request(os.environ["PUBLIC_URL"] + "/data-manifest.json",
+                                 headers={"User-Agent": "IzzyMap-pipeline/1.0",
+                                          "Cache-Control": "no-cache"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        archives.update(json.load(r).get("archives", {}))
+except Exception as e:  # first-ever upload, or offline: local-only is all we have
+    print("note: remote manifest not merged:", e)
+uploading = set(os.environ["UPLOADING"].split())
+for key, fname in [("tasveg", "tasveg.pmtiles"), ("geology", "geology.pmtiles"), ("pre1750", "pre1750.pmtiles"), ("topo", "topo_tas.pmtiles")]:
     p = data / fname
-    if p.exists():
+    if fname in uploading and p.exists():
         archives[key] = {"file": fname, "bytes": p.stat().st_size}
 manifest = {"version": time.strftime("%Y-%m-%d"), "archives": archives}
 (data / "data-manifest.json").write_text(json.dumps(manifest, indent=1))
 print("manifest:", manifest)
 EOF
 
-files=("$@")
-if [[ ${#files[@]} -eq 0 ]]; then
-  files=(data/tasveg.pmtiles data/geology.pmtiles data/topo_tas.pmtiles data/data-manifest.json)
-fi
+# the manifest itself always ships with whatever else is uploaded
+case " ${files[*]} " in
+  *" data/data-manifest.json "*) ;;
+  *) files+=(data/data-manifest.json) ;;
+esac
 
 SECRET=$(openssl rand -hex 24)
 echo "== deploying temporary uploader worker =="

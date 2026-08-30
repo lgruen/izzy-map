@@ -14,9 +14,9 @@ async function boot(): Promise<void> {
   registerProtocols();
   const status = await refreshArchives();
 
-  // Overlay switcher: Vegetation -> Geology -> Off. Opacity (Full/Light)
-  // lives in the legend panel.
-  const MODES = ["veg", "geo", "off"] as const;
+  // Overlay switcher: Vegetation -> Pre-1750 -> Geology -> Off. Opacity
+  // (Full/Light) lives in the legend panel.
+  const MODES = ["veg", "pre", "geo", "off"] as const;
   const storedMode = localStorage.getItem("overlayMode");
   let mode: OverlayMode = (MODES as readonly string[]).includes(storedMode ?? "")
     ? (storedMode as OverlayMode)
@@ -110,11 +110,20 @@ async function boot(): Promise<void> {
   const byId = (id: string) => document.getElementById(id)!;
   const applyOverlay = () => {
     byId("btn-veg").classList.toggle("off", mode === "off");
-    byId("btn-veg").querySelector(".icon-veg")!.toggleAttribute("hidden", mode === "geo");
-    byId("btn-veg").querySelector(".icon-geo")!.toggleAttribute("hidden", mode !== "geo");
+    // mode -> icon, keyed by OverlayMode so adding a mode without an icon
+    // is a compile error; exactly one icon shows per mode
+    const ICON: Record<OverlayMode, string> = {
+      veg: ".icon-veg",
+      pre: ".icon-pre",
+      geo: ".icon-geo",
+      off: ".icon-veg",
+    };
+    for (const sel of new Set(Object.values(ICON)))
+      byId("btn-veg").querySelector(sel)!.toggleAttribute("hidden", sel !== ICON[mode]);
     byId("btn-veg").setAttribute(
       "aria-label",
-      mode === "veg" ? "Overlay: vegetation — tap for geology"
+      mode === "veg" ? "Overlay: vegetation — tap for pre-1750 vegetation"
+        : mode === "pre" ? "Overlay: pre-1750 vegetation — tap for geology"
         : mode === "geo" ? "Overlay: geology — tap to hide overlays"
         : "Overlays hidden — tap for vegetation",
     );
@@ -130,23 +139,45 @@ async function boot(): Promise<void> {
       map.setLayoutProperty(l, "visibility", mode === "veg" ? "visible" : "none");
     for (const l of ["geology-fill", "geology-outline"])
       map.setLayoutProperty(l, "visibility", mode === "geo" ? "visible" : "none");
+    map.setLayoutProperty("pre1750-fill", "visibility", mode === "pre" ? "visible" : "none");
     if (mode === "veg") map.setPaintProperty("tasveg-fill", "fill-opacity", opacity);
     if (mode === "geo") map.setPaintProperty("geology-fill", "fill-opacity", opacity);
+    if (mode === "pre") map.setPaintProperty("pre1750-fill", "fill-opacity", opacity);
+  };
+  // Transient pill naming the mode — the icon alone is ambiguous. When the
+  // mode's archive isn't on the phone, say so: otherwise an offline switch
+  // (or a restored mode at boot) renders a silently blank overlay under a
+  // confident label (streams fine while online; the downloads panel fixes
+  // it). `status` is the live object refreshArchives mutates, so this stays
+  // current after downloads/deletes.
+  const ARCHIVE_OF = { veg: "tasveg", pre: "pre1750", geo: "geology" } as const;
+  const showModePill = () => {
+    const base =
+      mode === "veg" ? "Vegetation"
+        : mode === "pre" ? "Pre-1750 vegetation"
+        : mode === "geo" ? "Geology"
+        : "Overlay hidden";
+    const pill = byId("mode-pill");
+    pill.textContent =
+      mode !== "off" && !status.vectorLocal[ARCHIVE_OF[mode]]
+        ? `${base} — not downloaded yet`
+        : base;
+    pill.classList.remove("show");
+    void pill.offsetWidth; // restart the animation
+    pill.classList.add("show");
   };
   byId("btn-veg").onclick = () => {
     mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
     localStorage.setItem("overlayMode", mode);
     clearDetails(); // a veg answer over a geology map (or vice versa) lies
     applyOverlay();
-    // transient pill naming the new mode — the icon alone is ambiguous
-    const pill = byId("mode-pill");
-    pill.textContent =
-      mode === "veg" ? "Vegetation" : mode === "geo" ? "Geology" : "Overlay hidden";
-    pill.classList.remove("show");
-    void pill.offsetWidth; // restart the animation
-    pill.classList.add("show");
+    showModePill();
   };
   map.on("load", applyOverlay);
+  // a mode restored from localStorage with no local archive must announce
+  // itself at boot too, not only on tap
+  if (mode !== "off" && !status.vectorLocal[ARCHIVE_OF[mode]])
+    map.once("load", showModePill);
   setOverlayAccess({
     getMode: () => mode,
     getOpacity: () => opacity,
@@ -163,9 +194,9 @@ async function boot(): Promise<void> {
     if (e.target === byId("panel")) closePanel();
   };
 
-  // Regaining reception should restore a missing veg overlay without a
-  // relaunch (setUrl re-kick clears the errored source).
-  window.addEventListener("online", () => void refreshArchives());
+  // Regaining reception should restore a missing overlay without a relaunch
+  // (the explicit re-kick clears remote sources MapLibre marked errored).
+  window.addEventListener("online", () => void refreshArchives(true));
 
   // First-run state: no offline data downloaded yet. Shown regardless of
   // navigator.onLine — a fresh offline launch would otherwise be a blank,

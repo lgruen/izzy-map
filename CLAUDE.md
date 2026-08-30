@@ -51,6 +51,13 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Workflows
 
+- **Adversarial review is the default ship gate.** Before committing any
+  substantive change, run adversarial review rounds (fresh-eyes hunt for
+  real failure modes in the diff, not style nits) and address findings
+  autonomously until returns diminish. Don't wait to be asked. The first
+  two days' rounds caught ~40 real bugs (fake-ocean tile, SW precache
+  miss, CORS never applied, Victorian mangroves in a Tasmania crop, …).
+
 - **Refresh TASVEG (e.g. 6.0 release):** update URL/version in
   `pipeline/build_tasveg.sh`, run pipeline, verify counts/colors, upload to
   R2, bump layer manifest version.
@@ -124,6 +131,30 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   coalescing flags for geology (cross-unit merges = wrong answers; the build
   fails loudly if a merge strategy fires).
 
+- **Pre-1750 vegetation overlay — SHIPPED 2026-08-30** (dataset facts):
+  NVIS V7.0 "Estimated Pre-1750" Major Vegetation Subgroups, the only
+  statewide pre-European reconstruction (Tasmania has NO state-published
+  one — LIST/NRE have nothing; Tas content descends from RFA-era mapping,
+  frozen since NVIS 6.0). Source: 112 MB national FileGDB (MVS + MVG 100 m
+  rasters + RATs), ArcGIS Online item d82f6eab808542ee9d9a0ea09ea36567,
+  CC BY 4.0 (DCCEEW). Official colours come from the NVIS_pre_mvs MapServer
+  legend swatches on gis.environment.gov.au (the .lyr symbology in the zip
+  is an unparseable binary). Tasmania: 37 MVS classes, 21 MVG groups.
+  Parent groups come from a NATIONAL-raster majority vote plus same-name
+  override — the Tasmanian MVG cells themselves file tussock grasslands
+  under "Heathlands" (upstream inconsistency; a name/group assert guards it).
+  Pipeline (`build_pre1750.py`) gotchas, hard-won: (1) an Albers envelope
+  of a lat/lon box bulges north — the first crop pulled in VICTORIAN coast
+  (Corner Inlet mangroves!); clip with a densified cutline at the real
+  border, 39°12'S. (2) With a cutline, warp reads source-mask-invalid sea
+  as value 0, not dstnodata. (3) MVS/MVG rasters disagree on ~1% of
+  boundary cells (independent rasterisations) — parent group = majority
+  vote. (4) Never let tippecanoe fix oversized low-zoom tiles itself (it
+  kept 0.4% of features for the statewide view); generalise the RASTER
+  per zoom band with mode resampling (100/200/400/800/1600 m -> z10-11/
+  z9/z8/z7/z0-6), tippecanoe per band, tile-join. Tiles carry MVS+color
+  only; names/groups/areas live in pre1750_units.json (geology pattern).
+
 ## Deployed endpoints (2026-08-29)
 
 - App: https://lgruen.github.io/izzy-map/ (Pages, deployed by CI on green tests)
@@ -154,6 +185,17 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   adversarial review round in flight. Xcode + iOS 26.5 simulator installed
   (Leo has no iPhone — simulator is the iOS test bed, partner's phone the
   target).
+- 2026-08-30 (midday): Pre-1750 vegetation overlay shipped (NVIS V7.0 MVS,
+  19 MB pmtiles, 4th switcher mode). FOUR adversarial review rounds (~40
+  findings) — highlights: Victorian coast leaked into the crop (Albers
+  envelope bulge), tussock grasslands mis-grouped as Heathlands by
+  Tasmania's own MVG cells (fixed via national-raster vote), coarse-band
+  coastline dilation (+8% fake land -> land-fraction mask), pmtiles caching
+  a REJECTED header promise (online re-kick needs a fresh instance), R2
+  manifest clobber/stale-merge, LICENSING.md 4th regime, 0 km² rounding.
+  Declined: descriptor-table refactor (hand-curated overlay wiring is a
+  deliberate repo decision), per-source error tracking (offline-first
+  product; streaming is a bonus path). 23 tests green.
 - 2026-08-30 (early): both archives live on R2 (topo_tas 2.04 GB z0-15 incl.
   Bass Strait islands, tasveg 360 MB); TWO adversarial review rounds (~40
   findings) fixed — highlights: SW precache missed the pdf.js worker,
