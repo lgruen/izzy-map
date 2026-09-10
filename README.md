@@ -1,11 +1,15 @@
 # IzzyMap
 
-Offline Tasmania vegetation map for hiking — a home-screen PWA for iPhone.
+Offline Tasmania vegetation map for hiking — a home-screen PWA for iPhone
+and iPad.
 
-Shows the LIST **Topographic** basemap with the **TASVEG 5.0** vegetation
-community layer on top (official colours, outlines, and code labels). Tap a
-polygon to see which plant community you're in, with a link into the full
-*From Forest to Fjaeldmark* description — all fully offline once set up.
+Shows the LIST **Topographic** basemap — or the **Tasmap paper-map scans**,
+or LIST's **aerial photos** (best-available mosaic, or any flying season
+2019–20 … 2025–26 behind an "up to season" slider) — with the **TASVEG 5.0**
+vegetation community layer on top (official colours, outlines, and code
+labels). Tap a polygon to see which plant community you're in, with a link
+into the full *From Forest to Fjaeldmark* description — all fully offline
+once set up.
 
 Built for personal use on a single phone. Not affiliated with the Tasmanian
 Government.
@@ -17,8 +21,11 @@ Government.
 - **Vegetation layer**: TASVEG 5.0 polygons converted to vector tiles
   ([PMTiles](https://protomaps.com/docs/pmtiles)), downloaded once (statewide)
   into the browser's OPFS storage.
-- **Topo basemap**: fetched live from LIST tile services when online; offline
-  coverage via a single statewide raster pack (zoom ≤ 15) downloaded in-app.
+- **Base maps**: LIST topographic tiles, Tasmap sheet scans and aerial photos
+  are fetched live from LIST tile services when online; offline coverage via
+  statewide raster packs (zoom ≤ 15) downloaded in-app, plus small per-season
+  aerial packs stacked chronologically (newest on top) behind a season
+  slider. Tiles are stored byte-for-byte; see `docs/LICENSING.md`.
 - **Geology overlay**: MRT's statewide 1:500,000 units as a second vector
   layer, switched with vegetation (one overlay at a time).
 - **Pre-1750 overlay**: the NVIS estimate of vegetation before European
@@ -41,6 +48,14 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
 - Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania —
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
+- Aerial Photo Basemap and seasonal aerial photos (2019–20 … 2025–26) from
+  [theLIST](https://www.thelist.tas.gov.au) © State of Tasmania —
+  [CC BY-NC-ND 3.0 AU](https://creativecommons.org/licenses/by-nc-nd/3.0/au/)
+  (reproduced unaltered, non-commercial)
+- Tasmap 1:25,000 / 100,000 / 250,000 / 500,000 sheet scans from
+  [theLIST](https://www.thelist.tas.gov.au) © State of Tasmania —
+  [CC BY-NC-ND 3.0 AU](https://creativecommons.org/licenses/by-nc-nd/3.0/au/)
+  (reproduced unaltered, non-commercial)
 - Pre-1750 (pre-European) vegetation from the
   [National Vegetation Information System V7.0](https://www.dcceew.gov.au/environment/land/native-vegetation/national-vegetation-information-system)
   © Commonwealth of Australia (DCCEEW) —

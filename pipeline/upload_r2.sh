@@ -16,7 +16,10 @@ PART_MB=64
 
 files=("$@")
 if [[ ${#files[@]} -eq 0 ]]; then
-  files=(data/tasveg.pmtiles data/geology.pmtiles data/pre1750.pmtiles data/topo_tas.pmtiles)
+  # vector overlays + every raster pack declared in packs.json (missing local
+  # files are skipped below — a machine rarely holds all ~15 GB at once)
+  files=(data/tasveg.pmtiles data/geology.pmtiles data/pre1750.pmtiles)
+  while IFS= read -r f; do files+=("data/$f"); done < <(python3 -c "import json; [print(p['file']) for p in json.load(open('pipeline/packs.json'))['packs']]")
 fi
 
 # Regenerate the manifest as remote-manifest ∪ facts-of-THIS-upload:
@@ -43,10 +46,19 @@ try:
 except Exception as e:  # first-ever upload, or offline: local-only is all we have
     print("note: remote manifest not merged:", e)
 uploading = set(os.environ["UPLOADING"].split())
-for key, fname in [("tasveg", "tasveg.pmtiles"), ("geology", "geology.pmtiles"), ("pre1750", "pre1750.pmtiles"), ("topo", "topo_tas.pmtiles")]:
+packs = json.load(open("pipeline/packs.json"))["packs"]
+entries = [("tasveg", "tasveg.pmtiles", None), ("geology", "geology.pmtiles", None),
+           ("pre1750", "pre1750.pmtiles", None)] + [(p["key"], p["file"], p.get("note")) for p in packs]
+for key, fname, note in entries:
     p = data / fname
     if fname in uploading and p.exists():
-        archives[key] = {"file": fname, "bytes": p.stat().st_size}
+        # built = archive build date (the app compares bytes to offer Update;
+        # note explains a pack that is expected to change, e.g. an in-progress
+        # season — see packs.json)
+        archives[key] = {"file": fname, "bytes": p.stat().st_size,
+                         "built": time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))}
+        if note:
+            archives[key]["note"] = note
 manifest = {"version": time.strftime("%Y-%m-%d"), "archives": archives}
 (data / "data-manifest.json").write_text(json.dumps(manifest, indent=1))
 print("manifest:", manifest)

@@ -63,9 +63,11 @@ export default defineConfig({
       manifest: {
         name: "IzzyMap",
         short_name: "IzzyMap",
-        description: "Offline Tasmania vegetation + topo map",
+        description: "Offline Tasmania vegetation, topographic and aerial maps",
         display: "standalone",
-        orientation: "portrait",
+        // iOS ignores this field; Android follows the system rotation lock
+        // now that landscape/wide viewports have their own layout (iPad).
+        orientation: "any",
         theme_color: "#2d5f3f",
         background_color: "#f5f2ea",
         icons: [

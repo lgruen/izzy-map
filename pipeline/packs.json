@@ -1,0 +1,129 @@
+{
+  "_comment": "Offline raster packs built by build_raster.py from LIST ArcGIS cached tile services and uploaded by upload_r2.sh (manifest keys = pack keys; the app mirrors the key list by hand in app/src/config.ts — hand-curated wiring is a repo decision). bbox comes from regions.json[region]. 'prune': 'size<N@Z' is the legacy topo rule (descendants of tiles under N bytes skipped from zoom Z); 'blank@Z' skips descendants of tiles that 404 or are byte-identical to a learned sentinel (ocean JPEG, transparent no-imagery PNG). Licence: each pack declares the licence flavour it was verified under ('licence'); the live copyrightText must name exactly that flavour (CC BY vs CC BY-NC-ND are NOT interchangeable), or a licence_override with the exact recorded text must be present — any change of the live text aborts the build (see docs/LICENSING.md). Seasons: AerialPhotoYYYY = the flying season ending in YYYY; coverage is a patchwork (6-15% of land per season, measured 2026-09-10); the app stacks them chronologically behind an 'up to season' slider.",
+  "region": "tas",
+  "packs": [
+    {
+      "key": "topo",
+      "service": "Topographic",
+      "file": "topo_tas.pmtiles",
+      "ext": "png",
+      "maxzoom": 15,
+      "prune": "size<1000@13",
+      "cache": "topo",
+      "label": "Topographic base map",
+      "attribution": "Topographic Basemap from theLIST (CC BY 3.0 AU) © State of Tasmania",
+      "licence": "CC BY 3.0 AU"
+    },
+    {
+      "key": "aerial",
+      "service": "Orthophoto",
+      "file": "aerial_tas.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@13",
+      "label": "Aerial photos (best available)",
+      "attribution": "Aerial Photo Basemap from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "aerial2020",
+      "service": "AerialPhoto2020",
+      "season": "2019–20",
+      "file": "aerial_2020.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@10",
+      "label": "Aerial photos 2019–20",
+      "attribution": "Aerial Photo 2019-20 from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "aerial2021",
+      "service": "AerialPhoto2021",
+      "season": "2020–21",
+      "file": "aerial_2021.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@10",
+      "label": "Aerial photos 2020–21",
+      "attribution": "Aerial Photo 2020-21 from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "aerial2022",
+      "service": "AerialPhoto2022",
+      "season": "2021–22",
+      "file": "aerial_2022.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@10",
+      "label": "Aerial photos 2021–22",
+      "attribution": "Aerial Photo 2021-22 from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "aerial2023",
+      "service": "AerialPhoto2023",
+      "season": "2022–23",
+      "file": "aerial_2023.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@10",
+      "label": "Aerial photos 2022–23",
+      "attribution": "Aerial Photo 2022-23 from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "aerial2024",
+      "service": "AerialPhoto2024",
+      "season": "2023–24",
+      "file": "aerial_2024.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@10",
+      "label": "Aerial photos 2023–24",
+      "attribution": "Aerial Photo 2023-24 from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "aerial2025",
+      "service": "AerialPhoto2025",
+      "season": "2024–25",
+      "file": "aerial_2025.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@10",
+      "label": "Aerial photos 2024–25",
+      "attribution": "Aerial Photo 2024-25 from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "aerial2026",
+      "service": "AerialPhoto2026",
+      "season": "2025–26",
+      "file": "aerial_2026.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@10",
+      "label": "Aerial photos 2025–26",
+      "note": "Season still being flown and published — more areas appear over time. Rebuild with --fresh and re-upload; the app then offers Update.",
+      "licence_override": {
+        "recorded_text": "© State of Tasmania",
+        "reason": "The 2020–2025 season services carry the CC BY-NC-ND 3.0 AU badge; 2026's copyrightText is exactly the tail of that string after the second </a> (the HTML badge was dropped), and it is the same capture programme (48 delivered 2025–26 projects in Public/Indexes layer 100). Treated as CC BY-NC-ND 3.0 AU — Leo's decision, 2026-09-10. If the live text changes, the build aborts: re-verify."
+      },
+      "attribution": "Aerial Photo 2025-26 from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    },
+    {
+      "key": "tasmap",
+      "service": "TasmapRaster",
+      "file": "tasmap_tas.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@13",
+      "label": "Paper map (Tasmap)",
+      "attribution": "Tasmap from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
+      "licence": "CC BY-NC-ND 3.0 AU"
+    }
+  ]
+}

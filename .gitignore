@@ -4,7 +4,7 @@ data/
 *.mbtiles
 *.gpkg
 *.fgb
-# …except the small committed test fixture (CC BY data, ~3.5 MB)
+# …except the small committed test fixtures (CC BY clips ~3.5 MB/5 MB/1 MB + four synthetic 2–3 KB rasters)
 !app/tests/fixtures/*.pmtiles
 
 # From Forest to Fjaeldmark content — NOT redistributable (see docs/LICENSING.md)

@@ -12,6 +12,12 @@ export default defineConfig({
   projects: [
     { name: "webkit-iphone", use: { ...devices["iPhone 14"], browserName: "webkit" } },
     { name: "chromium-mobile", use: { ...devices["Pixel 7"], browserName: "chromium" } },
+    // iPad in landscape (Magic Keyboard use): exercises the wide-viewport
+    // card layout, Escape handling and the iPadOS (Mac-like) UA.
+    {
+      name: "webkit-ipad",
+      use: { ...devices["iPad Pro 11 landscape"], browserName: "webkit" },
+    },
   ],
   webServer: {
     command: "npx vite --port 5200 --strictPort",

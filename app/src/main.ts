@@ -1,31 +1,87 @@
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./app.css";
-import { HOME } from "./config";
-import { bindMap, registerProtocols, refreshArchives } from "./protocol";
-import { buildStyle, type OverlayMode } from "./style";
+import { HOME, RASTER_KEYS, SEASON_KEYS, seasonLabel } from "./config";
+import { bindMap, registerProtocols, refreshArchives, status } from "./protocol";
+import {
+  BASES,
+  DEFAULT_STATE,
+  OVERLAYS,
+  STRENGTHS,
+  applyLayerState,
+  buildStyle,
+  type LayerState,
+  type OverlayMode,
+} from "./style";
 import { clearDetails, wireDetails } from "./details";
 import { wireCoordReadout } from "./mga";
-import { openAbout, openDownloads, openLegend, closePanel, setOverlayAccess } from "./ui";
+import {
+  closePanel,
+  isPanelOpen,
+  openAbout,
+  openDownloads,
+  openLayers,
+  openLegend,
+  setLayerAccess,
+  showPill,
+} from "./ui";
+import { closePdfViewer, isPdfOpen } from "./viewer";
 import { ensurePersistence } from "./storage";
+
+/** Restore the Layers-sheet state; migrate the pre-sheet keys once. */
+function loadState(): LayerState {
+  const s: LayerState = { ...DEFAULT_STATE };
+  try {
+    const raw = localStorage.getItem("layerState");
+    if (raw) {
+      const p = JSON.parse(raw) as Partial<LayerState>;
+      if (BASES.includes(p.base as never)) s.base = p.base!;
+      if (typeof p.cutoff === "number")
+        s.cutoff = Math.max(0, Math.min(SEASON_KEYS.length - 1, Math.round(p.cutoff)));
+      if (OVERLAYS.includes(p.overlay as never)) s.overlay = p.overlay!;
+      if (STRENGTHS.includes(p.strength as never)) s.strength = p.strength!;
+      return s;
+    }
+    const mode = localStorage.getItem("overlayMode");
+    if (OVERLAYS.includes(mode as never)) s.overlay = mode as OverlayMode;
+    if (localStorage.getItem("overlayOpacity") === "0.25") s.strength = "light";
+  } catch {
+    /* private mode — defaults */
+  }
+  return s;
+}
+
+/** Human name of what a state shows, for the transient pill. */
+export function describeBase(s: LayerState): string {
+  return s.base === "topo" ? "Topographic map"
+    : s.base === "tasmap" ? "Paper map"
+    : s.base === "aerial" ? "Aerial photos"
+    : `Aerial photos up to ${seasonLabel(s.cutoff)}`;
+}
+export function describeOverlay(o: OverlayMode): string {
+  return o === "veg" ? "Vegetation" : o === "pre" ? "Pre-1750 vegetation" : o === "geo" ? "Geology" : "Overlay hidden";
+}
 
 async function boot(): Promise<void> {
   void ensurePersistence();
   registerProtocols();
-  const status = await refreshArchives();
+  await refreshArchives();
 
-  // Overlay switcher: Vegetation -> Pre-1750 -> Geology -> Off. Opacity
-  // (Full/Light) lives in the legend panel.
-  const MODES = ["veg", "pre", "geo", "off"] as const;
-  const storedMode = localStorage.getItem("overlayMode");
-  let mode: OverlayMode = (MODES as readonly string[]).includes(storedMode ?? "")
-    ? (storedMode as OverlayMode)
-    : "veg";
-  let opacity = Number(localStorage.getItem("overlayOpacity")) === 0.25 ? 0.25 : 0.5;
+  const state = loadState();
+  const saveState = () => {
+    try {
+      localStorage.setItem("layerState", JSON.stringify(state));
+    } catch {
+      /* private mode */
+    }
+  };
 
+  // ?pixels=1: keep the WebGL buffer readable so tests can assert what the
+  // base rasters actually painted (costs a little GPU memory; off by default)
+  const pixels = new URLSearchParams(location.search).has("pixels");
   const map = new maplibregl.Map({
     container: "map",
-    style: buildStyle(mode, opacity),
+    style: buildStyle(state, status.rasterLocal),
     center: HOME.center,
     zoom: HOME.zoom,
     maxBounds: [
@@ -33,6 +89,7 @@ async function boot(): Promise<void> {
       [152.0, -37.5],
     ],
     attributionControl: { compact: true },
+    canvasContextAttributes: { preserveDrawingBuffer: pixels },
   });
 
   map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
@@ -105,94 +162,97 @@ async function boot(): Promise<void> {
     void syncWakeLock();
   });
   document.addEventListener("visibilitychange", () => void syncWakeLock());
+  // A failed fix must say so: the control just turns grey, which on a
+  // Wi-Fi-only iPad (no GNSS chip) looks like a hang. Permission denials
+  // get their own wording. Only a denial (code 1) ends tracking (MapLibre
+  // sets the watch OFF without firing trackuserlocationend); a transient
+  // "position unavailable" keeps the watch alive and recovers silently, so
+  // the wake lock must survive it (review finding: one blip in a gully
+  // otherwise let the screen sleep for the rest of the hike). One pill per
+  // tracking session — a flaky fix would repaint it every few seconds.
+  let gpsPillShown = false;
+  geolocate.on("trackuserlocationstart", () => (gpsPillShown = false));
+  geolocate.on("error", (e: GeolocationPositionError) => {
+    if (e.code === 1) {
+      tracking = false;
+      void syncWakeLock();
+    }
+    if (gpsPillShown) return;
+    gpsPillShown = true;
+    showPill(
+      e.code === 1
+        ? "Location is off for this app — allow it in Settings to follow GPS"
+        : "No location fix — the map still works. Wi-Fi-only iPads have no GPS.",
+      7000,
+    );
+  });
+
+  // Layer state -> map. isStyleLoaded() is false during ordinary tile
+  // streaming too — the only real precondition is that the style's layers
+  // exist. Before first load, defer to the load event; after that, always
+  // apply (review H1: bailing here silently dropped taps made while tiles
+  // were loading).
+  const apply = () => {
+    if (!map.getLayer("tasveg-fill")) {
+      map.once("load", apply);
+      return;
+    }
+    applyLayerState(map, state, status.rasterLocal);
+  };
+  map.on("load", apply);
+
+  const ARCHIVE_OF = { veg: "tasveg", pre: "pre1750", geo: "geology" } as const;
+  const overlayMissing = () => state.overlay !== "off" && !status.vectorLocal[ARCHIVE_OF[state.overlay]];
+  // "Missing" means not on the device — regardless of whether it streams
+  // right now (navigator.onLine lies on iOS; the point is the next offline
+  // launch). The style keeps the topo map under a non-local base so the
+  // screen is never a flat ocean colour, but the user must still be told.
+  const baseMissing = () =>
+    state.base === "seasons"
+      ? !SEASON_KEYS.some((k) => status.rasterLocal[k])
+      : !status.rasterLocal[state.base];
+  // A restored selection whose archive isn't on the device must announce
+  // itself at boot: otherwise an offline launch renders a silently blank
+  // layer under a confident label (streams fine while online; the
+  // downloads panel fixes it). `status` is the live object refreshArchives
+  // mutates, so this stays current after downloads/deletes.
+  map.once("load", () => {
+    const missing = [
+      ...(overlayMissing() ? [describeOverlay(state.overlay)] : []),
+      ...(baseMissing() ? [describeBase(state)] : []),
+    ];
+    if (missing.length) showPill(`${missing.join(" + ")} — not downloaded yet`, 3000);
+  });
+
+  setLayerAccess({
+    map,
+    get: () => state,
+    reapply: apply,
+    set: (patch) => {
+      const overlayChanged = patch.overlay !== undefined && patch.overlay !== state.overlay;
+      Object.assign(state, patch);
+      if (overlayChanged) clearDetails(); // a veg answer over a geology map (or vice versa) lies
+      saveState();
+      apply();
+    },
+  });
 
   // Toolbar buttons
   const byId = (id: string) => document.getElementById(id)!;
-  const applyOverlay = () => {
-    byId("btn-veg").classList.toggle("off", mode === "off");
-    // mode -> icon, keyed by OverlayMode so adding a mode without an icon
-    // is a compile error; exactly one icon shows per mode
-    const ICON: Record<OverlayMode, string> = {
-      veg: ".icon-veg",
-      pre: ".icon-pre",
-      geo: ".icon-geo",
-      off: ".icon-veg",
-    };
-    for (const sel of new Set(Object.values(ICON)))
-      byId("btn-veg").querySelector(sel)!.toggleAttribute("hidden", sel !== ICON[mode]);
-    byId("btn-veg").setAttribute(
-      "aria-label",
-      mode === "veg" ? "Overlay: vegetation — tap for pre-1750 vegetation"
-        : mode === "pre" ? "Overlay: pre-1750 vegetation — tap for geology"
-        : mode === "geo" ? "Overlay: geology — tap to hide overlays"
-        : "Overlays hidden — tap for vegetation",
-    );
-    // isStyleLoaded() is false during ordinary tile streaming too — the only
-    // real precondition is that the style's layers exist. Before first load,
-    // defer to the load event; after that, always apply (review H1: bailing
-    // here silently dropped switcher taps made while tiles were loading).
-    if (!map.getLayer("tasveg-fill")) {
-      map.once("load", applyOverlay);
-      return;
-    }
-    for (const l of ["tasveg-fill", "tasveg-outline", "tasveg-label"])
-      map.setLayoutProperty(l, "visibility", mode === "veg" ? "visible" : "none");
-    for (const l of ["geology-fill", "geology-outline"])
-      map.setLayoutProperty(l, "visibility", mode === "geo" ? "visible" : "none");
-    map.setLayoutProperty("pre1750-fill", "visibility", mode === "pre" ? "visible" : "none");
-    if (mode === "veg") map.setPaintProperty("tasveg-fill", "fill-opacity", opacity);
-    if (mode === "geo") map.setPaintProperty("geology-fill", "fill-opacity", opacity);
-    if (mode === "pre") map.setPaintProperty("pre1750-fill", "fill-opacity", opacity);
-  };
-  // Transient pill naming the mode — the icon alone is ambiguous. When the
-  // mode's archive isn't on the phone, say so: otherwise an offline switch
-  // (or a restored mode at boot) renders a silently blank overlay under a
-  // confident label (streams fine while online; the downloads panel fixes
-  // it). `status` is the live object refreshArchives mutates, so this stays
-  // current after downloads/deletes.
-  const ARCHIVE_OF = { veg: "tasveg", pre: "pre1750", geo: "geology" } as const;
-  const showModePill = () => {
-    const base =
-      mode === "veg" ? "Vegetation"
-        : mode === "pre" ? "Pre-1750 vegetation"
-        : mode === "geo" ? "Geology"
-        : "Overlay hidden";
-    const pill = byId("mode-pill");
-    pill.textContent =
-      mode !== "off" && !status.vectorLocal[ARCHIVE_OF[mode]]
-        ? `${base} — not downloaded yet`
-        : base;
-    pill.classList.remove("show");
-    void pill.offsetWidth; // restart the animation
-    pill.classList.add("show");
-  };
-  byId("btn-veg").onclick = () => {
-    mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
-    localStorage.setItem("overlayMode", mode);
-    clearDetails(); // a veg answer over a geology map (or vice versa) lies
-    applyOverlay();
-    showModePill();
-  };
-  map.on("load", applyOverlay);
-  // a mode restored from localStorage with no local archive must announce
-  // itself at boot too, not only on tap
-  if (mode !== "off" && !status.vectorLocal[ARCHIVE_OF[mode]])
-    map.once("load", showModePill);
-  setOverlayAccess({
-    getMode: () => mode,
-    getOpacity: () => opacity,
-    setOpacity: (v: number) => {
-      opacity = v;
-      localStorage.setItem("overlayOpacity", String(v));
-      applyOverlay();
-    },
-  });
+  byId("btn-layers").onclick = () => void openLayers();
   byId("btn-legend").onclick = () => void openLegend();
   byId("btn-downloads").onclick = () => void openDownloads();
   byId("btn-about").onclick = () => void openAbout();
   byId("panel").onclick = (e) => {
     if (e.target === byId("panel")) closePanel();
   };
+  // Hardware keyboards (iPad): Escape dismisses the top-most surface.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (isPdfOpen()) closePdfViewer();
+    else if (isPanelOpen()) closePanel();
+    else if (!byId("sheet").hidden) clearDetails();
+  });
 
   // Regaining reception should restore a missing overlay without a relaunch
   // (the explicit re-kick clears remote sources MapLibre marked errored).
@@ -201,12 +261,12 @@ async function boot(): Promise<void> {
   // First-run state: no offline data downloaded yet. Shown regardless of
   // navigator.onLine — a fresh offline launch would otherwise be a blank,
   // unexplained map (and onLine lies on iOS anyway).
-  if (!status.vectorLocal.tasveg && !status.topoLocal) {
+  if (!status.vectorLocal.tasveg && !RASTER_KEYS.some((k) => status.rasterLocal[k])) {
     const nudge = byId("nudge");
     nudge.hidden = false;
     byId("nudge-text").textContent = navigator.onLine
       ? "Download maps for offline use"
-      : "No maps on this phone yet — connect to Wi-Fi, then tap here";
+      : "No maps on this device yet — connect to Wi-Fi, then tap here";
     nudge.onclick = () => {
       nudge.hidden = true;
       void openDownloads();

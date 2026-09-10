@@ -1,7 +1,15 @@
 # Licensing boundaries (read before touching data flows)
 
 This repo is **public**. Four licence regimes apply — the architecture is
-shaped around keeping them separate.
+shaped around keeping them separate. What governs is the **copyright text
+of each dataset/service**: the LIST Web Services T&C (Dec 2014, 8 clauses,
+`listdata.thelist.tas.gov.au/public/LISTWebServicesTermsConditions.pdf`) say
+nothing about caching or bulk download, and clause 7 delegates licensing
+entirely to "the Copyright Text section of the relevant service". The
+ArcGIS `exportTilesAllowed` flag in a service's REST metadata is a server
+configuration switch for Esri's `exportTiles` operation (offline-area
+packaging for Esri clients) — **not a licence term**. Earlier versions of
+this document over-read it; verified 2026-09-10.
 
 ## 1. CC BY 3.0 AU — free to use, redistribute, derive (with attribution)
 
@@ -58,9 +66,64 @@ badge/link. The app shows this on the About screen and map attribution.
   PDFs, extracted text, or host either on Pages/R2. `.gitignore` blocks
   `*.pdf` and `f2f_pdfs/` as a guard.
 
-## 3. CC BY-NC-ND — do not use at all
+## 3. CC BY-NC-ND 3.0 AU — usable as verbatim, attributed, non-commercial collections
 
-- **TASMAP raster products**: `Basemaps/TasmapRaster`, `Tasmap25K/100K/250K/
-  500K` services and the paid tasmapshop.au GeoTIFF/geoPDF products.
-  Non-commercial, no-derivatives, `exportTilesAllowed: false`. The
-  vector-derived `Topographic` basemap (regime 1) is the one we use.
+- **LIST Aerial Photo basemaps**: `Basemaps/Orthophoto` (the statewide
+  "best available" compilation, `aerial_tas.pmtiles`) and the per-season
+  `Basemaps/AerialPhoto2020` … `AerialPhoto2026` (`aerial_<year>.pmtiles`).
+- **Tasmap scans**: `Basemaps/TasmapRaster` (500K/250K/100K/25K sheets by
+  zoom, `tasmap_tas.pmtiles`). Also `Tasmap25K/100K/250K/500K` individually
+  (unused).
+
+What the licence grants (legal code, `creativecommons.org/licenses/by-nc-nd/3.0/au/legalcode`):
+"Reproduce the Work; incorporate the Work into one or more Collections;
+Reproduce the Work as incorporated in any Collection; Distribute and
+publicly perform the Work or the Work as incorporated in any Collection",
+in any media or format, including "modifications that are technically
+necessary to exercise the rights in other media and formats". A Collection
+("the Work in its entirety in unmodified form along with one or more other
+separate and independent works") "will not be considered a Derivative Work".
+Commercial means "primarily intended for or directed towards commercial
+advantage or private monetary compensation".
+
+How this project stays inside it:
+- Tiles are stored **byte-for-byte as served** (`pipeline/build_raster.py`;
+  PMTiles is only a container with range-readable indexing). Nothing is
+  re-encoded, recoloured, re-projected or merged across services.
+- The archives are distributed from R2 for one household's non-commercial
+  hiking app, with the attribution the licence requires (map attribution
+  control, About panel, README).
+- Overlays (TASVEG etc.) are composited **on screen** at view time; no
+  altered image is ever produced or distributed — exactly what LISTmap does
+  with the same basemaps.
+- The pipeline re-reads each service's live `copyrightText` on every run
+  and refuses to build unless it names a Creative Commons BY licence.
+
+**AerialPhoto2026 (2025–26 season, in progress):** its `copyrightText` is
+the bare `© State of Tasmania` — exactly the tail of the 2024/2025 string
+after the second `</a>` (the HTML badge was dropped); it is the same capture
+programme (48 delivered 2025–26 projects listed in `Public/Indexes` layer
+100, "Digital Imagery Mosaic Index"). Decision (Leo, 2026-09-10): treated as
+CC BY-NC-ND like its siblings. `pipeline/packs.json` carries a
+`licence_override` with the recorded text and this reasoning; the build
+ABORTS if LIST's live text changes, so a real licence change is caught. The
+season is still being flown/published — see CLAUDE.md "Refreshing a season".
+
+Courtesy, not licence: the per-season and Tasmap services have Esri export
+disabled (`exportTilesAllowed: false`), so pulls stay polite (8 keep-alive
+connections, disk-cached, one-off, top-down pruned so a no-imagery area
+costs one request at zoom 9 and nothing below; a fetch failure cancels the
+queue instead of retrying every tile). The Orthophoto and Topographic services explicitly allow
+export. Contact: listhelp@nre.tas.gov.au.
+
+Historical note: the original plan excluded TasmapRaster ("do not use at
+all") on a mix of this licence and the export flag. The licence reading
+above applies to it identically; the actual reason the Topographic basemap
+was chosen first was simply that a CC BY alternative existed.
+
+## 4. No licence text — do not use
+
+A service whose `copyrightText` carries no licence at all (bare "© State of
+Tasmania" with no CC badge and no sibling evidence like the 2026 case) grants
+nothing beyond browsing; the pipeline refuses such services unless a
+documented `licence_override` exists in `packs.json`.

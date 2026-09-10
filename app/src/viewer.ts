@@ -281,6 +281,8 @@ export async function openPdfViewer(
 
 let currentDoc: PDFDocumentProxy | null = null;
 let currentTask: PDFDocumentLoadingTask | null = null;
+export const isPdfOpen = (): boolean => !el().hidden;
+export const closePdfViewer = (): void => close();
 function close(): void {
   el().hidden = true;
   el().innerHTML = "";

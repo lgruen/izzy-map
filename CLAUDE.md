@@ -1,21 +1,28 @@
 # IzzyMap — maintainer guide (written by Claude, for future Claude)
 
-Offline Tasmania vegetation map PWA for one iPhone (Leo's partner). All
-changes happen through Claude Code sessions with Leo. The approved plan that
+Offline Tasmania vegetation map PWA for one iPhone (Leo's partner) and the
+household iPad. All changes happen through Claude Code sessions with Leo. The approved plan that
 started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 (research findings summarized there and in docs/).
 
 ## Non-negotiables
 
 1. **docs/LICENSING.md first.** From Forest to Fjaeldmark content must never
-   be committed or served from our hosting (public repo!). TASMAP raster
-   services must never be used. CC BY attribution stays in the app.
+   be committed or served from our hosting (public repo!). The LIST
+   aerial/Tasmap rasters are CC BY-NC-ND: tiles stay BYTE-FOR-BYTE as
+   served (no re-encoding, no merging across services), non-commercial,
+   attributed — the licence text governs, not the ArcGIS export flag.
+   CC BY / CC BY-NC-ND attribution stays in the app.
 2. **Fully offline is the product.** Any change must keep working in airplane
    mode after setup: no CDN references, glyphs/sprites self-hosted, tiles
    never routed through the service worker cache (they live in OPFS PMTiles).
-3. **Target device is a small iPhone.** Home-screen web app (iOS 17+
-   behaviours assumed: 60%-of-disk quota, ITP exemption, persist()
-   heuristic). Surface storage sizes in UI; keep archives lean.
+3. **Target device is a small iPhone**, plus an iPad in landscape with a
+   keyboard/trackpad. Home-screen web app (iOS 17+ behaviours assumed:
+   60%-of-disk quota, ITP exemption, persist() heuristic). Surface storage
+   sizes in UI; keep archives lean. Layout is keyed on viewport width
+   (`min-width: 700px` → side cards), never on the device/UA (iPadOS reports
+   a Mac UA; Split View gives phone-width windows). Wi-Fi-only iPads have no
+   GPS: the geolocate error is announced, never silently spun.
 4. **Device access:** Leo has an **Android** phone (secondary test target —
    the PWA should work there too); the only real iPhone is the partner's.
    iOS testing therefore runs on the Xcode iOS Simulator, with occasional
@@ -27,6 +34,26 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 - Topo tiles: `https://services.thelist.tas.gov.au/arcgis/rest/services/Basemaps/Topographic/MapServer/tile/{z}/{y}/{x}`
   — EPSG:3857, 256px PNG, z0–18, CORS on. **Path is z/row/col — y before x!**
+- Aerial photos (verified 2026-09-10): `Basemaps/Orthophoto` = statewide
+  "best available" mosaic (MIXED/JPEG q75, z0–19; ocean = one constant
+  1,652-byte JPEG `#1e525f`); `Basemaps/AerialPhoto2020…2026` = flying
+  seasons 2019–20 … 2025–26, each a PATCHWORK (6–15 % of land tiles at z12),
+  no-imagery = HTTP 404 or a fully transparent PNG (two encodings seen: 876
+  and 889 bytes), project edges are PNG with alpha (up to ~130 KB — season
+  packs are 200–1000 MB each, mostly edge tiles). All CC BY-NC-ND 3.0 AU (2026's badge is missing — see
+  LICENSING.md). Coverage/footprint indexes: `Public/Indexes` layers 100
+  ("Digital Imagery Mosaic Index": CAP_SEASON, dates, resolution per
+  project) and 107 ("Tas Imagery and LiDAR Program": planned captures).
+- Tasmap scans: `Basemaps/TasmapRaster` (MIXED, z0–16; 500K/250K low zoom,
+  100K z13–14, 25K sheets at z15 byte-identical to `Tasmap25K`). CC BY-NC-ND.
+- Blank-tile facts the pipeline relies on: byte-identical sentinels are
+  learned per level (≥ 8 identical tiles; non-image 200 bodies are rejected
+  before they can become one); a tile that 404s or equals a sentinel has no
+  descendants. `prune: blank@10` means z10 candidates are filtered by their
+  z9 parents (~230 m/px), so a project smaller than a few z9 pixels could in
+  principle vanish — hence two validations per build: 40 pruned z15 tiles
+  (30 at project edges) re-fetched live, and `--check-footprints`, which
+  re-fetches the z15 tile under every LIST mosaic-index project centroid.
 - TASVEG 5.0: `https://listdata.thelist.tas.gov.au/opendata/data/LIST_TASVEG_50_STATEWIDE.zip`
   (1.79 GB; shapefile EPSG:28355, 482,138 polygons, 156 communities keyed by
   `VEGCODE`; official solid-fill colours in bundled `TASVEG_5_0.qml`).
@@ -46,6 +73,10 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   served from R2.
 - `pipeline/` — data prep scripts (bash/python via uv; tippecanoe/gdal/
   pmtiles from brew). Outputs to `data/` (gitignored), uploaded to R2.
+  Raster packs are declared in `pipeline/packs.json` (key, service, file,
+  prune rule, attribution, optional season/note/licence_override) and built
+  by `build_raster.py`; `upload_r2.sh` derives manifest keys from it; the
+  app mirrors the key list by hand in `app/src/config.ts` (`RASTER_PACKS`).
 - `probe/` — standalone device capability probe page.
 - Hosting: GitHub Pages (app), Cloudflare R2 (archives). CI via Actions.
 
@@ -66,12 +97,91 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   (ARCHIVES), `style.ts` (source + layers), `ui.ts` (download row), and
   `upload_r2.sh` (manifest keys). Hand-curated by design — a handful of
   files, one pattern to follow (TASVEG is the template).
-- **Extend topo coverage (e.g. z16):** edit `pipeline/regions.json`, re-run
-  `build_regions.py tas` (disk cache makes it incremental), re-upload.
-  Re-validate the ocean-prune threshold first (see build_regions.py).
+- **Extend topo coverage (e.g. z16):** bump `maxzoom` in `packs.json`,
+  re-run `build_raster.py --pack topo` (disk cache makes it incremental),
+  re-upload. Re-validate the ocean-prune threshold first (see the topo
+  `size<1000@13` rule in build_raster.py).
+- **Add a raster pack (base map or season):** add an entry to
+  `pipeline/packs.json` → `build_raster.py --measure 1500 --pack <key>` (time
+  it first; ~70 tiles/s at 8 concurrent in 2026-09) → `--pack <key>` (the
+  licence guard reads the live copyrightText) → `upload_r2.sh data/<file>`
+  → mirror the key in `RASTER_PACKS` (config.ts) and, for a base, add it to
+  `BASES`/`BASE_ROWS`/`rasterVisibility`; a season only needs `SEASON_KEYS`
+  (chronological!). `pipeline/run_pulls.sh` chains build+upload for all.
+- **Refreshing a season (2025–26 is INCOMPLETE — still being flown and
+  published as of 2026-09-10):** `python3 pipeline/build_raster.py --pack
+  aerial2026 --fresh` (wipes that pack's tile cache incl. the cached
+  "absent" markers, ~10–40k requests, minutes with keep-alive) →
+  `build_raster.py --check-footprints --pack aerial2026` → `pipeline/upload_r2.sh
+  data/aerial_2026.pmtiles`. The manifest's `bytes` changes, so installed
+  phones see an **Update** button in Offline maps; the pack's `note` in
+  packs.json is shown under the row. When LIST adds the CC badge to the
+  2026 service, delete its `licence_override` (the guard would otherwise
+  abort on the changed text). Check the season list yearly: a new
+  `AerialPhotoYYYY` service = one new packs.json entry + `SEASON_KEYS`.
 - **Deploy app:** push to main → Pages workflow.
+- **Do not re-upload topo unless its tiles changed:** `build_raster.py`
+  writes extra metadata (`copyright_text`, `built`, …) into the archive, so
+  a rebuild of identical tiles has a different byte size and every installed
+  phone would be offered a 2 GB "Update" (the app compares manifest bytes to
+  the installed file). `run_pulls.sh` deliberately excludes topo.
+- **iPad checks:** `node app/scripts/shot-ipad.mjs` (dev server on :5199)
+  for landscape/portrait screenshots; Xcode iPad simulators (Pro 11, mini)
+  for home-screen install + hardware-keyboard Escape; Playwright project
+  `webkit-ipad` runs the wide-layout tests in CI.
 
 ## Gotchas discovered so far
+
+- Layer state lives in ONE localStorage key `layerState` (`{base, cutoff,
+  overlay, strength}`); the old `overlayMode`/`overlayOpacity` keys are
+  migrated once. The Layers sheet, legend and boot pill all read it via
+  `setLayerAccess` in ui.ts.
+- The season stack is plain layer visibility: season sources are stacked
+  chronologically, "up to season X" shows layers ≤ X, newest paints on top,
+  transparent edge tiles and absent tiles let older seasons through, and
+  the topo layer stays visible underneath so gaps read as "no photo by
+  then". The topo underlay ALSO stays on under an aerial/Tasmap base whose
+  archive is not local (offline = the map, never a flat ocean colour);
+  `applyLayerState(map, state, status.rasterLocal)` must be re-run after
+  downloads/deletes (`layers.reapply()`). `seasonAt()` in protocol.ts tells
+  the sheet which LOCAL season is on top at the map centre (remote archives
+  are never probed: a pmtiles getZxy re-downloads the tile), probing at
+  round(zoom + 1) — the level MapLibre renders 256 px tiles at.
+  `raster-fade-duration: 0` on seasons — stacked cross-fades flicker.
+- Geolocate `error`: only code 1 (denied) ends tracking; a transient
+  "position unavailable" keeps MapLibre's watch alive and recovers without
+  any event, so the wake lock must not be released on it. One pill per
+  tracking session.
+- Downloads "Update" keeps the installed archive serving until the
+  replacement is assembled (atomic swap) unless free space < 2× the
+  archive; outdated/partial rows keep a secondary Delete. "Download all
+  seasons" is one batch: first failure or Cancel ends it.
+- Wide viewports (≥ 700 px) have NO scrim: the map, toolbar and controls
+  stay live beside the card (pan while comparing seasons); close is × or
+  Escape. Phones keep the tap-outside scrim.
+- `raster://<key>/{z}/{x}/{y}` resolution: local OPFS archive → (seasons)
+  R2 archive via FetchSource → (statewide packs) LIST live → blank. Seasons
+  never touch LIST (sparse: a directory lookup answers "absent"). For the
+  statewide packs a miss inside a LOCAL archive's bounds/zooms is
+  authoritative (pruned ocean → blank, no LIST request); outside them
+  (beyond the Tasmania bbox) LIST live is still tried.
+- MapLibre hard-codes `image/png` as the blob type for every raster tile
+  and the browser sniffs the real format, so JPEG archives (and MIXED
+  PNG/JPEG season archives) decode fine — proven by the pixel-readback tests
+  (`?pixels=1` sets preserveDrawingBuffer; never on in normal use).
+- The Layers sheet's scrim covers the toolbar: tests must close the panel
+  before clicking another toolbar button (a scrim tap closes the panel).
+- Pixel tests must switch the overlay OFF first — a 50 % TASVEG fill tints
+  the readback.
+- Playwright routes match the MOST RECENTLY registered handler first:
+  `routeRasterFixtures` (Orthophoto/Tasmap live tiles from the synthetic
+  fixtures) must be registered after `blockTopoNetwork`.
+- Every `dev-data/*.pmtiles` URL and the manifest are routed in tests
+  (404 by default): a developer's `data/` holds the real multi-GB packs and
+  a real manifest, which would otherwise leak into "no archive" test paths.
+- Pipeline fetches use one keep-alive HTTPS connection per worker
+  (`http.client`): urllib's per-tile TLS handshake capped the pull at ~55
+  tiles/s (0.8 MB/s); keep-alive gives ~190 tiles/s with the same 8 workers.
 
 - LIST ArcGIS tile path is `{z}/{y}/{x}` (row before column).
 - Author CSS `display:` on an element defeats the `hidden` attribute — the
@@ -179,6 +289,20 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Status log
 
+- 2026-09-10: Aerial photos (statewide compilation + seven seasons behind an
+  "up to season" slider), Tasmap paper-scan base map, Layers sheet (base /
+  overlay / strength incl. Outlines-only) replacing the cycling button,
+  iPad support (side-card layout ≥ 700 px, Escape, hover, GPS-failure
+  pill, `webkit-ipad` Playwright project). Licence re-analysis: NC-ND
+  verbatim collections are fine, the export flag is not a licence term
+  (docs/LICENSING.md rewritten). Pipeline generalised: `packs.json` +
+  `build_raster.py` (licence guard, byte-identical blank sentinels,
+  top-down pruning, `--measure`, `--fresh`), `run_pulls.sh`. Measured ~70
+  tiles/s (55 with urllib, 190 with keep-alive); season packs 210 MB
+  (2020–21) to 995 MB (2023–24) — edge tiles are big PNGs. 2025–26 season
+  is INCOMPLETE —
+  refresh path documented above. Manifest gained `built`/`note`; the
+  downloads panel offers Update when the server archive differs.
 - 2026-08-29: repo created; plan approved; Phase 0 (setup) in progress.
 - 2026-08-29 (night): pipeline + app MVP + design pass + tests + CI + R2/
   Worker infra done; tasveg.pmtiles (360 MB) on R2; statewide topo fetch +
