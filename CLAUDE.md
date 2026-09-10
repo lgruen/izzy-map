@@ -46,6 +46,10 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   project) and 107 ("Tas Imagery and LiDAR Program": planned captures).
 - Tasmap scans: `Basemaps/TasmapRaster` (MIXED, z0–16; 500K/250K low zoom,
   100K z13–14, 25K sheets at z15 byte-identical to `Tasmap25K`). CC BY-NC-ND.
+  Because each zoom comes from a DIFFERENT scanned series, a blank z14 tile
+  says nothing about its z15 children — top-down pruning is unsafe here
+  (the build's validation caught it, 2026-09-10); `prune: "blank"` fetches
+  every candidate and only drops blank tiles per tile.
 - Blank-tile facts the pipeline relies on: byte-identical sentinels are
   learned per level (≥ 8 identical tiles; non-image 200 bodies are rejected
   before they can become one); a tile that 404s or equals a sentinel has no

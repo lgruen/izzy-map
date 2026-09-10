@@ -1,5 +1,5 @@
 {
-  "_comment": "Offline raster packs built by build_raster.py from LIST ArcGIS cached tile services and uploaded by upload_r2.sh (manifest keys = pack keys; the app mirrors the key list by hand in app/src/config.ts — hand-curated wiring is a repo decision). bbox comes from regions.json[region]. 'prune': 'size<N@Z' is the legacy topo rule (descendants of tiles under N bytes skipped from zoom Z); 'blank@Z' skips descendants of tiles that 404 or are byte-identical to a learned sentinel (ocean JPEG, transparent no-imagery PNG). Licence: each pack declares the licence flavour it was verified under ('licence'); the live copyrightText must name exactly that flavour (CC BY vs CC BY-NC-ND are NOT interchangeable), or a licence_override with the exact recorded text must be present — any change of the live text aborts the build (see docs/LICENSING.md). Seasons: AerialPhotoYYYY = the flying season ending in YYYY; coverage is a patchwork (6-15% of land per season, measured 2026-09-10); the app stacks them chronologically behind an 'up to season' slider.",
+  "_comment": "Offline raster packs built by build_raster.py from LIST ArcGIS cached tile services and uploaded by upload_r2.sh (manifest keys = pack keys; the app mirrors the key list by hand in app/src/config.ts — hand-curated wiring is a repo decision). bbox comes from regions.json[region]. 'prune': 'size<N@Z' is the legacy topo rule (descendants of tiles under N bytes skipped from zoom Z); 'blank@Z' skips descendants of tiles that 404 or are byte-identical to a learned sentinel (ocean JPEG, transparent no-imagery PNG); plain 'blank' drops such tiles but never prunes descendants (needed when the service renders different source maps per zoom, e.g. Tasmap). Licence: each pack declares the licence flavour it was verified under ('licence'); the live copyrightText must name exactly that flavour (CC BY vs CC BY-NC-ND are NOT interchangeable), or a licence_override with the exact recorded text must be present — any change of the live text aborts the build (see docs/LICENSING.md). Seasons: AerialPhotoYYYY = the flying season ending in YYYY; coverage is a patchwork (6-15% of land per season, measured 2026-09-10); the app stacks them chronologically behind an 'up to season' slider.",
   "region": "tas",
   "packs": [
     {
@@ -120,10 +120,11 @@
       "file": "tasmap_tas.pmtiles",
       "ext": "jpg",
       "maxzoom": 15,
-      "prune": "blank@13",
+      "prune": "blank",
       "label": "Paper map (Tasmap)",
       "attribution": "Tasmap from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
-      "licence": "CC BY-NC-ND 3.0 AU"
+      "licence": "CC BY-NC-ND 3.0 AU",
+      "_why": "No descendant pruning: TasmapRaster switches source sheets per zoom (500K/250K -> 100K at z13-14 -> 25K at z15), so a blank z14 parent does NOT imply blank z15 children — the build's own validation caught 2/40 pruned z15 tiles with 25K content (2026-09-10). Blank tiles are still dropped per tile; every candidate is requested (~335k, ~30 min with keep-alive)."
     }
   ]
 }

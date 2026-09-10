@@ -102,13 +102,16 @@ def load_config():
 
 
 def parse_prune(spec):
-    """'size<1000@13' -> ('size', 1000, 13); 'blank@10' -> ('blank', None, 10)."""
+    """'size<1000@13' -> ('size', 1000, 13); 'blank@10' -> ('blank', None, 10);
+    'blank' -> ('blank', None, None): drop blank tiles, never prune descendants
+    (a service that renders a different source map per zoom — Tasmap: 100K
+    sheets at z14, 25K at z15 — has content under blank parents)."""
     m = re.fullmatch(r"size<(\d+)@(\d+)", spec)
     if m:
         return "size", int(m.group(1)), int(m.group(2))
-    m = re.fullmatch(r"blank@(\d+)", spec)
+    m = re.fullmatch(r"blank(?:@(\d+))?", spec)
     if m:
-        return "blank", None, int(m.group(1))
+        return "blank", None, int(m.group(1)) if m.group(1) else None
     raise SystemExit(f"bad prune spec: {spec}")
 
 
@@ -291,7 +294,7 @@ def build_pack(pack, bbox, validate=True):
     with concurrent.futures.ThreadPoolExecutor(CONCURRENCY) as pool:
         for z in range(zmin, zmax + 1):
             candidates = tiles_at(bbox, z)
-            if z >= prune_from and kept_parents is not None:
+            if prune_from is not None and z >= prune_from and kept_parents is not None:
                 before = len(candidates)
                 kept_c = [t for t in candidates if (t[1] // 2, t[2] // 2) in kept_parents]
                 pruned_last = [t for t in candidates if (t[1] // 2, t[2] // 2) not in kept_parents]
