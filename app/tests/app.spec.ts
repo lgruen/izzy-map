@@ -475,8 +475,8 @@ test("downloads panel offers Update for a rebuilt archive and shows its note", a
   await expect(row.locator(".dl-secondary")).toHaveText("Delete"); // outdated stays deletable
   await expect(row).toContainText("Season still being flown");
   await expect(row).toContainText("newer version available");
-  await expect(page.locator(".dl-h .dl-all")).toHaveCount(1);
-  await expect(page.locator(".dl-h .dl-all")).toBeEnabled(); // 2023-24 is downloadable
+  await expect(page.locator("#dl-list .dl-h .dl-all")).toHaveCount(1);
+  await expect(page.locator("#dl-list .dl-h .dl-all")).toBeEnabled(); // 2023-24 is downloadable
   // packs the manifest doesn't list yet are not offered
   await expect(page.locator('.dl-item[data-key="tasmap"] .dl-btn')).toBeDisabled();
   // Update = replace in place: the new archive is fetched from "R2" and
@@ -494,7 +494,7 @@ test("downloads panel offers Update for a rebuilt archive and shows its note", a
   await closePanel(page);
   await page.locator("#btn-downloads").click();
   await expect(page.locator('.dl-item[data-key="aerial2024"] .dl-btn:not(.dl-secondary)')).toHaveText("Delete");
-  await expect(page.locator(".dl-h .dl-all")).toBeDisabled(); // nothing left to fetch
+  await expect(page.locator("#dl-list .dl-h .dl-all")).toBeDisabled(); // nothing left to fetch
 });
 
 test("a failed GPS fix is announced instead of silently spinning", async ({ page }) => {
