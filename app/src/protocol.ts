@@ -4,7 +4,7 @@
 //   raster://{key}/{z}/{x}/{y}   base rasters: OPFS archive -> (seasons) R2
 //                                archive | (statewide) LIST service -> blank
 //   pmtiles://...                vector overlays: TASVEG, geology, pre-1750
-import maplibregl, { type Map as MlMap } from "maplibre-gl";
+import { addProtocol, type Map as MlMap } from "maplibre-gl";
 import { FetchSource, FileSource, PMTiles, Protocol, type Header } from "pmtiles";
 import {
   ARCHIVES,
@@ -164,9 +164,9 @@ async function coveredBy(e: RasterEntry, z: number, x: number, y: number): Promi
 }
 
 export function registerProtocols(): void {
-  maplibregl.addProtocol("pmtiles", pmProtocol.tile);
+  addProtocol("pmtiles", pmProtocol.tile);
 
-  maplibregl.addProtocol("raster", async (params, abort) => {
+  addProtocol("raster", async (params, abort) => {
     const m = params.url.match(/^raster:\/\/([a-z0-9]+)\/(\d+)\/(\d+)\/(\d+)$/);
     if (!m) throw new Error("bad raster url: " + params.url);
     const key = m[1] as RasterKey;

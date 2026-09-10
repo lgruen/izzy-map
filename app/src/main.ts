@@ -1,6 +1,23 @@
-import maplibregl from "maplibre-gl";
+import {
+  GeolocateControl,
+  type GeolocateErrorEvent,
+  Map as MlMap,
+  NavigationControl,
+  ScaleControl,
+  setWorkerUrl,
+} from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+// MapLibre 6 is ESM-only and spawns its worker from a URL it derives from
+// import.meta.url at runtime — inside a Vite bundle that resolves to a file
+// that does not exist, so the map silently gets no worker (vector tiles
+// never render) while the dev-server tests pass. `?worker&url` makes Vite
+// bundle the worker with its sibling maplibre-gl-shared.mjs and emit it as
+// a hashed asset, which the service worker precaches for offline use.
+// scripts/check-dist.mjs asserts the asset is in the build.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import "./app.css";
+
+setWorkerUrl(maplibreWorkerUrl);
 import { HOME, RASTER_KEYS, SEASON_KEYS, seasonLabel } from "./config";
 import { bindMap, registerProtocols, refreshArchives, status } from "./protocol";
 import {
@@ -79,7 +96,7 @@ async function boot(): Promise<void> {
   // ?pixels=1: keep the WebGL buffer readable so tests can assert what the
   // base rasters actually painted (costs a little GPU memory; off by default)
   const pixels = new URLSearchParams(location.search).has("pixels");
-  const map = new maplibregl.Map({
+  const map = new MlMap({
     container: "map",
     style: buildStyle(state, status.rasterLocal),
     center: HOME.center,
@@ -92,14 +109,14 @@ async function boot(): Promise<void> {
     canvasContextAttributes: { preserveDrawingBuffer: pixels },
   });
 
-  map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
-  const geolocate = new maplibregl.GeolocateControl({
+  map.addControl(new NavigationControl({ showCompass: true }), "top-right");
+  const geolocate = new GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
     trackUserLocation: true,
     showAccuracyCircle: true,
   });
   map.addControl(geolocate, "top-right");
-  map.addControl(new maplibregl.ScaleControl({ unit: "metric" }));
+  map.addControl(new ScaleControl({ unit: "metric" }));
 
   bindMap(map);
 
@@ -172,7 +189,7 @@ async function boot(): Promise<void> {
   // tracking session — a flaky fix would repaint it every few seconds.
   let gpsPillShown = false;
   geolocate.on("trackuserlocationstart", () => (gpsPillShown = false));
-  geolocate.on("error", (e: GeolocationPositionError) => {
+  geolocate.on("error", (e: GeolocateErrorEvent) => {
     if (e.code === 1) {
       tracking = false;
       void syncWakeLock();
@@ -278,5 +295,5 @@ void boot();
 
 // Test hook (harmless in prod): expose map for Playwright checks.
 declare global {
-  interface Window { __map?: maplibregl.Map }
+  interface Window { __map?: MlMap }
 }

@@ -136,6 +136,17 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Gotchas discovered so far
 
+- **MapLibre 6 is ESM-only and resolves its Web Worker from
+  `import.meta.url` at runtime** — inside a Vite bundle that URL points at a
+  file that doesn't exist, so vector tiles silently never render in the
+  BUILT app while every dev-server test passes. main.ts wires
+  `setWorkerUrl(import "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url")`
+  (the `?worker&url` form bundles the sibling `maplibre-gl-shared.mjs`;
+  plain `?url` does not). `npm run build` ends with `scripts/check-dist.mjs`
+  asserting both workers are emitted and precached; `scripts/smoke-dist.mjs`
+  drives the production bundle under `vite preview` for a manual check.
+  Default import (`import maplibregl from "maplibre-gl"`) is gone: use named
+  imports. Geolocate errors arrive as `GeolocateErrorEvent` (has `.code`).
 - Layer state lives in ONE localStorage key `layerState` (`{base, cutoff,
   overlay, strength}`); the old `overlayMode`/`overlayOpacity` keys are
   migrated once. The Layers sheet, legend and boot pill all read it via

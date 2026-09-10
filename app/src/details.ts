@@ -1,6 +1,5 @@
 // Tap -> community details bottom sheet (the offline "identify" panel).
-import type maplibregl from "maplibre-gl";
-import type { Map, MapGeoJSONFeature } from "maplibre-gl";
+import type { GeoJSONSource, Map, MapGeoJSONFeature } from "maplibre-gl";
 import { COMMUNITIES, GEOLOGY_UNITS, PRE1750_UNITS } from "./style";
 import f2f from "./generated/f2f_index.json";
 import { opfsFile } from "./storage";
@@ -32,7 +31,7 @@ export let clearDetails: () => void = () => {};
 export function wireDetails(map: Map): void {
   const sheet = document.getElementById("sheet")!;
 
-  const selection = () => map.getSource("selected") as maplibregl.GeoJSONSource | undefined;
+  const selection = () => map.getSource("selected") as GeoJSONSource | undefined;
   const clearSelection = () => {
     sheet.hidden = true;
     selection()?.setData({ type: "FeatureCollection", features: [] });

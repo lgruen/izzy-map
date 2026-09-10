@@ -28,9 +28,12 @@ jobs:
       - name: Install
         working-directory: app
         run: npm ci
-      - name: Typecheck
+      - name: Typecheck + production build guard
         working-directory: app
-        run: npx tsc --noEmit
+        # `build` runs tsc, vite build and scripts/check-dist.mjs, which
+        # asserts the MapLibre + pdf.js workers are bundled AND precached —
+        # the dev-server tests cannot see a broken production bundle
+        run: npm run build
       - name: Install Playwright browsers
         working-directory: app
         run: npx playwright install --with-deps webkit chromium

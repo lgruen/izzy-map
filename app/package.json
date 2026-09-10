@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
     "preview": "vite preview",
     "test": "playwright test"
   },
   "dependencies": {
-    "maplibre-gl": "^5.9.1",
+    "maplibre-gl": "^6.4.1",
     "pdfjs-dist": "^6.3.289",
     "pmtiles": "^4.3.0",
     "proj4": "^2.19.10"
