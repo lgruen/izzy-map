@@ -49,7 +49,10 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   Because each zoom comes from a DIFFERENT scanned series, a blank z14 tile
   says nothing about its z15 children — top-down pruning is unsafe here
   (the build's validation caught it, 2026-09-10); `prune: "blank"` fetches
-  every candidate and only drops blank tiles per tile.
+  every candidate and only drops blank tiles per tile. Result: 3.24 GB,
+  144k tiles; at z15 the dropped tiles are all transparent beyond-sheet
+  PNGs, at z13–14 uniform printed-sea JPEGs (#aae0fc = the Tasmap base
+  background), at z≤12 #ccffff sea and white margins.
 - Blank-tile facts the pipeline relies on: byte-identical sentinels are
   learned per level (≥ 8 identical tiles; non-image 200 bodies are rejected
   before they can become one); a tile that 404s or equals a sentinel has no
@@ -313,9 +316,11 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   (docs/LICENSING.md rewritten). Pipeline generalised: `packs.json` +
   `build_raster.py` (licence guard, byte-identical blank sentinels,
   top-down pruning, `--measure`, `--fresh`), `run_pulls.sh`. Measured ~70
-  tiles/s (55 with urllib, 190 with keep-alive); season packs 210 MB
-  (2020–21) to 995 MB (2023–24) — edge tiles are big PNGs. 2025–26 season
-  is INCOMPLETE —
+  tiles/s (55 with urllib, 190–375 with keep-alive); season packs 210 MB
+  (2020–21) to 995 MB (2023–24) — edge tiles are big PNGs; aerial
+  compilation 1.93 GB (223k tiles), Tasmap 3.24 GB; R2 now holds 13
+  archives, 11.1 GB. maplibre-gl 5.24 → 6.4.1 (ESM-only; worker wiring +
+  build guard, see gotchas). 2025–26 season is INCOMPLETE —
   refresh path documented above. Manifest gained `built`/`note`; the
   downloads panel offers Update when the server archive differs.
 - 2026-08-29: repo created; plan approved; Phase 0 (setup) in progress.

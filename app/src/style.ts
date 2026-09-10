@@ -43,11 +43,14 @@ export const STRENGTHS: readonly Strength[] = ["full", "light", "outline"];
 
 /** Background per base: what shows where an archive has no tile (pruned
  * ocean / no imagery). Aerial = the exact colour of LIST's constant ocean
- * tile (#1e525f, measured 2026-09-10) so offline gaps match online sea. */
+ * tile (#1e525f); Tasmap = the sheets' printed sea (#aae0fc): the pack
+ * drops the uniform-sea tiles of the 100K series and the transparent
+ * beyond-the-sheet tiles of the 25K series, both of which are water
+ * (measured from the learned sentinels, 2026-09-10). */
 export const BASE_BG: Record<BaseMode, string> = {
   topo: "#eef3f0",
   seasons: "#eef3f0",
-  tasmap: "#f3e9c6",
+  tasmap: "#aae0fc",
   aerial: "#1e525f",
 };
 
