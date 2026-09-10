@@ -21,6 +21,10 @@ Government.
 - **Vegetation layer**: TASVEG 5.0 polygons converted to vector tiles
   ([PMTiles](https://protomaps.com/docs/pmtiles)), downloaded once (statewide)
   into the browser's OPFS storage.
+- **Detailed areas**: frame any area in the app and download it at up to
+  0.4 m per pixel (aerial, seasons, paper map, topo) straight from LIST
+  into device storage; outside downloaded areas the map falls back to the
+  statewide packs.
 - **Base maps**: LIST topographic tiles, Tasmap sheet scans and aerial photos
   are fetched live from LIST tile services when online; offline coverage via
   statewide raster packs (zoom ≤ 15) downloaded in-app, plus small per-season

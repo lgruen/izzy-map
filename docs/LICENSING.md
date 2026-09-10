@@ -97,7 +97,13 @@ How this project stays inside it:
   altered image is ever produced or distributed — exactly what LISTmap does
   with the same basemaps.
 - The pipeline re-reads each service's live `copyrightText` on every run
-  and refuses to build unless it names a Creative Commons BY licence.
+  and refuses to build unless it names the licence flavour the pack was
+  verified under.
+- **Detailed areas**: the app itself fetches high-zoom tiles for a
+  user-framed area straight from the LIST service into the device's own
+  storage (`app/src/areas.ts`) — private, verbatim caching for the same
+  non-commercial use; nothing passes through our hosting. Requests stay
+  modest (6 concurrent, one-off per area, seasons only where flown).
 
 **AerialPhoto2026 (2025–26 season, in progress):** its `copyrightText` is
 the bare `© State of Tasmania` — exactly the tail of the 2024/2025 string

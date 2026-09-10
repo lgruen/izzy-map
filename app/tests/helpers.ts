@@ -82,11 +82,24 @@ export async function routeRasterFixtures(page: Page): Promise<void> {
   await routeTasvegFixture(page);
   await page.route("**/dev-data/aerial_2023.pmtiles", serveFixture(SEASON_2023_FIXTURE));
   await page.route("**/dev-data/aerial_2024.pmtiles", serveFixture(SEASON_2024_FIXTURE));
+  // Above z15 (detailed-area territory) the live service answers with the
+  // GREEN season tile for any tile inside the fixture bbox, so tests can
+  // tell a fetched high-zoom tile (green) from a stretched z15 pack tile
+  // (red / cream) — LIST itself serves the same imagery at every zoom.
+  const hiZoom = new PMTiles(new BufferSource(SEASON_2023_FIXTURE, "hi"));
   const live = async (service: string, buf: Buffer) => {
     const pm = new PMTiles(new BufferSource(buf, service));
     await page.route(new RegExp(`Basemaps/${service}/MapServer/tile/(\\d+)/(\\d+)/(\\d+)$`), async (route) => {
       const m = /tile\/(\d+)\/(\d+)\/(\d+)$/.exec(route.request().url())!;
       const [z, y, x] = [Number(m[1]), Number(m[2]), Number(m[3])]; // LIST order: z/y/x
+      if (z > 15) {
+        const d = z - 15;
+        const parent = await pm.getZxy(15, x >> d, y >> d);
+        const t = parent ? await hiZoom.getZxy(15, 29785, 20717) : null; // any green tile
+        if (t?.data) await route.fulfill({ status: 200, contentType: "image/jpeg", body: Buffer.from(t.data) });
+        else await route.fulfill({ status: 404, body: "" });
+        return;
+      }
       const t = await pm.getZxy(z, x, y);
       if (t?.data) await route.fulfill({ status: 200, contentType: "image/jpeg", body: Buffer.from(t.data) });
       else await route.fulfill({ status: 404, body: "" });
@@ -94,6 +107,11 @@ export async function routeRasterFixtures(page: Page): Promise<void> {
   };
   await live("Orthophoto", AERIAL_FIXTURE);
   await live("TasmapRaster", TASMAP_FIXTURE);
+}
+
+/** Cut the live LIST services (simulated loss of reception). */
+export async function blockLiveServices(page: Page): Promise<void> {
+  await page.route("**/services.thelist.tas.gov.au/**", (route) => route.abort());
 }
 
 export async function waitForMapIdle(page: Page): Promise<void> {
@@ -108,6 +126,9 @@ export async function waitForMapIdle(page: Page): Promise<void> {
 /** Wait until every visible source has its tiles and the raster cross-fade
  * (300 ms default) has finished, so pixel readbacks are final. */
 export async function waitForTiles(page: Page): Promise<void> {
+  // a jumpTo issues its tile requests on the next frame — checking too early
+  // sees the previous view's tiles as "all loaded"
+  await page.waitForTimeout(300);
   await page.waitForFunction(() => {
     const map = (window as never as { __map?: { loaded(): boolean; areTilesLoaded(): boolean; isMoving(): boolean } }).__map;
     return !!map && map.loaded() && map.areTilesLoaded() && !map.isMoving();
@@ -147,14 +168,17 @@ export function near(actual: readonly number[], expected: readonly number[], tol
   return actual.every((v, i) => Math.abs(v - expected[i]) <= tol);
 }
 
-/** Centre the map on a tile (so pixel offsets land inside it). */
-export async function jumpToTile(page: Page, z: number, x: number, y: number): Promise<void> {
-  await page.evaluate(([z, x, y]) => {
+/** Centre the map on a tile (so pixel offsets land inside it). A 256 px
+ * raster source renders tiles at round(map zoom + 1), so to look at z15
+ * PACK tiles the map zoom must be 14 — at zoom 15 the map asks for z16
+ * tiles (live service / detailed areas). `zoom` defaults to z - 1. */
+export async function jumpToTile(page: Page, z: number, x: number, y: number, zoom = z - 1): Promise<void> {
+  await page.evaluate(([z, x, y, zoom]) => {
     const n = 2 ** z;
     const lon = ((x + 0.5) / n) * 360 - 180;
     const lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 0.5)) / n))) * 180) / Math.PI;
-    (window as never as { __map: import("maplibre-gl").Map }).__map.jumpTo({ center: [lon, lat], zoom: z });
-  }, [z, x, y] as const);
+    (window as never as { __map: import("maplibre-gl").Map }).__map.jumpTo({ center: [lon, lat], zoom });
+  }, [z, x, y, zoom] as const);
 }
 
 /** Open the Layers sheet and pick a base / overlay row (leaves it open). */

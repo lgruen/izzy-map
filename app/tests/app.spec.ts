@@ -3,10 +3,12 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import {
+  AERIAL_FIXTURE,
   CENTRE_TILE,
   COLOURS,
   SEASON_2023_FIXTURE,
   SEASON_2024_FIXTURE,
+  blockLiveServices,
   blockTopoNetwork,
   centerFeature,
   chooseLayer,
@@ -244,6 +246,8 @@ test("base map choice paints aerial photos, Tasmap scans, topo — and survives 
   await page.goto("/?pixels=1");
   await waitForMapIdle(page);
   await chooseLayer(page, "overlay", "off"); // overlays would tint the readback
+  // zoom 14 renders the z15 PACK tiles (zoom 15 would ask for live z16)
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x, CENTRE_TILE.y);
   await chooseLayer(page, "base", "aerial");
   await waitForTiles(page);
   expect(await vis(page, "aerial")).toBe("visible");
@@ -268,6 +272,10 @@ test("base map choice paints aerial photos, Tasmap scans, topo — and survives 
   await page.reload();
   await waitForMapIdle(page);
   expect(await vis(page, "aerial")).toBe("visible");
+  // online above the packs: the live service's high-zoom tiles (green)
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x, CENTRE_TILE.y, 16);
+  await waitForTiles(page);
+  expect(near(await pixelAt(page), COLOURS.green), "live z17 online").toBe(true);
   await page.locator("#btn-layers").click();
   await expect(page.locator('.lay-row[data-base="aerial"]')).toHaveClass(/\bon\b/);
 });
@@ -275,9 +283,9 @@ test("base map choice paints aerial photos, Tasmap scans, topo — and survives 
 test("season stack: newest season on top, older shows through gaps, slider cutoff", async ({ page }) => {
   await page.goto("/?pixels=1");
   await waitForMapIdle(page);
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x, CENTRE_TILE.y);
   await chooseLayer(page, "overlay", "off");
   await chooseLayer(page, "base", "seasons");
-  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x, CENTRE_TILE.y);
   await waitForTiles(page);
   // slider defaults to the newest season; 2023-24 (blue) covers the NE
   // quarter with a half-transparent edge tile at the centre, 2022-23
@@ -324,12 +332,13 @@ test("a local statewide archive answers in-bounds gaps itself; only out-of-bound
   });
   await page.goto("/?pixels=1");
   await waitForMapIdle(page);
+  // the fly-in leaves the map at zoom 15 (= z16 requests); look at z15 tiles
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x + 2, CENTRE_TILE.y - 2);
   await chooseLayer(page, "overlay", "off");
   await chooseLayer(page, "base", "aerial");
   await expect(page.locator('.lay-row[data-base="aerial"] .lay-status')).toContainText("offline");
   expect(await vis(page, "topo")).toBe("none"); // local archive: no underlay
   // NE of the centre: the local archive has it (blue) — no live request
-  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x + 2, CENTRE_TILE.y - 2);
   await waitForTiles(page);
   expect(near(await pixelAt(page), COLOURS.blue)).toBe(true);
   // SW of the centre: inside the archive's bounds, no tile -> blank -> the
@@ -356,9 +365,9 @@ test("seasons never consult the live service; a local season serves its tiles", 
   });
   await page.goto("/?pixels=1");
   await waitForMapIdle(page);
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x + 2, CENTRE_TILE.y - 2);
   await chooseLayer(page, "overlay", "off");
   await chooseLayer(page, "base", "seasons");
-  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x + 2, CENTRE_TILE.y - 2);
   await waitForTiles(page);
   expect(near(await pixelAt(page), COLOURS.blue)).toBe(true); // from OPFS
   // the caption names a season only when a LOCAL archive has the tile
@@ -371,6 +380,59 @@ test("seasons never consult the live service; a local season serves its tiles", 
   expect(listHits).toBe(0); // no season ever hits the LIST tile service
   await expect(page.locator('.lay-row[data-base="seasons"] .lay-status')).toContainText("1 of 7 seasons offline");
   await expect(page.locator(".lay-tick.missing")).toHaveCount(6);
+});
+
+test("above z15: live tiles online, downloaded area offline, stretched z15 parent elsewhere", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  // the statewide aerial pack (red, z12-15) is installed
+  await seedOpfs(page, "aerial_tas.pmtiles", AERIAL_FIXTURE);
+  await page.goto("/?pixels=1");
+  await waitForMapIdle(page);
+  await chooseLayer(page, "overlay", "off");
+  await chooseLayer(page, "base", "aerial");
+  await closePanel(page);
+  // online at z17 the map now shows the live high-zoom tiles (green)
+  await jumpToTile(page, 17, CENTRE_TILE.x * 4 + 1, CENTRE_TILE.y * 4 + 1);
+  await waitForTiles(page);
+  expect(near(await pixelAt(page), COLOURS.green), "live z17").toBe(true);
+
+  // frame this view as a detailed area and download the aerial layer
+  await page.locator("#btn-downloads").click();
+  await page.locator("#area-new").click();
+  await expect(page.locator("#areabar")).toBeVisible();
+  await page.locator("#areabar-next").click();
+  await expect(page.locator("#area-form")).toBeVisible();
+  await expect(page.locator("#area-est")).toContainText("about");
+  await page.locator('input[name="zmax"][value="17"]').check();
+  await page.locator("#area-name").fill("Test patch");
+  await page.locator(".area-go").click();
+  await expect(page.locator(".area-cancel")).toHaveText("Done", { timeout: 60_000 });
+  await expect(page.locator('[data-key="aerial"] .dl-status')).toHaveText("✓ done");
+  await page.locator(".area-cancel").click();
+  await expect(page.locator(".area-row")).toContainText("Test patch");
+  await expect(page.locator(".area-row .dl-status")).toContainText("✓ downloaded");
+  await closePanel(page);
+
+  // lose reception: the area still renders its own z17 tiles from OPFS ...
+  await blockLiveServices(page);
+  await page.reload();
+  await waitForMapIdle(page);
+  await jumpToTile(page, 17, CENTRE_TILE.x * 4 + 1, CENTRE_TILE.y * 4 + 1);
+  await waitForTiles(page);
+  expect(near(await pixelAt(page), COLOURS.green), "area z17 offline").toBe(true);
+  // ... and outside the area MapLibre falls back to the stretched z15 pack
+  // tile (red) instead of a hole (the protocol's miss is a 404, which is
+  // what makes MapLibre request the parent without a camera move)
+  await jumpToTile(page, 17, (CENTRE_TILE.x + 6) * 4, CENTRE_TILE.y * 4);
+  await expect.poll(async () => near(await pixelAt(page), COLOURS.red), { timeout: 10_000 }).toBe(true);
+
+  // delete the area: back to the stretched parent inside it too
+  await page.locator("#btn-downloads").click();
+  await page.locator(".area-row .area-delete").click();
+  await expect(page.locator("#area-list")).toContainText("No detailed areas");
+  await closePanel(page);
+  await jumpToTile(page, 17, CENTRE_TILE.x * 4 + 1, CENTRE_TILE.y * 4 + 1);
+  await expect.poll(async () => near(await pixelAt(page), COLOURS.red), { timeout: 10_000 }).toBe(true);
 });
 
 test("downloads panel offers Update for a rebuilt archive and shows its note", async ({ page, browserName }) => {

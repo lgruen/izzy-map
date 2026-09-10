@@ -14,8 +14,8 @@ import {
   ATTRIBUTION_TASMAP,
   ATTRIBUTION_TASVEG,
   ATTRIBUTION_TOPO,
-  RASTER_MAXZOOM,
   SEASON_KEYS,
+  packOf,
   type RasterKey,
 } from "./config";
 
@@ -158,7 +158,10 @@ function rasterSource(key: RasterKey, attribution: string): RasterSourceSpecific
     tiles: [`raster://${key}/{z}/{x}/{y}`],
     tileSize: 256,
     minzoom: 0,
-    maxzoom: RASTER_MAXZOOM,
+    // the service's native ceiling (≤ 18): above the z15 packs, tiles come
+    // from a downloaded detailed area or the live service; a miss throws so
+    // MapLibre shows the stretched z15 parent instead of a hole
+    maxzoom: packOf(key).maxzoom,
     attribution,
   };
 }
@@ -178,6 +181,11 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
     geology: { type: "vector", url: "pmtiles://geology", attribution: ATTRIBUTION_GEOLOGY },
     pre1750: { type: "vector", url: "pmtiles://pre1750", attribution: ATTRIBUTION_PRE1750 },
     selected: {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+    },
+    // dashed frame shown while the user frames a detailed-area download
+    "area-frame": {
       type: "geojson",
       data: { type: "FeatureCollection", features: [] },
     },
@@ -250,6 +258,12 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
           "line-color": "#ff3b30",
           "line-width": 3,
         },
+      },
+      {
+        id: "area-frame",
+        type: "line",
+        source: "area-frame",
+        paint: { "line-color": "#1e4434", "line-width": 3, "line-dasharray": [2, 1.5] },
       },
       {
         id: "tasveg-label",

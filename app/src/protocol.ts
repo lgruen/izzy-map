@@ -1,14 +1,17 @@
 // Tile protocols wiring MapLibre to local OPFS PMTiles archives, with a
 // live-network fallback while online.
 //
-//   raster://{key}/{z}/{x}/{y}   base rasters: OPFS archive -> (seasons) R2
-//                                archive | (statewide) LIST service -> blank
+//   raster://{key}/{z}/{x}/{y}   base rasters: downloaded detailed area ->
+//                                OPFS pack (z<=15) -> (seasons) R2 pack |
+//                                LIST live -> blank (z<=15) / error (z>15,
+//                                so MapLibre shows the stretched parent)
 //   pmtiles://...                vector overlays: TASVEG, geology, pre-1750
 import { addProtocol, type Map as MlMap } from "maplibre-gl";
 import { FetchSource, FileSource, PMTiles, Protocol, type Header } from "pmtiles";
 import {
   ARCHIVES,
   DATA_BASE,
+  PACK_MAXZOOM,
   RASTER_KEYS,
   SEASON_KEYS,
   packOf,
@@ -17,6 +20,7 @@ import {
   type VectorKey,
 } from "./config";
 import { opfsFile } from "./storage";
+import { areaTile, refreshAreaStores } from "./areas";
 
 // 1x1 FULLY TRANSPARENT PNG for tiles we can't provide (offline + not
 // downloaded). Review caught the previous constant decoding to a
@@ -57,10 +61,54 @@ export const status: ArchiveStatus = {
   vectorLocal: { tasveg: false, geology: false, pre1750: false },
 };
 
-/** True when tiles for this pack can come from somewhere right now: a local
- * archive, or (seasons) the remote one. Statewide packs also stream live. */
-export function rasterAvailable(key: RasterKey): boolean {
-  return rasters.has(key) || !!packOf(key).live;
+/** A pack tile from the local or remote archive only (no live service, no
+ * areas) — what the season downloader uses to know where a season was
+ * flown. Null when absent or unreachable. */
+export async function archiveTile(key: RasterKey, z: number, x: number, y: number): Promise<ArrayBuffer | null> {
+  const e = rasters.get(key);
+  if (!e) return null;
+  // a directory miss is null; an unreachable/corrupt archive THROWS — the
+  // caller must not mistake "couldn't ask" for "not there"
+  return (await e.archive.getZxy(z, x, y))?.data ?? null;
+}
+
+// Season live fetches above z15 are gated on the z15 tile existing in the
+// season's archive: LIST's per-season services 404 everywhere else, and at
+// z17 seven stacked sources would otherwise fire ~140 dead requests a view.
+const parentKnown = new Map<string, boolean>();
+async function seasonHasParent(key: RasterKey, z: number, x: number, y: number): Promise<boolean> {
+  const d = z - PACK_MAXZOOM;
+  const k = `${key}/${x >> d}/${y >> d}`;
+  let v = parentKnown.get(k);
+  if (v === undefined) {
+    try {
+      v = !!(await archiveTile(key, PACK_MAXZOOM, x >> d, y >> d));
+    } catch {
+      return false; // unreachable: skip live this time, don't cache the answer
+    }
+    if (parentKnown.size > 4000) parentKnown.clear();
+    parentKnown.set(k, v);
+  }
+  return v;
+}
+
+// Live fetches above z15 sit BEFORE the 404 that lets MapLibre paint the
+// z15 parent, and MapLibre never requests a parent for a tile that is still
+// loading. On a phantom connection (bars, no throughput) an unbounded fetch
+// would therefore hold a hole open for tens of seconds. So: a short timeout,
+// and after a failure a breaker that skips live for a while.
+const LIVE_TIMEOUT_MS = 3000;
+const LIVE_BREAKER_MS = 20_000;
+// per pack: one service being blocked/broken must not silence the others
+const liveDownUntil = new Map<RasterKey, number>();
+const isImage = (buf: ArrayBuffer) => {
+  const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  return (b[0] === 0xff && b[1] === 0xd8) || (b[0] === 0x89 && b[1] === 0x50);
+};
+
+/** Re-request in-view tiles of these sources (after an area download). */
+export function refreshRasterTiles(keys: readonly RasterKey[]): void {
+  for (const k of keys) refreshRaster(k);
 }
 
 function refreshRaster(key: string): void {
@@ -84,8 +132,10 @@ export async function refreshArchives(rekickRemote = false): Promise<ArchiveStat
     lastBacking.set(key, backing);
     if (file) {
       if (changed) rasters.set(key, entryFor(new PMTiles(new FileSource(file)), true));
-    } else if (pack.live) {
-      // statewide services stream straight from LIST while online
+    } else if (pack.kind === "base") {
+      // statewide services stream straight from LIST while online (seasons
+      // also carry a live URL — for z > 15 only — but their z <= 15 tiles
+      // come from the R2 archive below)
       rasters.delete(key);
     } else if (changed || rekickRemote) {
       // Sparse season: consult the R2 archive so absent tiles are a directory
@@ -95,6 +145,8 @@ export async function refreshArchives(rekickRemote = false): Promise<ArchiveStat
     }
     if (changed || rekickRemote) refreshRaster(key);
   }
+  parentKnown.clear();
+  await refreshAreaStores();
 
   for (const key of VECTOR_ARCHIVES) {
     const file = await opfsFile(ARCHIVES[key]);
@@ -174,8 +226,13 @@ export function registerProtocols(): void {
     const pack = packOf(key);
     const [z, x, y] = [Number(m[2]), Number(m[3]), Number(m[4])];
 
+    // 1. a downloaded detailed area (the only offline source above z15)
+    const area = await areaTile(key, z, x, y);
+    if (area) return { data: area };
+
+    // 2. the statewide pack (z <= 15)
     const e = rasters.get(key);
-    if (e) {
+    if (e && z <= PACK_MAXZOOM) {
       try {
         const t = await e.archive.getZxy(z, x, y);
         if (t?.data) return { data: t.data };
@@ -184,15 +241,46 @@ export function registerProtocols(): void {
         /* corrupt/unreadable archive must not block the fallback */
       }
     }
-    if (pack.live) {
+
+    // 3. the live service: statewide packs always; seasons only above the
+    //    pack ceiling and only where the season has a z15 tile
+    const liveOk =
+      pack.live &&
+      Date.now() >= (liveDownUntil.get(key) ?? 0) &&
+      (pack.kind === "base" || (z > PACK_MAXZOOM && (await seasonHasParent(key, z, x, y))));
+    if (liveOk) {
+      // Always attempt (no navigator.onLine gate — it lies on iOS after
+      // backgrounding); offline the fetch fails fast and we fall through.
+      const ctl = new AbortController();
+      const onAbort = () => ctl.abort();
+      abort?.signal.addEventListener("abort", onAbort);
+      const timer = z > PACK_MAXZOOM ? setTimeout(() => ctl.abort(), LIVE_TIMEOUT_MS) : 0;
       try {
-        // Always attempt (no navigator.onLine gate — it lies on iOS after
-        // backgrounding); offline the fetch fails fast and we fall through.
-        const res = await fetch(pack.live(z, x, y), { signal: abort?.signal });
-        if (res.ok) return { data: await res.arrayBuffer() };
-      } catch {
-        /* offline or abort — fall through to blank */
+        const res = await fetch(pack.live!(z, x, y), { signal: ctl.signal });
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (isImage(buf)) return { data: buf }; // a captive portal page is not a tile
+        }
+        if (res.status >= 500) liveDownUntil.set(key, Date.now() + LIVE_BREAKER_MS);
+      } catch (err) {
+        if (abort?.signal.aborted) throw err;
+        liveDownUntil.set(key, Date.now() + LIVE_BREAKER_MS); // offline or timed out
+      } finally {
+        clearTimeout(timer);
+        abort?.signal.removeEventListener("abort", onAbort);
       }
+    }
+
+    // 4. above the packs a miss must ERROR, not paint blank: MapLibre then
+    //    requests/retains the parent (the z15 pack tile, stretched) — a
+    //    blank would cover it with nothing. It must be a *404*: only a 404
+    //    makes MapLibre fire the `data` event that re-runs the retain pass
+    //    right away (verified in maplibre-gl 6 `_tileLoaded`); any other
+    //    error just logs and the hole stays until the camera moves.
+    if (z > PACK_MAXZOOM) {
+      const err = new Error(`no tile ${key} ${z}/${x}/${y}`) as Error & { status: number };
+      err.status = 404;
+      throw err;
     }
     return blank();
   });

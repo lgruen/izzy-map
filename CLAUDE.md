@@ -126,6 +126,21 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   2026 service, delete its `licence_override` (the guard would otherwise
   abort on the changed text). Check the season list yearly: a new
   `AerialPhotoYYYY` service = one new packs.json entry + `SEASON_KEYS`.
+- **Detailed areas (in-app, per layer, user-framed):** Offline maps →
+  "Download this area…" → dashed frame follows the map → Next → layers
+  (aerial / seasons / paper map / topo) + detail (z16–18) + estimate →
+  Download. `app/src/areas.ts`: tiles fetched by the device from the LIST
+  service (6 concurrent, image-magic checked, 404 = absent), stored as
+  `areas/<id>/<layer>/part-NNNN.bin` + `.json` index (64 MB parts, written
+  together on close; an interrupted part is redone), registry
+  `areas/areas.json`. Seasons only fetch under z15 tiles the season's
+  archive has (`archiveTile`). The `raster://` protocol consults area stores
+  first. Estimates use `meanTileBytes` per pack; `MAX_AREA_TILES` (60k per
+  layer) caps a download — the framing bar and the setup sheet refuse
+  larger frames. Registry writes are serialised (`withRegistry`); an
+  interrupted part is closed and indexed, not discarded; Delete waits for
+  the layer's download to stop first (an open writable makes removeEntry
+  fail and would orphan gigabytes).
 - **Deploy app:** push to main → Pages workflow.
 - **Do not re-upload topo unless its tiles changed:** `build_raster.py`
   writes extra metadata (`copyright_text`, `built`, …) into the archive, so
@@ -177,12 +192,23 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 - Wide viewports (≥ 700 px) have NO scrim: the map, toolbar and controls
   stay live beside the card (pan while comparing seasons); close is × or
   Escape. Phones keep the tap-outside scrim.
-- `raster://<key>/{z}/{x}/{y}` resolution: local OPFS archive → (seasons)
-  R2 archive via FetchSource → (statewide packs) LIST live → blank. Seasons
-  never touch LIST (sparse: a directory lookup answers "absent"). For the
-  statewide packs a miss inside a LOCAL archive's bounds/zooms is
-  authoritative (pruned ocean → blank, no LIST request); outside them
-  (beyond the Tasmania bbox) LIST live is still tried.
+- `raster://<key>/{z}/{x}/{y}` resolution: downloaded detailed area →
+  local OPFS pack (z ≤ 15) → (seasons) R2 pack → LIST live → blank (z ≤ 15)
+  or **throw** (z > 15). Sources run to the service's native max zoom
+  (aerial/seasons/topo 18, Tasmap 16 — `packOf(key).maxzoom`), so online
+  the map streams full-resolution LIST tiles past the packs; offline a
+  miss above z15 must ERROR **with `status = 404`**: only a 404 makes
+  MapLibre fire the `data` event that re-runs its retain pass, which then
+  requests the parent (up to 10 levels, `maxUnderzooming`), i.e. the
+  stretched z15 pack tile. A blank there paints a hole over it; a non-404
+  error leaves the hole until the camera moves. MapLibre never requests a
+  parent for a tile still *loading*, so live fetches above z15 are bounded
+  (3 s timeout + a 20 s breaker after a failure) or a phantom connection
+  holds holes open. z18 cap = size choice (64× z15 per tile), not a
+  fallback constraint. Seasons go live only above z15 and only where
+  their z15 archive tile exists (`seasonHasParent`, cached), so seven
+  stacked sources don't fire 404 storms. For statewide packs a miss inside
+  a LOCAL archive's bounds/zooms is authoritative (pruned ocean → blank).
 - MapLibre hard-codes `image/png` as the blob type for every raster tile
   and the browser sniffs the real format, so JPEG archives (and MIXED
   PNG/JPEG season archives) decode fine — proven by the pixel-readback tests
@@ -307,6 +333,9 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Status log
 
+- 2026-09-10 (evening): detailed-area downloads in the app (frame an area,
+  pick layers + z16–18, device fetches from LIST into OPFS part files);
+  sources now run to native max zoom with parent fallback above z15.
 - 2026-09-10: Aerial photos (statewide compilation + seven seasons behind an
   "up to season" slider), Tasmap paper-scan base map, Layers sheet (base /
   overlay / strength incl. Outlines-only) replacing the cycling button,

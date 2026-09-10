@@ -4,12 +4,25 @@ import {
   ARCHIVES,
   BASE_KEYS,
   DATA_BASE,
+  DETAIL_LEVELS,
   RASTER_MAXZOOM,
   SEASON_KEYS,
   packOf,
   seasonLabel,
   type RasterKey,
 } from "./config";
+import {
+  MAX_AREA_TILES,
+  activeAreaDownload,
+  deleteArea,
+  downloadAreaLayer,
+  estimateArea,
+  listAreas,
+  tileCount,
+  upsertArea,
+  type AreaMeta,
+  type BBox,
+} from "./areas";
 import {
   activeDownload,
   deleteFile,
@@ -28,7 +41,7 @@ import {
   type Strength,
 } from "./style";
 import { GEO_CHIPS, PRE_CHIPS } from "./chips";
-import { refreshArchives, seasonAt, status, tileAt } from "./protocol";
+import { refreshArchives, refreshRasterTiles, seasonAt, status, tileAt } from "./protocol";
 import f2f from "./generated/f2f_index.json";
 
 const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page: number }> };
@@ -306,11 +319,19 @@ const SECTION_TITLES: Record<string, string> = {
 
 export async function openDownloads(): Promise<void> {
   const el = openPanel(`<h2>Offline maps</h2><div id="dl-list">Checking…</div>
+    <h3 class="dl-h">Detailed areas<button class="dl-all" id="area-new">Download this area…</button></h3>
+    <div id="area-list"></div>
+    <p class="muted">Full-resolution photos and maps for places you choose —
+    down to 0.4 m per pixel, fetched straight from theLIST for just that
+    area. Frame it on the map; zoom in past the statewide maps and it stays
+    sharp offline.</p>
     <p id="storage-line" class="muted"></p>
     <p class="muted">Download on Wi-Fi at home and keep the app open while it
     runs — an interrupted download resumes where it stopped. Once done,
     everything works with no reception at all. Base maps are big; the
     seasons are small patches of the state.</p>`);
+  el.querySelector<HTMLButtonElement>("#area-new")!.onclick = () => beginAreaFraming();
+  void renderAreaList(el.querySelector<HTMLElement>("#area-list")!);
   const list = el.querySelector<HTMLElement>("#dl-list")!;
   const manifest = await fetchManifest();
 
@@ -563,6 +584,253 @@ export async function openDownloads(): Promise<void> {
   };
 
   render();
+}
+
+// ---------- Detailed areas ----------
+
+const LAYER_CHOICES: { id: string; label: string; hint: string; keys: readonly RasterKey[] }[] = [
+  { id: "aerial", label: "Aerial photos", hint: "best available", keys: ["aerial"] },
+  { id: "seasons", label: "Aerial photos by season", hint: "all seasons, where flown", keys: SEASON_KEYS },
+  { id: "tasmap", label: "Paper map", hint: "1:25,000 sheets, to zoom 16", keys: ["tasmap"] },
+  { id: "topo", label: "Topographic map", hint: "to zoom 18", keys: ["topo"] },
+];
+
+const areaLayerLabel = (meta: AreaMeta): string =>
+  LAYER_CHOICES.filter((c) => c.keys.some((k) => meta.layers.includes(k))).map((c) => c.label).join(", ");
+const areaBytes = (meta: AreaMeta): number => Object.values(meta.bytes).reduce((a, b) => a + (b ?? 0), 0);
+const areaDone = (meta: AreaMeta): boolean => meta.layers.every((k) => meta.complete[k]);
+const areaBusy = (meta: AreaMeta) => meta.layers.some((k) => activeAreaDownload(meta.id, k));
+
+let endFraming: (() => void) | null = null;
+
+/** Draw the dashed frame of the current view and let the user pan/zoom to
+ * the area they want, then continue to the setup sheet. */
+export function beginAreaFraming(): void {
+  const map = layers.map;
+  if (!map) return;
+  endFraming?.(); // a second entry must not leave the first frame's listener behind
+  closePanel();
+  const bar = document.getElementById("areabar")!;
+  const text = document.getElementById("areabar-text")!;
+  const nextBtn = document.getElementById("areabar-next") as HTMLButtonElement;
+  bar.hidden = false;
+  // the first-run nudge sits in the same spot; stand it down while framing
+  const nudge = document.getElementById("nudge");
+  const nudgeWasShown = !!nudge && !nudge.hidden;
+  if (nudge) nudge.hidden = true;
+  const frameBounds = (): BBox => {
+    const b = map.getBounds();
+    const dw = (b.getEast() - b.getWest()) * 0.08;
+    const dh = (b.getNorth() - b.getSouth()) * 0.1;
+    return [b.getWest() + dw, b.getSouth() + dh, b.getEast() - dw, b.getNorth() - dh];
+  };
+  const src = () => map.getSource("area-frame") as { setData(d: unknown): void } | undefined;
+  const draw = () => {
+    const bbox = frameBounds();
+    const [w, s, e, n] = bbox;
+    src()?.setData({
+      type: "Feature",
+      properties: {},
+      geometry: { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
+    });
+    // the cap is per layer at the chosen detail; warn on the default (z17)
+    const tooBig = tileCount(bbox, 0, 17) > MAX_AREA_TILES;
+    text.textContent = tooBig
+      ? "Too large for one download — zoom in"
+      : "Frame the area you want in detail, then tap Next";
+    nextBtn.disabled = tooBig;
+  };
+  const end = () => {
+    map.off("move", draw);
+    bar.hidden = true;
+    if (nudge && nudgeWasShown) nudge.hidden = false;
+    src()?.setData({ type: "FeatureCollection", features: [] });
+    endFraming = null;
+  };
+  endFraming = end;
+  map.on("move", draw);
+  draw();
+  document.getElementById("areabar-cancel")!.onclick = end;
+  nextBtn.onclick = () => {
+    const bbox = frameBounds();
+    end();
+    void openAreaSetup(bbox);
+  };
+}
+
+const kmSize = (b: BBox): string => {
+  const [w, s, e, n] = b;
+  const midLat = ((s + n) / 2) * (Math.PI / 180);
+  const kmW = (e - w) * 111.32 * Math.cos(midLat);
+  const kmH = (n - s) * 110.57;
+  return `${kmW.toFixed(1)} × ${kmH.toFixed(1)} km`;
+};
+
+async function openAreaSetup(bbox: BBox): Promise<void> {
+  const n = (await listAreas()).length + 1;
+  const el = openPanel(`<h2>Detailed area</h2>
+    <form class="area-form" id="area-form">
+    <p class="muted">${esc(kmSize(bbox))} — tiles are fetched from theLIST for this area only, at every zoom.</p>
+    <label for="area-name">Name</label>
+    <input type="text" id="area-name" value="Area ${n}" maxlength="40" autocomplete="off">
+    <h3 class="lay-h">Layers</h3>
+    ${LAYER_CHOICES.map(
+      (c) => `<label class="area-opt"><input type="checkbox" name="layer" value="${c.id}" ${c.id === "aerial" ? "checked" : ""}>${esc(c.label)}<small>${esc(c.hint)}</small></label>`,
+    ).join("")}
+    <h3 class="lay-h">Detail</h3>
+    ${DETAIL_LEVELS.map(
+      (d) => `<label class="area-opt"><input type="radio" name="zmax" value="${d.z}" ${d.z === 17 ? "checked" : ""}>${esc(d.label)}<small>zoom ${d.z} · ${esc(d.mpp)}</small></label>`,
+    ).join("")}
+    <p class="area-est" id="area-est"></p>
+    <button type="submit" class="sheet-desc area-go">Download</button>
+    </form>`);
+  const form = el.querySelector<HTMLFormElement>("#area-form")!;
+  const chosen = () => ({
+    keys: [...form.querySelectorAll<HTMLInputElement>('input[name="layer"]:checked')].flatMap(
+      (i) => LAYER_CHOICES.find((c) => c.id === i.value)!.keys,
+    ) as RasterKey[],
+    zmax: Number(form.querySelector<HTMLInputElement>('input[name="zmax"]:checked')!.value),
+  });
+  const estimate = () => {
+    const { keys, zmax } = chosen();
+    const est = estimateArea(bbox, zmax, keys);
+    const seasons = keys.filter((k) => (SEASON_KEYS as readonly string[]).includes(k));
+    const fixed = keys.filter((k) => !seasons.includes(k)).reduce((a, k) => a + est[k].bytes, 0);
+    const seasonMax = seasons.reduce((a, k) => a + est[k].bytes, 0);
+    const parts = [];
+    if (fixed) parts.push(`about ${fmtMB(fixed)}`);
+    if (seasonMax) parts.push(`seasons up to ${fmtMB(seasonMax)} (only where flown)`);
+    const tooBig = keys.some((k) => est[k].tiles > MAX_AREA_TILES);
+    el.querySelector("#area-est")!.textContent = !keys.length
+      ? "choose at least one layer"
+      : tooBig
+        ? `Too large for one download at this detail (over ${MAX_AREA_TILES.toLocaleString()} tiles per layer) — pick less detail or a smaller area`
+        : parts.join(" + ");
+    el.querySelector<HTMLButtonElement>(".area-go")!.disabled = keys.length === 0 || tooBig;
+  };
+  form.addEventListener("change", estimate);
+  estimate();
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const { keys, zmax } = chosen();
+    if (!keys.length) return;
+    const meta: AreaMeta = {
+      id: Date.now().toString(36),
+      name: (form.querySelector<HTMLInputElement>("#area-name")!.value.trim() || `Area ${n}`).slice(0, 40),
+      bbox,
+      zmax,
+      layers: keys,
+      created: new Date().toISOString(),
+      bytes: {},
+      tiles: {},
+      complete: {},
+    };
+    await upsertArea(meta);
+    await openAreaProgress(meta);
+  };
+}
+
+/** Run every incomplete layer of an area in turn (resume-safe). */
+function runArea(
+  meta: AreaMeta,
+  onStart: (key: RasterKey) => void,
+  report: (key: RasterKey, p: { done: number; total: number; bytes: number } | string) => void,
+): Promise<void> {
+  return (async () => {
+    for (const key of meta.layers) {
+      if (meta.complete[key]) continue;
+      onStart(key);
+      report(key, "checking…");
+      await downloadAreaLayer(meta, key, (p) => report(key, p));
+      report(key, "✓ done");
+    }
+    refreshRasterTiles(meta.layers);
+  })();
+}
+
+async function openAreaProgress(meta: AreaMeta): Promise<void> {
+  // Every lookup goes through THIS sheet's root: the panel element is
+  // shared, and the Offline maps rows use the same data-key markup — a
+  // download still running after the user moved on must not write its
+  // progress into the statewide pack rows (review finding).
+  const el = openPanel(`<div class="area-progress" data-area-progress="${esc(meta.id)}"><h2>${esc(meta.name)}</h2>
+    <p class="muted">${esc(areaLayerLabel(meta))} · zoom ${meta.zmax} · ${esc(kmSize(meta.bbox))}</p>
+    <div>${meta.layers.map(
+      (k) => `<div class="dl-item" data-key="${k}"><div class="dl-info"><b>${esc(packOf(k).label)}</b><small class="dl-status">${meta.complete[k] ? "✓ done" : "waiting…"}</small></div></div>`,
+    ).join("")}</div>
+    <div class="dl-actions"><button class="dl-btn area-cancel">Cancel</button></div>
+    <p class="muted">Keep the app open. Cancelling keeps what has arrived — Resume later from Offline maps.</p></div>`);
+  const root = () => el.querySelector<HTMLElement>(`[data-area-progress="${meta.id}"]`);
+  const line = (k: RasterKey) => root()?.querySelector<HTMLElement>(`[data-key="${k}"] .dl-status`) ?? null;
+  const button = () => root()?.querySelector<HTMLButtonElement>(".area-cancel") ?? null;
+  let current: RasterKey | null = null;
+  button()!.onclick = () => {
+    if (current) activeAreaDownload(meta.id, current)?.cancel();
+  };
+  try {
+    await runArea(
+      meta,
+      (k) => (current = k),
+      (k, p) => {
+        const s = line(k);
+        if (s) s.textContent = typeof p === "string" ? p : `${p.done.toLocaleString()} of ${p.total.toLocaleString()} tiles · ${fmtMB(p.bytes)}`;
+      },
+    );
+    const btn = button();
+    if (btn) {
+      btn.textContent = "Done";
+      btn.onclick = () => void openDownloads();
+    }
+  } catch (e) {
+    if (current) {
+      const s = line(current);
+      if (s) s.textContent = e instanceof Error ? e.message : String(e);
+    }
+    const btn = button();
+    if (btn) {
+      btn.textContent = "Back";
+      btn.onclick = () => void openDownloads();
+    }
+  }
+}
+
+async function renderAreaList(host: HTMLElement): Promise<void> {
+  const areas = await listAreas();
+  if (!areas.length) {
+    host.innerHTML = `<p class="muted">No detailed areas yet.</p>`;
+    return;
+  }
+  host.innerHTML = areas
+    .map((a) => {
+      const busy = areaBusy(a);
+      const stat = busy ? "downloading…" : areaDone(a) ? "✓ downloaded" : "incomplete — tap Resume";
+      const btn = busy ? "Open" : areaDone(a) ? "" : "Resume";
+      return `<div class="dl-item area-row" data-area="${a.id}">
+        <div class="dl-info"><b>${esc(a.name)}</b><small>${esc(areaLayerLabel(a))} · zoom ${a.zmax} · ${fmtMB(areaBytes(a))}</small><small class="dl-status">${stat}</small></div>
+        <div class="dl-actions">${btn ? `<button class="dl-btn area-primary">${btn}</button>` : ""}<button class="dl-btn dl-secondary area-delete">Delete</button></div>
+      </div>`;
+    })
+    .join("");
+  host.onclick = async (ev) => {
+    const row = (ev.target as HTMLElement).closest<HTMLElement>(".area-row");
+    if (!row) return;
+    const meta = areas.find((a) => a.id === row.dataset.area);
+    if (!meta) return;
+    if ((ev.target as HTMLElement).closest(".area-delete")) {
+      const stat = row.querySelector<HTMLElement>(".dl-status");
+      if (stat) stat.textContent = "deleting…";
+      try {
+        await deleteArea(meta.id); // stops and awaits any running layer first
+        refreshRasterTiles(meta.layers);
+      } catch (e) {
+        if (stat) stat.textContent = e instanceof Error ? e.message : String(e);
+        return;
+      }
+      await renderAreaList(host);
+      return;
+    }
+    if ((ev.target as HTMLElement).closest(".area-primary")) await openAreaProgress(meta);
+  };
 }
 
 // ---------- Legend ----------

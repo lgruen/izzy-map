@@ -266,7 +266,8 @@ async function boot(): Promise<void> {
   // Hardware keyboards (iPad): Escape dismisses the top-most surface.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (isPdfOpen()) closePdfViewer();
+    if (!byId("areabar").hidden) byId("areabar-cancel").click();
+    else if (isPdfOpen()) closePdfViewer();
     else if (isPanelOpen()) closePanel();
     else if (!byId("sheet").hidden) clearDetails();
   });

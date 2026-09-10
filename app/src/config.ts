@@ -10,18 +10,32 @@ const LIST = "https://services.thelist.tas.gov.au/arcgis/rest/services/Basemaps"
 const listTile = (service: string) => (z: number, x: number, y: number) =>
   `${LIST}/${service}/MapServer/tile/${z}/${y}/${x}`;
 
-export const RASTER_MAXZOOM = 15; // raster archive ceiling; overzooms beyond
+/** Zoom ceiling of the statewide packs (z0–15). Beyond it tiles come from a
+ * downloaded detailed area, the live service, or MapLibre's parent fallback. */
+export const PACK_MAXZOOM = 15;
+/** @deprecated alias, kept for the caption code */
+export const RASTER_MAXZOOM = PACK_MAXZOOM;
 
 export interface RasterPack {
   file: string;
   label: string;
   hint: string;
-  /** live tile URL for statewide services (topo, aerial, tasmap) */
+  /** live tile URL on the LIST service (seasons: used only above z15 and
+   * only where the season's z15 tile exists — see protocol.ts) */
   live?: (z: number, x: number, y: number) => string;
+  /** deepest zoom the map requests: the service's native max (LIST aerial
+   * goes to z19–23, but z18 = 0.44 m/px is already 64× the z15 pack per
+   * tile; MapLibre's parent fallback reaches 10 levels, so this is a size
+   * choice, not a fallback constraint) */
+  maxzoom: number;
+  /** typical tile size at z16–18, for detailed-area estimates (measured) */
+  meanTileBytes: number;
   kind: "base" | "season";
   /** flying-season label, seasons only */
   season?: string;
 }
+const season = (yy: string, label: string, service: string, file: string, hint = "areas flown that season only") =>
+  ({ file, label, hint, live: listTile(service), maxzoom: 18, meanTileBytes: 18_000, kind: "season", season: yy }) as const;
 
 /** Offline raster packs. Hand-mirrors pipeline/packs.json (keys, files) —
  * the repo keeps overlay/pack wiring hand-curated, one pattern to follow. */
@@ -31,30 +45,43 @@ export const RASTER_PACKS = {
     label: "Topographic map",
     hint: "statewide to zoom 15 — the map under everything. Large!",
     live: listTile("Topographic"),
+    maxzoom: 18,
+    meanTileBytes: 12_000,
     kind: "base",
   },
   aerial: {
     file: "aerial_tas.pmtiles",
     label: "Aerial photos (best available)",
-    hint: "satellite-style imagery, statewide to zoom 15 — LIST's best-quality mosaic. Very large!",
+    hint: "satellite-style imagery, statewide to zoom 15 — LIST's best-quality mosaic. Large!",
     live: listTile("Orthophoto"),
+    maxzoom: 18,
+    meanTileBytes: 18_000,
     kind: "base",
   },
   tasmap: {
     file: "tasmap_tas.pmtiles",
     label: "Paper map (Tasmap)",
-    hint: "scans of the printed Tasmap sheets: 1:25,000 at zoom 15, 100K/250K/500K further out. Huge!",
+    hint: "scans of the printed Tasmap sheets: 1:25,000 at zoom 15, 100K/250K/500K further out. Very large!",
     live: listTile("TasmapRaster"),
+    maxzoom: 16,
+    meanTileBytes: 16_000,
     kind: "base",
   },
-  aerial2020: { file: "aerial_2020.pmtiles", label: "Aerial photos 2019–20", hint: "areas flown that season only", kind: "season", season: "2019–20" },
-  aerial2021: { file: "aerial_2021.pmtiles", label: "Aerial photos 2020–21", hint: "areas flown that season only", kind: "season", season: "2020–21" },
-  aerial2022: { file: "aerial_2022.pmtiles", label: "Aerial photos 2021–22", hint: "areas flown that season only", kind: "season", season: "2021–22" },
-  aerial2023: { file: "aerial_2023.pmtiles", label: "Aerial photos 2022–23", hint: "areas flown that season only", kind: "season", season: "2022–23" },
-  aerial2024: { file: "aerial_2024.pmtiles", label: "Aerial photos 2023–24", hint: "areas flown that season only", kind: "season", season: "2023–24" },
-  aerial2025: { file: "aerial_2025.pmtiles", label: "Aerial photos 2024–25", hint: "areas flown that season only", kind: "season", season: "2024–25" },
-  aerial2026: { file: "aerial_2026.pmtiles", label: "Aerial photos 2025–26", hint: "areas flown so far this season", kind: "season", season: "2025–26" },
+  aerial2020: season("2019–20", "Aerial photos 2019–20", "AerialPhoto2020", "aerial_2020.pmtiles"),
+  aerial2021: season("2020–21", "Aerial photos 2020–21", "AerialPhoto2021", "aerial_2021.pmtiles"),
+  aerial2022: season("2021–22", "Aerial photos 2021–22", "AerialPhoto2022", "aerial_2022.pmtiles"),
+  aerial2023: season("2022–23", "Aerial photos 2022–23", "AerialPhoto2023", "aerial_2023.pmtiles"),
+  aerial2024: season("2023–24", "Aerial photos 2023–24", "AerialPhoto2024", "aerial_2024.pmtiles"),
+  aerial2025: season("2024–25", "Aerial photos 2024–25", "AerialPhoto2025", "aerial_2025.pmtiles"),
+  aerial2026: season("2025–26", "Aerial photos 2025–26", "AerialPhoto2026", "aerial_2026.pmtiles", "areas flown so far this season"),
 } as const satisfies Record<string, RasterPack>;
+
+/** Detail levels offered for area downloads (m/px at Tasmanian latitudes). */
+export const DETAIL_LEVELS: { z: number; label: string; mpp: string }[] = [
+  { z: 16, label: "Good", mpp: "1.7 m per pixel" },
+  { z: 17, label: "Fine", mpp: "0.9 m per pixel" },
+  { z: 18, label: "Finest", mpp: "0.4 m per pixel" },
+];
 
 export type RasterKey = keyof typeof RASTER_PACKS;
 export const RASTER_KEYS = Object.keys(RASTER_PACKS) as RasterKey[];
