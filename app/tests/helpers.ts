@@ -114,11 +114,15 @@ export async function blockLiveServices(page: Page): Promise<void> {
   await page.route("**/services.thelist.tas.gov.au/**", (route) => route.abort());
 }
 
+/** Map-idle waits: CI renders three browsers at once under software GL, so
+ * a heavy raster view can take a minute to settle there. */
+const WAIT_MS = process.env.CI ? 60_000 : 30_000;
+
 export async function waitForMapIdle(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const map = (window as never as { __map?: { loaded(): boolean; isMoving(): boolean } }).__map;
     return !!map && map.loaded() && !map.isMoving();
-  }, { timeout: 30_000 });
+  }, { timeout: WAIT_MS });
   // give symbol placement / geolocate fly-in a beat to settle
   await page.waitForTimeout(1500);
 }
@@ -132,7 +136,7 @@ export async function waitForTiles(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const map = (window as never as { __map?: { loaded(): boolean; areTilesLoaded(): boolean; isMoving(): boolean } }).__map;
     return !!map && map.loaded() && map.areTilesLoaded() && !map.isMoving();
-  }, { timeout: 30_000 });
+  }, { timeout: WAIT_MS });
   await page.waitForTimeout(700);
 }
 
