@@ -7,15 +7,18 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Non-negotiables
 
-1. **docs/LICENSING.md first.** From Forest to Fjaeldmark content must never
-   be committed or served from our hosting (public repo!). The LIST
+1. **docs/LICENSING.md first.** From Forest to Fjaeldmark content and the
+   City of Hobart tree data sheets must never be committed or served from
+   our hosting (public repo!). The LIST
    aerial/Tasmap rasters are CC BY-NC-ND: tiles stay BYTE-FOR-BYTE as
    served (no re-encoding, no merging across services), non-commercial,
    attributed — the licence text governs, not the ArcGIS export flag.
    CC BY / CC BY-NC-ND attribution stays in the app.
 2. **Fully offline is the product.** Any change must keep working in airplane
    mode after setup: no CDN references, glyphs/sprites self-hosted, tiles
-   never routed through the service worker cache (they live in OPFS PMTiles).
+   never routed through the service worker cache (they live in OPFS PMTiles;
+   the two search indexes under `app/public/search/` are the ONE JSON the
+   SW precaches — app shell, not map data).
 3. **Target device is a small iPhone**, plus an iPad in landscape with a
    keyboard/trackpad. Home-screen web app (iOS 17+ behaviours assumed:
    60%-of-disk quota, ITP exemption, persist() heuristic). Surface storage
@@ -69,6 +72,57 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   total; chapters map 1:1 to the 11 VEG_GROUPs).
 - Attribute fields: VEGCODE, VEGCODE_D (name), VEG_GROUP, FOREST_STR,
   NOTABLE_TR/TD, WEED_TYPE/_D, SOURCE_*.
+- Search datasets (verified 2026-09-12; all CC BY 3.0 AU © State of
+  Tasmania, `pipeline/build_gazetteer.py`):
+  - Nomenclature: WFS `https://services.thelist.tas.gov.au/arcgis/services/Public/OpenDataWFS/MapServer/WFSServer`,
+    type `LIST_Nomenclature`, 35,835 points (NOM_REG_NO, FEAT_NAME,
+    DUALNAME, FEAT_TYPE, FEAT_GROUP, STATUS, DISP_STAT, NAMETYPE, MUNY).
+    Kept STATUS "Normal" + DISP_STAT "DISPLAYED", minus FEAT_TYPE
+    Electorate / Municipal Area / Land District and 36 standalone
+    Aboriginal names already present inside a dual name → 32,753 rows.
+  - Transport Segments: REST `Public/TopographyAndRelief/MapServer/8`,
+    273,376 polylines, 2000/page (~140 pages); only PRI_NOMREG/SEC_NOMREG
+    (= register number) pulled → one bbox per road, 100 % of register roads
+    covered. Routes like "C645" have no segment field → almost no bbox.
+  - Named Feature Extents: `.../opendata/data/LIST_NAMED_FEATURE_EXTENT_STATEWIDE.zip`,
+    7,344 polygons (MGA55) → bboxes for hills/bays/mountains/localities.
+  - Locality and Postcode Areas: WFS, 777 polygons → suburb per row by
+    point-in-polygon (93.5 % of rows get one).
+  - Address Points: `.../opendata/data/LIST_ADDRESS_POINTS_STATEWIDE.zip`
+    (92.9 MB, 301,619 points, MGA55) → 13,679 (street, locality) groups ×
+    261,176 distinct house numbers (units collapsed to the building
+    number); 10,727 property names kept after dropping lot/unit noise and
+    names occurring in ≥ 5 localities; 96 address-derived roads added where
+    the register has no same-named road nearby.
+  - WFS gotchas: empty fields arrive as the STRING "null"; `count` is
+    silently capped at 1000; with `srsName=EPSG:4326` coordinates are
+    [lat, lon] (EPSG axis order) — omit srsName → [lon, lat] (the build
+    detects the order from the data); `resultType=hits` returns an EMPTY
+    body for GEOJSON output, so page until a short page. ArcGIS REST reports
+    errors inside HTTP-200 bodies.
+- Hobart significant trees (verified 2026-09-12; CC BY 4.0 © City of
+  Hobart, `pipeline/build_trees.py`): ArcGIS Online hosted feature service
+  `https://services1.arcgis.com/NHqdsnvwfSTg42I8/arcgis/rest/services/ENVIRON_Significant_Tree_Locations/FeatureServer`
+  (portal item 9b31f3f6acb14bb2a5869b5e17707155 — `licenseInfo` links
+  creativecommons.org/licenses/by/4.0/, `accessInformation` "City of
+  Hobart", item modified 2025-08-11; maxRecordCount 1000). Layer 1 =
+  points (460), layer 4 = areas (34 polygons: groups/hedges/avenues).
+  Fields: Planning_Ref_No (letter+number = 2012/2020 register, plain
+  numbers = March-2024 draft amendment PSA-22-4; 277 distinct refs),
+  Botanical_ID (layer 1: smallint with a ~354-name coded-value domain in
+  the layer definition; layer 4: the code AS A STRING plus Botanical_Name),
+  Number_Trees, Object_Metadata (free text), Session_Key (13-code
+  position-accuracy domain), Data_Sheet_URL (282 distinct PDF items,
+  446 MB total, median 0.6 MB, 1–2 A4 pages each; NO licence — item
+  licenseInfo null). Sheet fetch from the browser: ONLY
+  `https://www.arcgis.com/sharing/rest/content/items/<id>/data` sends CORS
+  headers on its 302 to signed S3 (the `hobartcc.maps.arcgis.com` form in
+  Data_Sheet_URL does not); the preflight allow-list lacks `Range`, so the
+  request must stay a simple GET. Council register PDF (common names +
+  addresses; the service has neither): 76.5 MB, 465 pages, "Updated March
+  2020", hobartcity.com.au answers scripts with 403 → browser-save it to
+  `pipeline/cache/trees/register.pdf`; `pdftotext -layout`; 2012-era data
+  sheets embed a subset font without ToUnicode → glyph codes = ASCII − 29.
 
 ## Architecture
 
@@ -77,9 +131,18 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 - `app/` — Vite + TS + MapLibre GL JS. No framework. The overlay set is
   hand-curated in code (see "Add an overlay map" below); archives + sizes
   come from `data-manifest.json`, generated by `pipeline/upload_r2.sh` and
-  served from R2.
+  served from R2. Two datasets bypass R2 entirely: `app/public/search/
+  gazetteer.json` + `addresses.json` (committed, precached by the SW as
+  app shell via the explicit `search/*.json` glob in vite.config.ts —
+  stable unhashed URLs) and `app/src/generated/trees.json` (committed,
+  statically imported by style.ts as bundled GeoJSON). `app/src/search.ts`
+  = search panel, scoring, pin + pill; `app/src/sheets.ts` = tree
+  data-sheet fetch/store, shared by details.ts and ui.ts (neither may
+  import the other).
 - `pipeline/` — data prep scripts (bash/python via uv; tippecanoe/gdal/
-  pmtiles from brew). Outputs to `data/` (gitignored), uploaded to R2.
+  pmtiles from brew). Outputs to `data/` (gitignored), uploaded to R2 —
+  except `build_gazetteer.py` and `build_trees.py`, whose outputs are
+  committed (see above); their caches live under `pipeline/cache/`.
   Raster packs are declared in `pipeline/packs.json` (key, service, file,
   prune rule, attribution, optional season/note/licence_override) and built
   by `build_raster.py`; `upload_r2.sh` derives manifest keys from it; the
@@ -104,6 +167,18 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   (ARCHIVES), `style.ts` (source + layers), `ui.ts` (download row), and
   `upload_r2.sh` (manifest keys). Hand-curated by design — a handful of
   files, one pattern to follow (TASVEG is the template).
+- **Add an overlay map — tiny dataset variant (trees is the template):**
+  when the whole dataset is a few hundred KB, skip PMTiles/R2/manifest/
+  download row: `pipeline/build_<x>.py` → `app/src/generated/<x>.json`
+  (GeoJSON carrying only ids + a facts table, licence guard in the script)
+  → static import in `style.ts`, geojson source(s) + layers appended at the
+  END of the layer list (before `selected-outline`/`selected-point`; the
+  trees test pins that order — extend it) → an independent `LayerState` boolean (default off,
+  restored in main.ts, `clearDetails()` when it flips) → checkbox row under
+  "Also show" in the Layers sheet (ui.ts; bump the `.lay-row` count in the
+  test) → tap handling in details.ts (a `TREE_LAYERS`-style list queried
+  with a padded box, topmost first) → `ATTRIBUTION_<X>` in config.ts on
+  every source + About. Map text must be Latin-1 (`0-255.pbf` glyphs).
 - **Extend topo coverage (e.g. z16):** bump `maxzoom` in `packs.json`,
   re-run `build_raster.py --pack topo` (disk cache makes it incremental),
   re-upload. Re-validate the ocean-prune threshold first (see the topo
@@ -141,6 +216,40 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   interrupted part is closed and indexed, not discarded; Delete waits for
   the layer's download to stop first (an open writable makes removeEntry
   fail and would orphan gigabytes).
+- **Refresh place names / addresses (yearly; address points are
+  republished quarterly):** `uv run --with shapely --with pyshp --with
+  pyproj python3 pipeline/build_gazetteer.py [--fresh]` (cache
+  `pipeline/cache/gazetteer/`, ~80 s cold / 9 s warm on 2026-09-12; the
+  segments pull is cached one file per page → resumable; the two LISTdata
+  zips can be dropped into the cache by hand). Count tripwires (31–34k kept
+  names, 13–15k streets, 250–275k house numbers) are pinned to the 2026-09
+  pull and WILL drift with LIST republishes — eyeball the stage output
+  (dropped counts, samples, FEAT_TYPE histogram → new admin types into
+  `DROP_TYPES`) and widen; they catch truncated pulls, not growth. Outputs
+  go into the public repo (facts only — LICENSING.md §1). The on-disk
+  format at `version: 1` must stay ADDITIVE: the URL is unhashed, so a
+  resident old app after a background SW update reads the NEW file; bump
+  `version` only for a breaking change (the panel then shows "Update the
+  app to search"; `loadIndexes()` treats a version mismatch as permanent
+  for that build). `npm run build` → `check-dist.mjs` asserts both files
+  exist, parse, are version 1, hold > 30k rows / > 13k streets and appear
+  in `dist/sw.js`.
+- **Refresh significant trees:** `python3 pipeline/build_trees.py
+  [--skip-enrich] [--fresh]` (stdlib only; cache `pipeline/cache/trees/`,
+  ~50 s cold / 2 s warm; `--fresh` drops cached JSON/text but keeps the
+  PDFs). Needs `pipeline/cache/trees/register.pdf` saved from a browser
+  (403 to scripts) and `pdftotext` (poppler). The licence guard aborts
+  unless the portal item names CC BY 4.0 AND "City of Hobart". Enrichment
+  reads the register first (214 of 277 refs; asserts ≥ 200) and downloads
+  data sheets ONLY for the remaining refs (63 on 2026-09-12; asserts
+  ≤ 100 — never all 282). Read the run report: register/service conflicts
+  (D7 Pinus vs Populus, H2 Ulmus vs Fraxinus) drop the common name and
+  fall back to the botanical one; A1's points carry A5's trees upstream.
+  Result 2026-09-12: 275/277 common names, 277/277 addresses,
+  `app/src/generated/trees.json` 233 KB. The Downloads row's total
+  (`SHEETS_TOTAL_BYTES`, ~446 MB) follows the `sheets` table. If the
+  council republishes sheets under new item ids, phones keep the old
+  `trees/<id>.pdf` files (the row's Delete only removes current ids).
 - **Deploy app:** push to main → Pages workflow.
 - **Do not re-upload topo unless its tiles changed:** `build_raster.py`
   writes extra metadata (`copyright_text`, `built`, …) into the archive, so
@@ -256,6 +365,71 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 - GDA94 shapefile → EPSG:4326/3857 reprojection happens once in the
   pipeline; GPS (WGS84) vs GDA94 differ by ~1.8 m — irrelevant at this
   scale.
+- LIST OpenDataWFS: empty text fields are the string "null" (not null, not
+  ""); `count` above 1000 is silently truncated to 1000; `srsName=EPSG:4326`
+  flips the axis order to [lat, lon] (omit it → [lon, lat]); `resultType=
+  hits` with GEOJSON output returns an empty body. Page until a short page
+  and sanity-check coordinates against Tasmania's bounds.
+- The SW precache holds `search/*.json` as an EXPLICIT glob — the only JSON
+  it may hold. Never widen it to `**/*.json`: map data (manifest, unit
+  tables are bundled anyway) must never go through the SW.
+- `openSearch()` must run synchronously inside the tap's own task: iOS
+  raises the keyboard only for a `focus()` in the gesture's task — never
+  `await` before it. The panel is `openPanel(html, "search")`: a
+  full-height, top-anchored takeover on phones so the keyboard never shifts
+  the page; the usual 400 px side card ≥ 700 px.
+- Safari clears a `type=search` input on Escape AND fires a late `input`
+  event after the Escape handler has already closed the panel — search.ts
+  ignores input events once the panel is closed (`closed` flag), or the
+  late empty value would wipe the remembered query that reopening restores.
+- Escape chain (hardware keyboards): areabar → PDF viewer → panel → details
+  sheet → search pin. `clearSearchPin()`/`isSearchPinShown()` live in
+  search.ts; the pin is a DOM `Marker` (no sprite, no glyph range needed
+  offline) with `#search-pill` (name = re-fly, × = clear).
+- Search indexes are prefetched on the first map `idle` (main.ts) ONLY when
+  a service worker controls the page (`navigator.serviceWorker?.controller`
+  — an uncontrolled first load is precaching them already); otherwise they
+  load on the first search. The panel retries if that failed. `loadIndexes()`
+  resets its promise on network failure but NOT on a version mismatch — that
+  would re-fetch ~6 MB per keystroke for a build that can never succeed.
+- arcgis.com item downloads: only `www.arcgis.com/sharing/rest/content/
+  items/<id>/data` sends CORS headers on the 302 to signed S3 — the
+  `hobartcc.maps.arcgis.com` URL in the service data does NOT. The preflight
+  allow-list lacks `Range`, so a sheet is a plain `fetch(url)` with no
+  custom headers (never `storage.download()`, which sends Range). A captive
+  portal answers 200 with HTML — check the `%PDF` magic before storing.
+  pdf.js is only ever handed the OPFS `File`, never the remote URL.
+- The six `trees-*` layers MUST stay last in the style, followed only by
+  `selected-outline` and `selected-point` (a test asserts
+  `layers.slice(-8)`): they sit on top of every overlay and its labels, and
+  both highlights sit above THEM (below the tree layers a selected tree
+  area's red ring was tinted/overpainted by `trees-area-fill`).
+  `selected-point` rings a tapped tree; `selected-outline` covers polygons.
+- Tree data sheets: ArcGIS answers a REMOVED item with HTTP 400 + HTML (not
+  404). The bulk download files any 4xx / non-PDF sheet under localStorage
+  `treeSheetsGone` ({id: isoDate}), skips it and finishes as "✓ downloaded ·
+  n sheets no longer published"; five such in a row are read as a captive
+  portal instead (marks undone, batch stops). A tap always tries a gone id
+  once (republished items) and a success forgets the mark; Delete clears
+  the set. `fetchSheet` dedupes per id (tap + batch on the same sheet) and
+  throws `SheetError` with a `kind` the callers word differently.
+- `GeoJSONSource.getClusterExpansionZoom()` returns a Promise in MapLibre 6
+  (the callback form is gone); details.ts caps the resulting zoom at 17 so
+  a CBD cluster never jumps to street level.
+- Glyphs ship as `0-255.pbf` only. Botanical `name` in trees.json is
+  verbatim from the register (curly quotes, "×" hybrids, upstream typos);
+  map text uses `label`, asserted Latin-1 by the build and a test. A
+  character outside 0–255 makes MapLibre request a glyph range that does
+  not exist → the label silently fails offline. Use `label`, not `name`,
+  for any `text-field`.
+- The tree card's "Open the data sheet" button is looked up asynchronously
+  (OPFS answers later): guard on `btn.isConnected` — `renderSheet()`
+  replaces innerHTML, so a second tap on another tree detaches the first
+  button while its probe is still in flight.
+- Multi-file downloads (F2F chapters, tree sheets) share one job registry
+  in ui.ts (`runJob`/`activeJob`, module-level like storage.ts's inflight
+  map): a reopened panel finds the running job, shows Cancel, and resumes
+  per file (files already on disk are skipped, not re-fetched).
 
 ## Future ideas (discussed, not planned)
 
@@ -333,6 +507,31 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Status log
 
+- 2026-09-12: Offline search + Hobart Significant Trees overlay. Search:
+  five LIST datasets (Nomenclature, Transport Segments, Named Feature
+  Extents, Locality areas, Address Points; CC BY 3.0 AU) → two committed
+  indexes `app/public/search/gazetteer.json` (2.48 MB raw / 0.87 MB gzip,
+  43,576 rows) + `addresses.json` (3.42 MB / 1.22 MB gzip, 13,679 streets ×
+  261,176 house numbers), SW-precached app shell (`check-dist.mjs` guards
+  them), no library — word-prefix scoring, abbreviations, house numbers /
+  units / ranges / number words, distance tie-break; 5th toolbar button,
+  full-height panel on phones, pin + pill, Escape chain. Trees: City of
+  Hobart register (CC BY 4.0 — new LICENSING.md §1c), 460 points + 34 areas,
+  277 refs, bundled 233 KB GeoJSON behind an independent "Also show"
+  toggle (`LayerState.trees`), per-tree card (botanical/common name,
+  address, count, register note, accuracy) + council data sheet fetched
+  from www.arcgis.com into OPFS on tap, optional 446 MB bulk row; the new
+  multi-file job registry gives the F2F row Cancel/Resume too. Pipeline
+  enrichment from the council register PDF (glyph-shift decode for
+  2012-era sheets) — 275/277 common names, 277/277 addresses. Adversarial
+  review rounds — highlights: Safari clears `type=search` on Escape and
+  fires a late `input`; only www.arcgis.com sends CORS on the 302 and its
+  preflight lacks Range; captive-portal HTML stored as a "PDF" (%PDF magic
+  check); version-mismatch re-fetching 6 MB per keystroke; iOS keyboard
+  needs a synchronous focus(); WFS [lat, lon] axis flip; register vs
+  service botanical-name conflicts (D7, H2) and A1's mis-tagged points;
+  detached tree-card button after a second tap. 37 Playwright tests in
+  app.spec.ts (Chromium; wide-layout subset on webkit-ipad).
 - 2026-09-10 (evening): detailed-area downloads in the app (frame an area,
   pick layers + z16–18, device fetches from LIST into OPFS part files);
   sources now run to native max zoom with parent fallback above z15.

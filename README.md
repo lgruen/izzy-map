@@ -39,6 +39,17 @@ Government.
   Fjaeldmark* chapter PDFs from nre.tas.gov.au (via a transparent,
   non-caching CORS relay — the PDFs are not redistributable and are never
   committed here or stored on our hosting; see `docs/LICENSING.md`).
+- **Search**: place names, streets and street addresses — the LIST
+  Nomenclature register, road network, named-feature extents, locality
+  areas and address points distilled into two small indexes shipped with
+  the app, so search works offline from the very first launch (try
+  "kunanyi", "eliz st hob" or "12 elizabeth st"). A pin marks the result;
+  equally good matches rank by distance from the map centre.
+- **Significant trees (Hobart)**: the City of Hobart's significant tree
+  register as an optional "also show" layer — clustered dots and tree
+  groups; tap one for botanical and common name, address, register note
+  and the council's data sheet (a PDF the phone fetches once from ArcGIS
+  Online and keeps; all 282 sheets can also be downloaded in advance).
 
 See `CLAUDE.md` for the full architecture and maintenance guide.
 
@@ -52,6 +63,11 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
 - Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania —
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
+- Place names, roads, localities and street addresses (Nomenclature,
+  Transport Segments, Named Feature Extents, Locality and Postcode Areas,
+  Address Points) from [theLIST](https://listdata.thelist.tas.gov.au/opendata/)
+  © State of Tasmania —
+  [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
 - Aerial Photo Basemap and seasonal aerial photos (2019–20 … 2025–26) from
   [theLIST](https://www.thelist.tas.gov.au) © State of Tasmania —
   [CC BY-NC-ND 3.0 AU](https://creativecommons.org/licenses/by-nc-nd/3.0/au/)
@@ -64,6 +80,12 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
   [National Vegetation Information System V7.0](https://www.dcceew.gov.au/environment/land/native-vegetation/national-vegetation-information-system)
   © Commonwealth of Australia (DCCEEW) —
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- Significant tree register from the
+  [City of Hobart](https://www.hobartcity.com.au/Environment-and-Sustainability/Trees/Significant-trees) —
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The per-tree
+  data sheets are © City of Hobart documents that the device fetches from
+  ArcGIS Online for private use — not included in this repo, not
+  redistributed.
 - Kitchener, A. and Harris, S. (2013). *From Forest to Fjaeldmark:
   Descriptions of Tasmania's Vegetation*. Edition 2. DPIPWE, Tasmania.
   © Government of Tasmania — all rights reserved (not included in this repo).

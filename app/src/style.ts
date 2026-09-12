@@ -4,9 +4,11 @@
 // LISTmap's "TASVEG 5.0" + "Outlines and Labels" look.
 import type { StyleSpecification, ExpressionSpecification, RasterSourceSpecification } from "maplibre-gl";
 import type { Map as MlMap } from "maplibre-gl";
+import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
 import communities from "./generated/tasveg_communities.json";
 import geologyUnits from "./generated/geology_units.json";
 import pre1750Units from "./generated/pre1750_units.json";
+import trees from "./generated/trees.json";
 import {
   ATTRIBUTION_AERIAL,
   ATTRIBUTION_GEOLOGY,
@@ -14,6 +16,7 @@ import {
   ATTRIBUTION_TASMAP,
   ATTRIBUTION_TASVEG,
   ATTRIBUTION_TOPO,
+  ATTRIBUTION_TREES,
   SEASON_KEYS,
   packOf,
   type RasterKey,
@@ -30,12 +33,16 @@ export interface LayerState {
   cutoff: number;
   overlay: OverlayMode;
   strength: Strength;
+  /** Hobart significant-tree register: an independent "also show" toggle,
+   * not an overlay mode — it sits on top of whichever overlay is chosen. */
+  trees: boolean;
 }
 export const DEFAULT_STATE: LayerState = {
   base: "topo",
   cutoff: SEASON_KEYS.length - 1,
   overlay: "veg",
   strength: "full",
+  trees: false,
 };
 export const BASES: readonly BaseMode[] = ["topo", "tasmap", "aerial", "seasons"];
 export const OVERLAYS: readonly OverlayMode[] = ["veg", "pre", "geo", "off"];
@@ -95,12 +102,68 @@ export type Pre1750Units = Record<
 >;
 export const PRE1750_UNITS = pre1750Units as Pre1750Units;
 
+/** Hobart significant trees (pipeline/build_trees.py). Tiny dataset, so it
+ * ships as bundled GeoJSON rather than a PMTiles archive: 460 points + 34
+ * areas keyed by register `ref`; the per-ref facts live in `refs`, the
+ * sheet PDFs are fetched on demand (sheets.ts). */
+export interface TreeProps {
+  /** register reference, e.g. "D5" */
+  ref: string;
+  /** ArcGIS Online item id of the data-sheet PDF */
+  sheet: string;
+  /** position-accuracy code (see `accuracy`) */
+  acc: string;
+}
+export interface TreesData {
+  meta: {
+    item: string;
+    source: string;
+    licence: string;
+    attribution: string;
+    built: string;
+    itemModified: string;
+    points: number;
+    areas: number;
+  };
+  points: FeatureCollection<Point, TreeProps>;
+  areas: FeatureCollection<Polygon | MultiPolygon, TreeProps>;
+  refs: Record<
+    string,
+    {
+      /** botanical name, verbatim from the register (may hold "×", curly quotes) */
+      name: string;
+      /** Latin-1-safe short label for the map (glyphs are 0-255.pbf only) */
+      label: string;
+      /** common name, "" when the register has none */
+      common: string;
+      address: string;
+      trees: number | null;
+      /** Object_Metadata, verbatim (may be "") */
+      note: string;
+      sheets: string[];
+    }
+  >;
+  accuracy: Record<string, string>;
+  sheets: Record<string, { bytes: number; title: string }>;
+}
+export const TREES = trees as unknown as TreesData;
+/** Tree layers a tap consults (details.ts), topmost first. */
+export const TREE_LAYERS = ["trees-point", "trees-cluster", "trees-area-fill"] as const;
+const TREE_GREEN = "#16940d";
+
 function colorMatch(): ExpressionSpecification {
   const pairs: string[] = [];
   for (const [code, meta] of Object.entries(COMMUNITIES)) {
     pairs.push(code, meta.color);
   }
   return ["match", ["get", "VEGCODE"], ...pairs, "#c8c8c8"] as unknown as ExpressionSpecification;
+}
+
+/** ref -> short label, as a match expression (the tiles carry only `ref`). */
+function treeLabelMatch(): ExpressionSpecification {
+  const pairs: string[] = [];
+  for (const [ref, meta] of Object.entries(TREES.refs)) pairs.push(ref, meta.label);
+  return ["match", ["get", "ref"], ...pairs, ""] as unknown as ExpressionSpecification;
 }
 
 /** Raster layer ids == source ids == pack keys, in paint order. Topo stays
@@ -141,6 +204,12 @@ export function overlayVisibility(s: LayerState): Record<string, boolean> {
     "geology-fill": s.overlay === "geo",
     "geology-outline": s.overlay === "geo",
     "pre1750-fill": s.overlay === "pre",
+    "trees-area-fill": s.trees,
+    "trees-area-outline": s.trees,
+    "trees-cluster": s.trees,
+    "trees-cluster-count": s.trees,
+    "trees-point": s.trees,
+    "trees-label": s.trees,
   };
 }
 
@@ -189,6 +258,18 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
       type: "geojson",
       data: { type: "FeatureCollection", features: [] },
     },
+    // Hobart significant trees: bundled GeoJSON, clustered until z15 so the
+    // CBD does not read as one green smear (clusters are re-evaluated at
+    // integer zooms: clusterMaxZoom 14 = clusters shown up to z15)
+    "trees-points": {
+      type: "geojson",
+      data: TREES.points,
+      cluster: true,
+      clusterRadius: 32,
+      clusterMaxZoom: 14,
+      attribution: ATTRIBUTION_TREES,
+    },
+    "trees-areas": { type: "geojson", data: TREES.areas, attribution: ATTRIBUTION_TREES },
   });
   return {
     version: 8,
@@ -251,15 +332,6 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
         paint: { "fill-color": ["get", "color"], "fill-opacity": opacity },
       },
       {
-        id: "selected-outline",
-        type: "line",
-        source: "selected",
-        paint: {
-          "line-color": "#ff3b30",
-          "line-width": 3,
-        },
-      },
-      {
         id: "area-frame",
         type: "line",
         source: "area-frame",
@@ -281,6 +353,114 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
           "text-color": "#f5e600",
           "text-halo-color": "#3a3a00",
           "text-halo-width": 1.4,
+        },
+      },
+      // ---- Hobart significant trees: MUST REMAIN LAST (they sit on top of
+      // every overlay and its labels; a test pins the order), followed only
+      // by the two selection highlights. ----
+      {
+        id: "trees-area-fill",
+        type: "fill",
+        source: "trees-areas",
+        minzoom: 12,
+        layout: vis(ov["trees-area-fill"]),
+        paint: { "fill-color": "#b3fc08", "fill-opacity": 0.35 },
+      },
+      {
+        id: "trees-area-outline",
+        type: "line",
+        source: "trees-areas",
+        minzoom: 12,
+        layout: vis(ov["trees-area-outline"]),
+        paint: { "line-color": TREE_GREEN, "line-width": 2 },
+      },
+      {
+        id: "trees-cluster",
+        type: "circle",
+        source: "trees-points",
+        filter: ["has", "point_count"],
+        minzoom: 10,
+        layout: vis(ov["trees-cluster"]),
+        paint: {
+          "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 50, 24],
+          "circle-color": TREE_GREEN,
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+        },
+      },
+      {
+        id: "trees-cluster-count",
+        type: "symbol",
+        source: "trees-points",
+        filter: ["has", "point_count"],
+        minzoom: 10,
+        layout: {
+          ...vis(ov["trees-cluster-count"]),
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-font": ["Noto Sans Bold"],
+          "text-size": 12,
+          "text-allow-overlap": true,
+        },
+        paint: { "text-color": "#ffffff" },
+      },
+      {
+        id: "trees-point",
+        type: "circle",
+        source: "trees-points",
+        filter: ["!", ["has", "point_count"]],
+        minzoom: 10,
+        layout: vis(ov["trees-point"]),
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 3, 16, 7],
+          "circle-color": TREE_GREEN,
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1.5,
+        },
+      },
+      {
+        id: "trees-label",
+        type: "symbol",
+        source: "trees-points",
+        filter: ["!", ["has", "point_count"]],
+        minzoom: 16,
+        layout: {
+          ...vis(ov["trees-label"]),
+          "text-field": treeLabelMatch(),
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 11,
+          "text-anchor": "top",
+          "text-offset": [0, 0.9],
+          "text-optional": true,
+        },
+        paint: {
+          "text-color": "#ffffff",
+          "text-halo-color": "#1e3a1e",
+          "text-halo-width": 1.2,
+        },
+      },
+      // Selection highlights sit above the trees too: a selected tree AREA's
+      // red outline was tinted and mostly overpainted by trees-area-fill/
+      // -outline when this layer lived below them (review finding).
+      {
+        id: "selected-outline",
+        type: "line",
+        source: "selected",
+        paint: {
+          "line-color": "#ff3b30",
+          "line-width": 3,
+        },
+      },
+      // ring around a selected tree point (selected-outline covers polygons)
+      {
+        id: "selected-point",
+        type: "circle",
+        source: "selected",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-radius": 11,
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-color": "#ff3b30",
+          "circle-stroke-width": 3,
         },
       },
     ],

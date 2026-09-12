@@ -122,6 +122,25 @@ export const ATTRIBUTION_GEOLOGY =
   "Geology from Mineral Resources Tasmania © State of Tasmania (CC BY 3.0 AU)";
 export const ATTRIBUTION_PRE1750 =
   "Pre-1750 vegetation: NVIS V7.0 © Commonwealth of Australia, DCCEEW (CC BY 4.0)";
+// Hobart significant trees (app/src/generated/trees.json, committed derived
+// data; see docs/LICENSING.md). The per-tree data sheets are City of Hobart
+// PDFs hosted as ArcGIS Online items.
+export const ATTRIBUTION_TREES =
+  '<a href="https://www.hobartcity.com.au/Environment-and-Sustainability/Trees/Significant-trees">Significant trees: City of Hobart</a> (CC BY 4.0)';
+/** Sheet PDFs are fetched from www.arcgis.com, NOT the council's
+ * hobartcc.maps.arcgis.com portal: only this host answers the item `data`
+ * call with CORS headers on its 302 to the signed S3 URL. The preflight
+ * allow-list does not include `Range`, so the request must stay a simple
+ * GET with no custom headers (a plain fetch(url) — never storage.download()). */
+export const TREE_SHEET_BASE = "https://www.arcgis.com/sharing/rest/content/items";
+export const treeSheetUrl = (id: string): string => `${TREE_SHEET_BASE}/${id}/data`;
+/** OPFS directory holding the fetched sheets (`<id>.pdf`). */
+export const TREE_SHEET_DIR = "trees";
+// Search indexes (app/public/search/*.json, committed; see docs/LICENSING.md §1)
+export const ATTRIBUTION_NAMES =
+  "Place and street names from theLIST © State of Tasmania (CC BY 3.0 AU)";
+export const ATTRIBUTION_ADDRESSES =
+  "Street addresses from theLIST © State of Tasmania (CC BY 3.0 AU)";
 
 // Tasmania-ish default view for before the first GPS fix
 export const HOME = { center: [146.6, -42.2] as [number, number], zoom: 7 };

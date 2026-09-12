@@ -44,6 +44,7 @@ import {
 } from "./ui";
 import { closePdfViewer, isPdfOpen } from "./viewer";
 import { ensurePersistence } from "./storage";
+import { clearSearchPin, isSearchPinShown, loadIndexes, openSearch, wireSearch } from "./search";
 
 /** Restore the Layers-sheet state; migrate the pre-sheet keys once. */
 function loadState(): LayerState {
@@ -57,6 +58,7 @@ function loadState(): LayerState {
         s.cutoff = Math.max(0, Math.min(SEASON_KEYS.length - 1, Math.round(p.cutoff)));
       if (OVERLAYS.includes(p.overlay as never)) s.overlay = p.overlay!;
       if (STRENGTHS.includes(p.strength as never)) s.strength = p.strength!;
+      if (typeof p.trees === "boolean") s.trees = p.trees;
       return s;
     }
     const mode = localStorage.getItem("overlayMode");
@@ -135,6 +137,7 @@ async function boot(): Promise<void> {
   });
 
   wireDetails(map);
+  wireSearch(map);
   wireCoordReadout(map);
   window.__map = map;
 
@@ -144,6 +147,10 @@ async function boot(): Promise<void> {
     document
       .querySelector(".maplibregl-ctrl-attrib.maplibregl-compact-show")
       ?.classList.remove("maplibregl-compact-show");
+    // warm the search indexes once the map is quiet (the panel retries) —
+    // only under a service worker: an uncontrolled first load is precaching
+    // them already (double download), and the first search loads on demand
+    if (navigator.serviceWorker?.controller) loadIndexes().catch(() => {});
   });
 
   // Keep the screen awake only while actively following GPS (iOS 18.4+
@@ -247,8 +254,13 @@ async function boot(): Promise<void> {
     reapply: apply,
     set: (patch) => {
       const overlayChanged = patch.overlay !== undefined && patch.overlay !== state.overlay;
+      const treesChanged = patch.trees !== undefined && patch.trees !== state.trees;
       Object.assign(state, patch);
-      if (overlayChanged) clearDetails(); // a veg answer over a geology map (or vice versa) lies
+      // a veg answer over a geology map (or vice versa) lies; a tree card
+      // must not outlive its dots either — but neither change may take the
+      // OTHER kind's card away (details.ts stamps data-kind on #sheet)
+      const kind = document.getElementById("sheet")?.dataset.kind;
+      if ((overlayChanged && kind !== "tree") || (treesChanged && kind === "tree")) clearDetails();
       saveState();
       apply();
     },
@@ -256,6 +268,7 @@ async function boot(): Promise<void> {
 
   // Toolbar buttons
   const byId = (id: string) => document.getElementById(id)!;
+  byId("btn-search").onclick = () => openSearch(); // synchronous: iOS keyboard needs the gesture
   byId("btn-layers").onclick = () => void openLayers();
   byId("btn-legend").onclick = () => void openLegend();
   byId("btn-downloads").onclick = () => void openDownloads();
@@ -270,6 +283,7 @@ async function boot(): Promise<void> {
     else if (isPdfOpen()) closePdfViewer();
     else if (isPanelOpen()) closePanel();
     else if (!byId("sheet").hidden) clearDetails();
+    else if (isSearchPinShown()) clearSearchPin();
   });
 
   // Regaining reception should restore a missing overlay without a relaunch

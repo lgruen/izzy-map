@@ -1,7 +1,8 @@
 # Licensing boundaries (read before touching data flows)
 
-This repo is **public**. Four licence regimes apply — the architecture is
-shaped around keeping them separate. What governs is the **copyright text
+This repo is **public**. Five licence regimes apply (§1, §1b, §1c, §2, §3;
+§4 is the refusal rule for unlicensed services) — the architecture is shaped
+around keeping them separate. What governs is the **copyright text
 of each dataset/service**: the LIST Web Services T&C (Dec 2014, 8 clauses,
 `listdata.thelist.tas.gov.au/public/LISTWebServicesTermsConditions.pdf`) say
 nothing about caching or bulk download, and clause 7 delegates licensing
@@ -30,6 +31,18 @@ this document over-read it; verified 2026-09-10.
   (`exportTilesAllowed: true`); the LIST Web Services T&C (Dec 2014, 8
   clauses) contain no prohibition on caching or offline storage — clause 7
   delegates licensing to each service's `copyrightText`, which is CC BY.
+- **LIST place-name and address datasets** behind the offline search (all
+  CC BY 3.0 AU per the LISTdata/service metadata, verified 2026-09-12):
+  Nomenclature (WFS `Public/OpenDataWFS`, type `LIST_Nomenclature`),
+  Transport Segments (`Public/TopographyAndRelief/MapServer/8`), Named
+  Feature Extents and Address Points (LISTdata zips), Locality and Postcode
+  Areas (WFS). Derived from them and COMMITTED to this public repo as app
+  shell: `app/public/search/gazetteer.json` and `addresses.json` — fact
+  tables (names, feature types, localities, coordinates, house numbers; no
+  tiles, no rasters, no prose), built by `pipeline/build_gazetteer.py`.
+  Attribution: "Place and street names from theLIST © State of Tasmania" /
+  "Street addresses from theLIST © State of Tasmania" (search panel footer,
+  About screen).
 
 Required attribution format (from the Land Tasmania attribution guidelines):
 `<dataset/service name> from theLIST © State of Tasmania` + CC BY 3.0 AU
@@ -48,6 +61,25 @@ badge/link. The app shows this on the About screen and map attribution.
   (Department of Climate Change, Energy, the Environment and Water)" +
   CC BY 4.0 link. Shown on the About screen and in the map attribution.
 
+## 1c. CC BY 4.0 (local government) — free to use, redistribute, derive (with attribution)
+
+- **City of Hobart Significant Tree Register** feature service (ArcGIS
+  Online hosted `ENVIRON_Significant_Tree_Locations/FeatureServer`, portal
+  item 9b31f3f6acb14bb2a5869b5e17707155): tree points and areas, register
+  references, the botanical-name and position-accuracy domains, tree
+  counts, register notes, data-sheet item ids. Licence evidence: the item's
+  `licenseInfo` links creativecommons.org/licenses/by/4.0/ and its
+  `accessInformation` reads "City of Hobart" (verified 2026-09-12; item
+  last modified 2025-08-11). Derived and committed:
+  `app/src/generated/trees.json` (GeoJSON + per-reference facts), bundled
+  into the app. Attribution goes to the council — neither State nor
+  Commonwealth: "Significant trees: City of Hobart (CC BY 4.0)" on both
+  tree sources and on the About screen. Guard: `pipeline/build_trees.py`
+  aborts unless `licenseInfo` names CC BY 4.0 AND
+  `accessInformation`/`copyrightText` are "City of Hobart" — the first
+  licence guard on a vector-overlay pipeline. The per-tree data-sheet PDFs
+  the service links to are NOT covered by this licence — see §2.
+
 ## 2. © All rights reserved — must NEVER enter this repo or our hosting
 
 - **From Forest to Fjaeldmark** (Ed. 2) chapter PDFs and any text extracted
@@ -65,6 +97,21 @@ badge/link. The app shows this on the About screen and map attribution.
   chapter file + page number, which is facts, not content. Do not commit
   PDFs, extracted text, or host either on Pages/R2. `.gitignore` blocks
   `*.pdf` and `f2f_pdfs/` as a guard.
+- **Council data sheets (no stated licence):** the 282 per-tree PDFs behind
+  the tree service's `Data_Sheet_URL` are separate ArcGIS Online items whose
+  `licenseInfo` is null — © City of Hobart, nothing granted beyond viewing
+  (verified 2026-09-12). Same posture as F2F: never committed, never served
+  from Pages/R2 (`.gitignore`'s `*.pdf` applies); the device fetches a
+  sheet on tap, or all of them via the optional "Significant tree data
+  sheets" Downloads row, and keeps them in OPFS (`trees/<id>.pdf`) for
+  private use. No relay is needed here:
+  `www.arcgis.com/sharing/rest/content/items/<id>/data` sends CORS headers
+  on its 302 to signed S3 (the `hobartcc.maps.arcgis.com` form does not).
+  `trees.json` may carry only FACTS taken from the sheets and the council's
+  register PDF — address and common name — never the "Reasons for
+  significance" prose or any other text; the pipeline downloads at most
+  ~65 sheets for that (asserts ≤ 100) into the gitignored
+  `pipeline/cache/trees/`.
 
 ## 3. CC BY-NC-ND 3.0 AU — usable as verbatim, attributed, non-commercial collections
 

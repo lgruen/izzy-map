@@ -36,6 +36,7 @@ export async function deleteFile(path: string): Promise<void> {
     const { dir, base } = await resolvePath(path, false);
     await dir.removeEntry(base).catch(() => {});
     await dir.removeEntry(base + ".parts", { recursive: true }).catch(() => {});
+    await dir.removeEntry(base + ".tmp").catch(() => {}); // a writeFile() killed mid-write
   } catch {
     /* already gone */
   }
@@ -44,6 +45,51 @@ export async function deleteFile(path: string): Promise<void> {
   } catch {
     /* private mode */
   }
+}
+
+/** Write a whole small file (a data-sheet PDF) atomically: bytes go to
+ * `<base>.tmp`, which is then moved over the final name (copy + remove
+ * where move() is missing, as commitChunk). A killed app can therefore
+ * never leave a half-written final that opfsFile() would hand to pdf.js. */
+export async function writeFile(path: string, data: ArrayBuffer): Promise<void> {
+  const { dir, base } = await resolvePath(path, true);
+  const tmpName = base + ".tmp";
+  const w = await (await dir.getFileHandle(tmpName, { create: true })).createWritable();
+  try {
+    await w.write(data);
+    await w.close();
+  } catch (e) {
+    await w.abort().catch(() => {});
+    await dir.removeEntry(tmpName).catch(() => {});
+    throw e;
+  }
+  await commitChunk(dir, tmpName, base);
+  // The copy fallback in commitChunk cannot be atomic: a file whose size
+  // disagrees with what was written must not survive as "present".
+  const size = (await (await dir.getFileHandle(base)).getFile()).size;
+  if (size !== data.byteLength) {
+    await dir.removeEntry(base).catch(() => {});
+    throw new Error("Saving the file failed — try again");
+  }
+}
+
+/** File name -> size for one OPFS directory (one walk instead of a
+ * getFileHandle per expected file); empty when the directory is missing.
+ * Callers deciding "present" should ignore zero-byte entries (an empty
+ * shell left by an interrupted copy fallback in commitChunk). */
+export async function listDir(path: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  try {
+    let dir = await navigator.storage.getDirectory();
+    for (const part of path.split("/").filter(Boolean)) dir = await dir.getDirectoryHandle(part);
+    const entries = (dir as unknown as { values(): AsyncIterable<FileSystemHandle> }).values();
+    for await (const h of entries) {
+      if (h.kind === "file") out.set(h.name, (await (h as FileSystemFileHandle).getFile()).size);
+    }
+  } catch {
+    /* no such directory (or no OPFS) — nothing on the device */
+  }
+  return out;
 }
 
 export interface Progress {
@@ -80,8 +126,9 @@ export function activeDownload(
 
 const DEFAULT_CHUNK = 128 * 1024 * 1024;
 // Assembly transiently needs parts + final (≈2× archive) before parts are
-// deleted; preflight accordingly, plus headroom.
-const QUOTA_MARGIN = 300 * 1024 * 1024;
+// deleted; preflight accordingly, plus headroom. Exported so multi-file
+// jobs (ui.ts tree sheets) preflight with the same margin and wording.
+export const QUOTA_MARGIN = 300 * 1024 * 1024;
 
 const MAGIC: Record<string, string> = { pmtiles: "PMTiles", pdf: "%PDF" };
 
@@ -344,9 +391,17 @@ async function commitChunk(
     // @ts-expect-error move() not yet in lib.dom
     await tmp.move(finalName);
   } catch {
+    // getFileHandle(create) makes the final exist EMPTY before a byte is
+    // copied — a failure mid-copy must take it away again, or an empty
+    // `<id>.pdf` counts as present (review finding).
     const dst = await pd.getFileHandle(finalName, { create: true });
     const w = await dst.createWritable();
-    await (await tmp.getFile()).stream().pipeTo(w);
+    try {
+      await (await tmp.getFile()).stream().pipeTo(w);
+    } catch (e) {
+      await pd.removeEntry(finalName).catch(() => {});
+      throw e;
+    }
     await pd.removeEntry(tmpName).catch(() => {});
   }
 }

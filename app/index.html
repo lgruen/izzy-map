@@ -17,6 +17,12 @@
   <body>
     <div id="map"></div>
     <div id="toolbar">
+      <button id="btn-search" title="Search places" aria-label="Search places">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <path d="m15.5 15.5 5 5" />
+        </svg>
+      </button>
       <button id="btn-layers" title="Map layers" aria-label="Map layers">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 3.5 3.5 8 12 12.5 20.5 8Z" />
@@ -45,6 +51,10 @@
           <path d="M12 11.5v5" />
         </svg>
       </button>
+    </div>
+    <div id="search-pill" hidden>
+      <button id="search-pill-name" title="Show the search result again"></button>
+      <button id="search-pill-x" aria-label="Clear search marker">×</button>
     </div>
     <div id="mode-pill" aria-hidden="true"></div>
     <div id="areabar" hidden>

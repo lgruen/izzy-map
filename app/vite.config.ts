@@ -53,7 +53,11 @@ export default defineConfig({
       workbox: {
         // .mjs matters: the pdf.js worker is emitted as an .mjs asset — if it
         // isn't precached, community descriptions silently require network.
-        globPatterns: ["**/*.{js,mjs,css,html,png,svg,pbf,woff2,webmanifest}"],
+        // search/*.json: the place-name + address indexes are app shell (the
+        // one JSON the SW may hold — search works offline from first launch).
+        // Explicit path, not a blanket json glob: map data still never goes
+        // through the SW.
+        globPatterns: ["**/*.{js,mjs,css,html,png,svg,pbf,woff2,webmanifest}", "search/*.json"],
         // workbox's 2 MiB default silently drops the pdf.js worker/chunks
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",

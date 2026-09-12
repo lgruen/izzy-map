@@ -491,6 +491,21 @@ button { font-family: var(--sans); color: inherit; }
 .lay-row svg { flex: none; color: var(--accent); }
 .lay-row.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .lay-row:active { transform: scale(0.985); }
+/* "Also show" toggles are checkboxes, not radios: a box on the right ticks
+   so on/off reads without comparing against sibling rows */
+.lay-row[role="checkbox"]::after {
+  content: "";
+  flex: none;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--hairline);
+  border-radius: 7px;
+  font: 700 14px/19px var(--sans);
+  text-align: center;
+  color: var(--accent-contrast);
+}
+.lay-row[role="checkbox"][aria-checked="true"]::after { content: "✓"; background: var(--accent); border-color: var(--accent); }
 .lay-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .lay-text b { font-size: 15px; font-weight: 600; }
 .lay-text small { color: var(--stone); font-size: 12px; line-height: 1.3; }
@@ -659,3 +674,115 @@ button { font-family: var(--sans); color: inherit; }
 
 /* legend keeps the map visible so the Full/Light toggle reads immediately */
 #panel.see-through { background: rgba(12, 20, 15, 0.12); }
+
+/* ---------- search (search.ts) ----------
+   Phones: a full-height, TOP-anchored takeover — the input sits under the
+   status bar so iOS never scrolls the page to reveal it when the keyboard
+   rises, and the row positions don't shift when the keyboard drops on a
+   tap. search.ts additionally tracks visualViewport height. */
+
+#panel.search { align-items: stretch; }
+#panel.search .panel-inner {
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: calc(8px + env(safe-area-inset-top)) 14px calc(8px + env(safe-area-inset-bottom));
+}
+#panel.search .handle { display: none; }
+#panel.search .panel-close { top: calc(6px + env(safe-area-inset-top)); }
+.sr-form { flex: none; margin: 0 44px 8px 0; }
+#sr-input {
+  width: 100%;
+  font: 16px var(--sans); /* < 16px makes iOS zoom the page on focus */
+  padding: 11px 14px;
+  border: 1.5px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--chrome-ink);
+  -webkit-appearance: none;
+  appearance: none;
+}
+#sr-input:focus { border-color: var(--accent); outline: none; }
+#sr-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -6px;
+}
+.sr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 1.5px solid transparent;
+  border-radius: 12px;
+  background: none;
+  color: var(--chrome-ink);
+  text-align: left;
+}
+.sr-row svg { flex: none; color: var(--accent); }
+.sr-row.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sr-row:active { transform: scale(0.985); }
+.sr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sr-text b { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-text small { color: var(--stone); font-size: 12px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-km { flex: none; font: 11px/1 var(--mono); color: var(--stone); letter-spacing: 0.03em; }
+.sr-empty { margin: 0; padding: 14px 8px; }
+.sr-foot { flex: none; margin: 8px 0 0; font-size: 11px; line-height: 1.4; }
+@media (hover: hover) {
+  .sr-row:hover:not(.on) { background: color-mix(in srgb, var(--accent) 12%, var(--chrome-bg)); }
+}
+
+/* result pill at the mode-pill slot; transient pills stack below it */
+#search-pill {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  left: calc(64px + env(safe-area-inset-left));
+  right: calc(64px + env(safe-area-inset-right));
+  z-index: 5;
+  display: flex;
+  align-items: stretch;
+  width: fit-content;
+  border-radius: 16px;
+  background: var(--pine);
+  color: #fcfbf6;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+#search-pill button {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  min-height: 44px; /* 44 px hit targets */
+}
+#search-pill-name {
+  min-width: 0;
+  padding: 8px 4px 8px 14px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#search-pill-x { flex: none; width: 44px; font-size: 20px; line-height: 1; padding: 0; }
+#search-pill:not([hidden]) ~ #mode-pill { top: calc(70px + env(safe-area-inset-top)); }
+
+@media (min-width: 700px) {
+  /* the side card again: undo the takeover, cap the list */
+  #panel.search { align-items: flex-start; }
+  #panel.search .panel-inner {
+    height: auto;
+    max-height: calc(100% - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    border-radius: 18px;
+    padding: 10px 18px 16px;
+  }
+  #panel.search .panel-close { top: 8px; }
+  #sr-list { max-height: 60vh; }
+}

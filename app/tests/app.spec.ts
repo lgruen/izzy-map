@@ -541,7 +541,7 @@ test("wide viewports get side cards; Escape dismisses sheets", async ({ page }) 
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
   await page.locator("#btn-layers").click();
-  await expect(page.locator(".lay-row")).toHaveCount(8);
+  await expect(page.locator(".lay-row")).toHaveCount(9); // 4 bases + 4 overlays + trees
   if (wide) {
     // no scrim on wide viewports: the toolbar stays live beside the card,
     // so the legend button swaps the card instead of closing it
@@ -705,4 +705,689 @@ test("interrupted archive download resumes from completed chunks", async ({ page
   expect(result.head).toBe("PMTiles");
   expect(result.size).toBe(FIXTURE_LEN);
   expect(result.partsAfter).toBe(0); // parts cleaned up after assembly
+});
+
+// ---------- search (search.ts; the real committed indexes served by the dev server) ----------
+
+const jumpTo = (page: Page, lng: number, lat: number, zoom = 13) =>
+  page.evaluate(([lng, lat, zoom]) => {
+    (window as never as { __map: import("maplibre-gl").Map }).__map.jumpTo({ center: [lng, lat], zoom });
+  }, [lng, lat, zoom] as const);
+/** Camera after a fly/fit settles: [lng, lat, zoom]. */
+const settledCamera = async (page: Page): Promise<[number, number, number]> => {
+  await page.waitForFunction(
+    () => !(window as never as { __map: import("maplibre-gl").Map }).__map.isMoving(),
+    undefined,
+    { timeout: 10_000 },
+  );
+  return page.evaluate(() => {
+    const m = (window as never as { __map: import("maplibre-gl").Map }).__map;
+    return [m.getCenter().lng, m.getCenter().lat, m.getZoom()] as [number, number, number];
+  });
+};
+/** Open the search sheet (input focused) and type a query. */
+const openSearch = async (page: Page, q: string) => {
+  await page.locator("#btn-search").click();
+  await expect(page.locator("#sr-input")).toBeFocused();
+  await page.locator("#sr-input").fill(q);
+};
+const firstRow = (page: Page) => page.locator(".sr-row").first();
+
+test("search: kunanyi flies to the mountain with a pin and a dismissible pill", async ({ page }) => {
+  await openSearch(page, "kunanyi");
+  await expect(firstRow(page)).toContainText(/Wellington/, { timeout: 20_000 });
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#panel")).toBeHidden();
+  const [lng, lat] = await settledCamera(page);
+  expect(Math.abs(lng - 147.237), `lng ${lng}`).toBeLessThan(0.03);
+  expect(Math.abs(lat + 42.896), `lat ${lat}`).toBeLessThan(0.03);
+  // the geolocate control owns two markers of its own (dot + accuracy
+  // circle), so count the search pin by its class
+  await expect(page.locator(".maplibregl-marker.search-pin")).toHaveCount(1);
+  await expect(page.locator("#search-pill")).toBeVisible();
+  await expect(page.locator("#search-pill-name")).toContainText("Wellington");
+  await page.locator("#search-pill-x").click();
+  await expect(page.locator("#search-pill")).toBeHidden();
+  await expect(page.locator(".maplibregl-marker.search-pin")).toHaveCount(0);
+});
+
+test("search: abbreviations and context words", async ({ page }) => {
+  await openSearch(page, "eliz st hob");
+  await expect(firstRow(page).locator("b")).toHaveText("Elizabeth Street", { timeout: 20_000 });
+  await expect(firstRow(page).locator("small")).toContainText("Hobart");
+  await page.locator("#sr-input").fill("mt wellington");
+  await expect(firstRow(page).locator("b")).toContainText(/Mount Wellington/);
+  await page.locator("#sr-input").fill("sandy bay rd");
+  await expect(firstRow(page).locator("b")).toHaveText("Sandy Bay Road");
+  // the register lists Elizabeth Street under Hobart only; the suburb comes
+  // from the address file's per-suburb street rows
+  await page.locator("#sr-input").fill("elizabeth st north hobart");
+  await expect(firstRow(page).locator("b")).toHaveText("Elizabeth Street");
+  await expect(firstRow(page).locator("small")).toContainText("North Hobart");
+  await page.locator("#sr-input").fill("7 mile beach"); // a number word, not a house number
+  await expect(firstRow(page).locator("b")).toHaveText("Seven Mile Beach");
+  await page.locator("#sr-input").fill("salamanca"); // the square, not a farm of that name
+  await expect(firstRow(page).locator("b")).toHaveText("Salamanca Square");
+});
+
+test("search: equal names rank by distance from the map centre", async ({ page }) => {
+  await jumpTo(page, 147.14, -41.44); // Launceston
+  await openSearch(page, "elizabeth street");
+  await expect(firstRow(page).locator("b")).toHaveText("Elizabeth Street", { timeout: 20_000 });
+  await expect(firstRow(page).locator("small")).toContainText("Launceston");
+  await closePanel(page);
+  await jumpTo(page, 147.33, -42.88); // Hobart
+  await openSearch(page, "elizabeth street");
+  await expect(firstRow(page).locator("b")).toHaveText("Elizabeth Street");
+  await expect(firstRow(page).locator("small")).toContainText("Hobart");
+  await expect(firstRow(page).locator("small")).not.toContainText("Launceston");
+});
+
+test("search: a house number resolves to an address; property names resolve", async ({ page }) => {
+  await openSearch(page, "12 elizabeth st hobart");
+  await expect(firstRow(page).locator("b")).toHaveText(/^12 Elizabeth Street/, { timeout: 20_000 });
+  await expect(firstRow(page).locator("small")).toContainText(/^Address · /);
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#panel")).toBeHidden();
+  const [lng, lat, zoom] = await settledCamera(page);
+  expect(zoom).toBeGreaterThanOrEqual(17);
+  expect(Math.abs(lng - 147.33), `lng ${lng}`).toBeLessThan(0.01);
+  expect(Math.abs(lat + 42.88), `lat ${lat}`).toBeLessThan(0.01);
+  await expect(page.locator("#search-pill-name")).toHaveText(/^12 Elizabeth Street/);
+  await openSearch(page, "henry jones");
+  await expect(page.locator(".sr-row small", { hasText: /^Property/ }).first()).toBeVisible();
+  await expect(firstRow(page).locator("b")).toContainText(/Henry Jones/i);
+});
+
+test("search: works with every network path but the app shell cut", async ({ page }) => {
+  // the dev server stands in for the service-worker precache (same pattern
+  // as the OPFS offline test): nothing else may be reachable
+  await page.route("**", (route) =>
+    route.request().url().startsWith("http://localhost:5200") ? route.continue() : route.abort(),
+  );
+  await openSearch(page, "hobart");
+  await expect(firstRow(page)).toBeVisible({ timeout: 20_000 });
+  await expect(firstRow(page).locator("b")).toContainText(/Hobart/);
+});
+
+test("search: a failed index fetch is reported, then retried on the next keystroke", async ({ page }) => {
+  // cut BEFORE the page loads, so no idle prefetch can have warmed the
+  // indexes: the first search must say so, and the load promise must reset
+  // so that the next keystroke, network back, succeeds
+  await page.route("**/search/*.json", (route) => route.abort());
+  await page.goto("/");
+  await waitForMapIdle(page);
+  await openSearch(page, "hobart");
+  await expect(page.locator("#sr-list")).toContainText("Place names aren’t available", { timeout: 20_000 });
+  await page.unroute("**/search/*.json");
+  await page.locator("#sr-input").fill("hobart rivulet");
+  await expect(firstRow(page).locator("b")).toContainText("Hobart Rivulet", { timeout: 20_000 });
+});
+
+test("search: keyboard navigation, Escape chain, wide-viewport card", async ({ page }) => {
+  const wide = page.viewportSize()!.width >= 700;
+  await openSearch(page, "sandy bay");
+  const rows = page.locator(".sr-row");
+  await expect(rows.nth(2)).toBeVisible({ timeout: 20_000 });
+  await expect(rows.first()).toHaveClass(/\bon\b/); // Enter alone picks the first
+  const third = (await rows.nth(2).locator("b").textContent())!;
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(rows.nth(2)).toHaveClass(/\bon\b/);
+  await expect(page.locator("#sr-input")).toHaveAttribute("aria-activedescendant", "sr-opt-2");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#panel")).toBeHidden();
+  await expect(page.locator("#search-pill-name")).toHaveText(third);
+  // reopening restores the query and its hits; Escape with the input
+  // focused closes the sheet, a second Escape clears the pin
+  await page.locator("#btn-search").click();
+  await expect(page.locator("#sr-input")).toBeFocused();
+  await expect(page.locator("#sr-input")).toHaveValue("sandy bay");
+  await expect(rows.nth(2)).toBeVisible();
+  const inner = (await page.locator(".panel-inner").boundingBox())!;
+  if (wide) {
+    expect(inner.width).toBeGreaterThanOrEqual(390);
+    expect(inner.width).toBeLessThanOrEqual(410);
+    expect(inner.x).toBeGreaterThanOrEqual(60);
+    // no scrim: the toolbar stays live beside the card
+    await page.locator("#btn-layers").click();
+    await expect(page.locator("#panel")).toContainText("Map layers");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#panel")).toBeHidden();
+    await page.locator("#btn-search").click();
+    await expect(page.locator("#sr-input")).toBeFocused();
+  } else {
+    expect(inner.width).toBe(page.viewportSize()!.width);
+    expect(inner.y).toBeLessThan(40); // top-anchored takeover
+  }
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#panel")).toBeHidden();
+  await expect(page.locator("#search-pill")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#search-pill")).toBeHidden();
+  await expect(page.locator(".maplibregl-marker.search-pin")).toHaveCount(0);
+});
+
+test("search: normalisation, abbreviations, minimum length, road demotion, address decode", async ({ page }) => {
+  const r = await page.evaluate(async () => {
+    const m = (await import("/src/search.ts")) as typeof import("../src/search");
+    const idx = m.buildIndex({
+      version: 1, built: "", attribution: "",
+      types: ["Road", "Mountain", "Suburb/Locality", "Property", "Square", "Pier", "Beach"],
+      groups: ["Transport", "Natural Feature", "Cultural", "Property"],
+      typeGroup: [0, 1, 2, 3, 2, 0, 1],
+      places: ["", "North Hobart", "Wellington Park", "Longford", "Battery Point", "Hobart"],
+      munis: ["", "Hobart", "Glenorchy, Hobart, Kingborough"],
+      rows: [
+        ["Sandy Bay Road", 0, 0, 1, -4290000, 14733000, [-100, -900, 100, 900]],
+        ["Sandy Bay", 2, 0, 1, -4290500, 14732000],
+        ["Mount Direction", 1, 0, 0, -4280000, 14730000],
+        ["Elizabeth Street", 0, 1, 1, -4287000, 14731500],
+        ["Elizabeth Street Pier", 5, 5, 1, -4288200, 14733500],
+        ["Elizabeth Street Pier", 3, 5, 1, -4288200, 14733500], // the register's Property twin
+        ["Kunanyi / Mount Wellington", 1, 2, 2, -4290464, 14722438],
+        ["O'Briens Road", 0, 0, 0, -4300000, 14720000],
+        ["Seven Mile Beach", 6, 0, 0, -4286000, 14750000],
+        ["Salamanca", 3, 3, 0, -4160000, 14710000],
+        ["Salamanca Square", 4, 4, 1, -4288800, 14733000],
+        ["Henry Jones IXL Complex", 3, 5, 1, -4288000, 14733200],
+      ],
+    });
+    const addr = m.buildAddrIndex({
+      version: 1, built: "", attribution: "",
+      streets: [
+        ["Sandy Bay Road", "Sandy Bay", 14733000, -4290000, [1, 3, "5A", 7], [0, 10, 10, 10], [0, -5, -5, -5]],
+        ["Elizabeth Street", "North Hobart", 14731500, -4287000, [2, 4], [0, 10], [0, 10]], // = the register row
+        ["Elizabeth Street", "New Town", 14731000, -4285000, [300, 302, 304], [0, 10, 10], [0, 10, 10]],
+        ["Seven Mile Beach Road", "Seven Mile Beach", 14750000, -4286000, [7, 9], [0, 10], [0, 10]],
+      ],
+    });
+    const names = (q: string) => m.search(idx, addr, q).map((h) => h.name);
+    return {
+      norm: m.normalise("Saint-Mary’s Créek"),
+      rd: names("sandy bay rd"),
+      one: names("s").length,
+      two: names("sa"),
+      demote: names("sandy bay"),
+      mt: names("mt direction"),
+      ctx: names("eliz hob"),
+      streetWord: names("eliz st hob"),
+      pierTwin: m.search(idx, addr, "eliz st hob").filter((h) => h.name === "Elizabeth Street Pier").map((h) => h.type),
+      apostrophe: [names("obriens rd")[0], names("o'briens")[0]],
+      numberWord: names("7 mile beach"),
+      unit: m.search(idx, addr, "1/3 sandy bay rd")[0],
+      range: names("3-5 sandy bay rd")[0],
+      unitSpace: names("1 3 sandy bay rd")[0],
+      suburb: m.search(idx, addr, "elizabeth st new town"),
+      dedupe: m.search(idx, addr, "elizabeth st north hobart"),
+      plain: names("elizabeth street"),
+      property: names("salamanca"),
+      propertyOnly: names("henry jones"),
+      multi: m.search(idx, addr, "kunanyi hob")[0],
+      exact: m.search(idx, addr, "3 sandy bay rd")[0],
+      nearest: m.search(idx, addr, "5 sandy bay rd")[0],
+      km: m.search(idx, null, "sandy bay", { lng: 147.325, lat: -42.905 })[0].km,
+    };
+  });
+  expect(r.norm).toBe("saint marys creek"); // apostrophes vanish, other punctuation splits
+  expect(r.rd[0]).toBe("Sandy Bay Road");
+  expect(r.one).toBe(0); // two-letter minimum
+  expect(r.two).toContain("Sandy Bay");
+  expect(r.demote[0]).toBe("Sandy Bay"); // the suburb outranks its road…
+  expect(r.demote).toContain("Sandy Bay Road"); // …which still lists
+  expect(r.mt[0]).toBe("Mount Direction");
+  expect(r.ctx).toContain("Elizabeth Street"); // "hob" via the locality/council
+  expect(r.streetWord[0]).toBe("Elizabeth Street"); // a street word: the road beats the pier
+  expect(r.streetWord).toContain("Elizabeth Street Pier");
+  expect(r.pierTwin).toEqual(["Pier"]); // a Property twinning a register row (same name + place) is dropped
+  expect(r.apostrophe).toEqual(["O'Briens Road", "O'Briens Road"]);
+  expect(r.numberWord[0]).toBe("Seven Mile Beach"); // "7" spelt out beats the address
+  expect(r.numberWord).toContain("7 Seven Mile Beach Road");
+  expect(r.unit.name).toBe("3 Sandy Bay Road"); // unit 1, number 3
+  expect(r.unit.meta).toBe("Address · Sandy Bay");
+  expect(r.range).toBe("3 Sandy Bay Road"); // a range keeps its first number
+  expect(r.unitSpace).toBe("3 Sandy Bay Road");
+  // a suburb the register does not list comes from the address file: one
+  // Road row, pinned at the middle number, framed by all of them
+  expect(r.suburb.map((h) => [h.name, h.type, h.meta])).toEqual([["Elizabeth Street", "Road", "Road · New Town"]]);
+  expect(r.suburb[0].lon).toBeCloseTo(147.3101, 5);
+  expect(r.suburb[0].lat).toBeCloseTo(-42.8499, 5);
+  expect(r.suburb[0].bbox).toEqual([147.31, -42.85, 147.3102, -42.8498]);
+  // …but a (name, place) the register has is shown once, from the register
+  expect(r.dedupe.map((h) => h.meta)).toEqual(["Road · North Hobart, Hobart"]);
+  // and without a suburb word the address file adds no duplicate rows
+  expect(r.plain.filter((n) => n === "Elizabeth Street")).toHaveLength(1);
+  expect(r.property[0]).toBe("Salamanca Square"); // the property "Salamanca" trails official names…
+  expect(r.property).toContain("Salamanca");
+  expect(r.propertyOnly).toEqual(["Henry Jones IXL Complex"]); // …but still answers alone
+  // a multi-council MUNY matches as context in full but displays its first council only
+  expect(r.multi.name).toBe("Kunanyi / Mount Wellington");
+  expect(r.multi.meta).toBe("Mountain · Wellington Park, Glenorchy");
+  expect(r.exact.name).toBe("3 Sandy Bay Road");
+  expect(r.exact.meta).toBe("Address · Sandy Bay");
+  expect(r.exact.lon).toBeCloseTo(147.3301, 5); // lon0 + 0 + 10 (1e-5°)
+  expect(r.exact.lat).toBeCloseTo(-42.90005, 5);
+  expect(r.nearest.name).toBe("5 Sandy Bay Road");
+  expect(r.nearest.meta).toBe("Address · Sandy Bay · nearest: 5A");
+  expect(r.km).toBeGreaterThan(0);
+  expect(r.km).toBeLessThan(1);
+});
+
+// ---------- Hobart significant trees (bundled trees.json is the fixture) ----------
+
+type TreeFeature = {
+  geometry: { type: string; coordinates: [number, number] };
+  properties: { ref: string; sheet: string; acc: string };
+};
+const TREES = JSON.parse(readFileSync(join(HERE, "../src/generated/trees.json"), "utf8")) as {
+  points: { features: TreeFeature[] };
+  areas: { features: { geometry: { type: string }; properties: { ref: string; sheet: string; acc: string } }[] };
+  refs: Record<string, { name: string; label: string; common: string; address: string; sheets: string[] }>;
+  accuracy: Record<string, string>;
+  sheets: Record<string, { bytes: number; title: string }>;
+};
+const TREE_LAYER_IDS = ["trees-area-fill", "trees-area-outline", "trees-cluster", "trees-cluster-count", "trees-point", "trees-label"];
+const SHEET_ROUTE = "**/www.arcgis.com/sharing/rest/content/items/*/data";
+// Derived from the data, formatted as ui.ts's fmtMB does, so a regenerated
+// trees.json (a new season of listings) cannot break the wording tests.
+const SHEET_COUNT = Object.keys(TREES.sheets).length;
+const SHEETS_MB = `${Math.round(Object.values(TREES.sheets).reduce((a, s) => a + s.bytes, 0) / 1e6)} MB`;
+/** The closest pair of dots with different refs 4–10 m apart: both inside
+ * one 12 px tap box at z17 (~0.9 m/px), yet far enough that a click lands
+ * unambiguously nearer to one of them. */
+const closeTreePair = (): [TreeFeature, TreeFeature] => {
+  const pts = TREES.points.features;
+  const m = (a: [number, number], b: [number, number]) =>
+    Math.hypot((a[0] - b[0]) * 81_500, (a[1] - b[1]) * 111_000);
+  let best: [number, TreeFeature, TreeFeature] | null = null;
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      if (pts[i].properties.ref === pts[j].properties.ref) continue;
+      const d = m(pts[i].geometry.coordinates, pts[j].geometry.coordinates);
+      if (d >= 4 && d <= 10 && (!best || d < best[0])) best = [d, pts[i], pts[j]];
+    }
+  }
+  expect(best, "a pair of distinct trees 4–10 m apart").not.toBeNull();
+  return [best![1], best![2]];
+};
+/** A point with no neighbour within 40 m, so the 12 px tap box at z17
+ * (~11 m) cannot answer with a different tree. */
+const isolatedTree = (): TreeFeature => {
+  const pts = TREES.points.features;
+  const m = (a: [number, number], b: [number, number]) =>
+    Math.hypot((a[0] - b[0]) * 81_500, (a[1] - b[1]) * 111_000);
+  return pts.find((p, i) => pts.every((q, j) => j === i || m(p.geometry.coordinates, q.geometry.coordinates) >= 40))!;
+};
+const enableTrees = async (page: Page) => {
+  await page.locator("#btn-layers").click();
+  await page.locator('.lay-row[data-toggle="trees"]').click();
+  await closePanel(page);
+};
+/** Jump to a tree at z17 (no clusters) and tap exactly on it. */
+const tapTree = async (page: Page, f: TreeFeature) => {
+  const [lng, lat] = f.geometry.coordinates;
+  await jumpTo(page, lng, lat, 17);
+  await waitForTiles(page);
+  const pt = await page.evaluate(([lng, lat]) => {
+    const map = (window as never as { __map: import("maplibre-gl").Map }).__map;
+    const p = map.project([lng, lat]);
+    const r = map.getContainer().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, [lng, lat] as const);
+  await page.mouse.click(pt.x, pt.y);
+};
+const routeSheets = (page: Page) =>
+  page.route(SHEET_ROUTE, (route) =>
+    route.fulfill({ status: 200, contentType: "application/pdf", body: Buffer.from(TINY_PDF) }),
+  );
+const seedSheet = (page: Page, id: string) =>
+  page.evaluate(async ({ pdf, id }) => {
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle("trees", { create: true });
+    const w = await (await dir.getFileHandle(id + ".pdf", { create: true })).createWritable();
+    await w.write(new TextEncoder().encode(pdf));
+    await w.close();
+  }, { pdf: TINY_PDF, id });
+const sheetSize = (page: Page, id: string) =>
+  page.evaluate(async (id) => {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("trees");
+      return (await (await dir.getFileHandle(id + ".pdf")).getFile()).size;
+    } catch {
+      return null;
+    }
+  }, id);
+
+test("trees: data sanity and the layers stay on top of the style", async ({ page }) => {
+  for (const f of [...TREES.points.features, ...TREES.areas.features]) {
+    expect(TREES.refs[f.properties.ref], `ref ${f.properties.ref}`).toBeTruthy();
+    expect(TREES.sheets[f.properties.sheet], `sheet ${f.properties.sheet}`).toBeTruthy();
+    expect(TREES.accuracy[f.properties.acc], `accuracy ${f.properties.acc}`).toBeTruthy();
+  }
+  for (const [ref, r] of Object.entries(TREES.refs)) {
+    expect(/^[\x00-\xff]*$/.test(r.label), `label of ${ref} is Latin-1 (glyphs are 0-255.pbf only)`).toBe(true);
+    expect(r.label.length, `label of ${ref}`).toBeGreaterThan(0);
+    expect(r.sheets.length, `sheets of ${ref}`).toBeGreaterThan(0);
+    for (const id of r.sheets) expect(TREES.sheets[id]).toBeTruthy();
+  }
+  expect(Object.values(TREES.sheets).reduce((a, s) => a + s.bytes, 0)).toBeGreaterThan(300e6);
+  const ids = await page.evaluate(() =>
+    (window as never as { __map: import("maplibre-gl").Map }).__map.getStyle().layers.map((l) => l.id),
+  );
+  // both selection highlights paint ABOVE the trees (a selected tree area's
+  // red ring was tinted and overpainted by trees-area-fill below them)
+  expect(ids.slice(-8)).toEqual([...TREE_LAYER_IDS, "selected-outline", "selected-point"]);
+  expect(ids.indexOf("tasveg-label")).toBeLessThan(ids.indexOf("trees-area-fill"));
+});
+
+test("trees: Layers toggle shows the register, persists, leaves the overlay alone", async ({ page }) => {
+  for (const l of TREE_LAYER_IDS) expect(await vis(page, l)).toBe("none");
+  await page.locator("#btn-layers").click();
+  const row = page.locator('.lay-row[data-toggle="trees"]');
+  await expect(row).toHaveAttribute("role", "checkbox");
+  await expect(row).toHaveAttribute("aria-checked", "false");
+  await row.click();
+  await expect(row).toHaveClass(/\bon\b/);
+  await expect(row).toHaveAttribute("aria-checked", "true");
+  await closePanel(page);
+  for (const l of ["trees-point", "trees-area-fill", "trees-cluster"]) expect(await vis(page, l)).toBe("visible");
+  expect(await vis(page, "tasveg-fill")).toBe("visible"); // independent of the overlay
+  await expect(page.locator(".maplibregl-ctrl-attrib")).toContainText("City of Hobart");
+  await page.reload();
+  await waitForMapIdle(page);
+  expect(await vis(page, "trees-point")).toBe("visible");
+  expect(await vis(page, "tasveg-fill")).toBe("visible");
+  await page.locator("#btn-layers").click();
+  await expect(row).toHaveClass(/\bon\b/);
+  await row.click();
+  await expect(row).not.toHaveClass(/\bon\b/);
+  expect(await vis(page, "trees-point")).toBe("none");
+  expect(await vis(page, "trees-label")).toBe("none");
+});
+
+test("trees: tapping a tree opens its card with the register facts and a data-sheet button", async ({ page }) => {
+  await enableTrees(page);
+  const f = isolatedTree();
+  const meta = TREES.refs[f.properties.ref];
+  await tapTree(page, f);
+  const sheet = page.locator("#sheet");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator(".sheet-code")).toHaveText(f.properties.ref);
+  await expect(sheet.locator(".sheet-name")).toHaveText(meta.name);
+  await expect(sheet).toContainText(meta.address);
+  await expect(sheet).toContainText(TREES.accuracy[f.properties.acc]);
+  const size = `${(TREES.sheets[f.properties.sheet].bytes / 1e6).toFixed(1)} MB`;
+  await expect(sheet.locator(".sheet-desc")).toContainText(size);
+  await expect(sheet.locator(".sheet-desc")).toHaveAttribute("data-sheet", f.properties.sheet);
+  // nothing on the device: the button says it will fetch
+  await expect(sheet.locator(".sheet-desc small")).toContainText("fetched and kept");
+  const swatch = await sheet.locator(".swatch").evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(swatch.replace(/\s/g, "")).toBe("rgb(22,148,13)");
+  // the highlight is the tapped point (ring layer), not a polygon outline
+  const sel = await page.evaluate(() => {
+    const map = (window as never as { __map: import("maplibre-gl").Map }).__map;
+    const src = map.getSource("selected") as import("maplibre-gl").GeoJSONSource;
+    return (src.serialize() as { data: { type: string; geometry?: { type: string } } }).data;
+  });
+  expect(sel.type).toBe("Feature");
+  expect(sel.geometry?.type).toBe("Point");
+  // Escape closes; the ring goes with it
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+});
+
+test("trees: tapping a cluster zooms in instead of opening a card", async ({ page }) => {
+  await enableTrees(page);
+  await jumpTo(page, 147.325, -42.885, 12); // Hobart CBD: hundreds of trees -> clusters
+  await waitForTiles(page);
+  const pt = await page.evaluate(() => {
+    const map = (window as never as { __map: import("maplibre-gl").Map }).__map;
+    const clusters = map.queryRenderedFeatures({ layers: ["trees-cluster"] });
+    // a cluster with no lone dot inside the tap box (dots answer first)
+    for (const c of clusters) {
+      const p = map.project((c.geometry as { coordinates: [number, number] }).coordinates);
+      const dots = map.queryRenderedFeatures([[p.x - 14, p.y - 14], [p.x + 14, p.y + 14]], { layers: ["trees-point"] });
+      if (!dots.length) {
+        const r = map.getContainer().getBoundingClientRect();
+        return { x: r.left + p.x, y: r.top + p.y, n: clusters.length, count: c.properties.point_count as number };
+      }
+    }
+    return null;
+  });
+  expect(pt, "a tappable cluster on screen").not.toBeNull();
+  expect(pt!.count).toBeGreaterThan(1);
+  await page.mouse.click(pt!.x, pt!.y);
+  await expect
+    .poll(() => page.evaluate(() => (window as never as { __map: import("maplibre-gl").Map }).__map.getZoom()), { timeout: 10_000 })
+    .toBeGreaterThan(12.5);
+  await expect(page.locator("#sheet")).toBeHidden();
+});
+
+test("trees: a data sheet on the device opens offline in the in-app viewer", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  const f = isolatedTree();
+  await seedSheet(page, f.properties.sheet);
+  await enableTrees(page);
+  // no reception: nothing but the dev server (app-shell stand-in) answers
+  await page.route("**", (route) =>
+    route.request().url().startsWith("http://localhost:5200") ? route.continue() : route.abort(),
+  );
+  await tapTree(page, f);
+  await expect(page.locator(".sheet-desc small")).toContainText("on this device");
+  await page.locator(".sheet-desc").click();
+  await expect(page.locator("#pdfview")).toBeVisible();
+  await expect(page.locator(".pdf-title")).toContainText(f.properties.ref);
+  await expect(page.locator(".pdf-page canvas").first()).toBeVisible({ timeout: 20_000 });
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pdfview")).toBeHidden();
+});
+
+test("trees: a sheet not on the device is fetched from www.arcgis.com once and kept", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  await routeSheets(page);
+  const hosts: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("arcgis.com")) hosts.push(new URL(r.url()).host);
+  });
+  const f = isolatedTree();
+  await enableTrees(page);
+  await tapTree(page, f);
+  await expect(page.locator(".sheet-desc small")).toContainText("fetched and kept");
+  await page.locator(".sheet-desc").click();
+  await expect(page.locator("#pdfview")).toBeVisible();
+  await expect(page.locator(".pdf-page canvas").first()).toBeVisible({ timeout: 20_000 });
+  expect(await sheetSize(page, f.properties.sheet)).toBe(TINY_PDF.length);
+  // only the CORS-capable host is ever asked, never the council portal
+  expect(hosts.length).toBeGreaterThan(0);
+  expect(hosts.every((h) => h === "www.arcgis.com"), hosts.join(",")).toBe(true);
+  await page.keyboard.press("Escape");
+  // the caption now knows the sheet is local
+  await expect(page.locator(".sheet-desc small")).toContainText("on this device");
+});
+
+test("trees: Offline maps offers all data sheets as one optional download", async ({ page }) => {
+  await page.locator("#btn-downloads").click();
+  const row = page.locator('.dl-item[data-key="treeSheets"]');
+  await expect(row).toContainText("Significant tree data sheets");
+  await expect(row).toContainText(SHEETS_MB);
+  await expect(row.locator(".dl-btn")).toHaveText("Download");
+  await expect(row.locator(".dl-btn")).toBeEnabled();
+  await expect(page.locator("#dl-list")).toContainText("Descriptions & documents");
+  // the About panel names the register and where the sheets come from
+  await closePanel(page);
+  await page.locator("#btn-about").click();
+  await expect(page.locator("#panel")).toContainText("City of Hobart significant tree register");
+  await expect(page.locator("#panel")).toContainText("keeps only on the device");
+});
+
+test("trees: the sheet batch downloads every PDF into OPFS and deletes them again", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  await routeSheets(page);
+  const ids = Object.keys(TREES.sheets);
+  // an empty shell (interrupted copy fallback) is not "on the device": the
+  // row still offers Download and the batch fetches that sheet for real
+  await page.evaluate(async (id) => {
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle("trees", { create: true });
+    await (await (await dir.getFileHandle(id + ".pdf", { create: true })).createWritable()).close();
+  }, ids[0]);
+  await page.locator("#btn-downloads").click();
+  const row = page.locator('.dl-item[data-key="treeSheets"]');
+  await expect(row.locator(".dl-btn")).toHaveText("Download");
+  await row.locator(".dl-btn").click();
+  await expect(row.locator(".dl-btn")).toHaveText("Cancel");
+  await expect(row.locator(".dl-status")).toContainText(new RegExp(`sheet \\d+ of ${SHEET_COUNT}`));
+  await expect(row.locator(".dl-status")).toHaveText("✓ downloaded", { timeout: 60_000 });
+  await expect(row.locator(".dl-btn")).toHaveText("Delete");
+  expect(await sheetSize(page, ids[0])).toBe(TINY_PDF.length);
+  expect(await sheetSize(page, ids[ids.length - 1])).toBe(TINY_PDF.length);
+  await closePanel(page);
+  await page.locator("#btn-downloads").click();
+  await expect(page.locator('.dl-item[data-key="treeSheets"] .dl-btn')).toHaveText("Delete");
+  await page.locator('.dl-item[data-key="treeSheets"] .dl-btn').click();
+  await expect(page.locator('.dl-item[data-key="treeSheets"] .dl-btn')).toHaveText("Download");
+  expect(await sheetSize(page, ids[0])).toBeNull();
+});
+
+test("trees: Cancel pauses the sheet batch and Resume continues where it stopped", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  let served = 0;
+  await page.route(SHEET_ROUTE, async (route) => {
+    served++;
+    await new Promise((r) => setTimeout(r, served <= 3 ? 10 : 400)); // slow after a few
+    // the request in flight at Cancel time is gone by the time this fires
+    await route.fulfill({ status: 200, contentType: "application/pdf", body: Buffer.from(TINY_PDF) }).catch(() => {});
+  });
+  await page.locator("#btn-downloads").click();
+  const row = page.locator('.dl-item[data-key="treeSheets"]');
+  await row.locator(".dl-btn").click();
+  await expect(row.locator(".dl-status")).toContainText(new RegExp(`sheet [4-9] of ${SHEET_COUNT}`), { timeout: 15_000 });
+  await row.locator(".dl-btn", { hasText: "Cancel" }).click();
+  await expect(row.locator(".dl-btn:not(.dl-secondary)")).toHaveText("Resume");
+  await expect(row.locator(".dl-status")).toContainText("paused");
+  await expect(row.locator(".dl-secondary")).toHaveText("Delete"); // a half batch stays deletable
+  const before = served;
+  // reopening the panel finds the paused state again (no job running)
+  await closePanel(page);
+  await page.locator("#btn-downloads").click();
+  await expect(row.locator(".dl-btn:not(.dl-secondary)")).toHaveText("Resume");
+  // ...worded as what is there, not as a pause (a single tap-fetched sheet
+  // reaches this state without anything having been paused)
+  await expect(row).toContainText(new RegExp(`\\d+ MB of ${SHEETS_MB} on this device`));
+  await expect(row).not.toContainText("paused");
+  // Resume skips what is already on the device
+  await page.unroute(SHEET_ROUTE);
+  await routeSheets(page);
+  await row.locator(".dl-btn:not(.dl-secondary)").click();
+  await expect(row.locator(".dl-status")).toHaveText("✓ downloaded", { timeout: 60_000 });
+  expect(served).toBe(before); // the slow route saw no further requests
+});
+
+test("trees: a withdrawn sheet (HTTP 400 + HTML) is skipped and remembered; a tap re-checks it", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  const f = isolatedTree();
+  const goneId = f.properties.sheet;
+  let goneNow = true;
+  // ArcGIS answers a removed item with 400 and an HTML page (verified live), not 404
+  await page.route(SHEET_ROUTE, (route) =>
+    goneNow && route.request().url().includes(goneId)
+      ? route.fulfill({ status: 400, contentType: "text/html", body: "<html><body>Item does not exist</body></html>" })
+      : route.fulfill({ status: 200, contentType: "application/pdf", body: Buffer.from(TINY_PDF) }),
+  );
+  await page.locator("#btn-downloads").click();
+  const row = page.locator('.dl-item[data-key="treeSheets"]');
+  await row.locator(".dl-btn").click();
+  // the batch marches past the withdrawn sheet and completes
+  await expect(row.locator(".dl-status")).toHaveText("✓ downloaded · 1 sheet no longer published", { timeout: 60_000 });
+  await expect(row.locator(".dl-btn")).toHaveText("Delete");
+  expect(await sheetSize(page, goneId)).toBeNull();
+  const gone = () => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("treeSheetsGone") ?? "{}")));
+  expect(await gone()).toEqual([goneId]);
+  // a reopened panel still counts the collection as complete
+  await closePanel(page);
+  await page.locator("#btn-downloads").click();
+  await expect(row.locator(".dl-btn")).toHaveText("Delete");
+  await expect(row.locator(".dl-status")).toContainText("1 sheet no longer published");
+  await closePanel(page);
+  // the card says why the sheet is missing, and a tap tries once more —
+  // with the real reason in the alert, not the "open it once while online" wording
+  const alerts: string[] = [];
+  page.on("dialog", (d) => {
+    alerts.push(d.message());
+    void d.dismiss();
+  });
+  await enableTrees(page);
+  await tapTree(page, f);
+  await expect(page.locator(".sheet-desc small")).toContainText("not published by the council any more");
+  await page.locator(".sheet-desc").click();
+  await expect.poll(() => alerts.length).toBe(1);
+  expect(alerts[0]).toContain("no longer published by the council");
+  await expect(page.locator("#pdfview")).toBeHidden();
+  // republished: the same tap fetches it and forgets the mark
+  goneNow = false;
+  await page.locator(".sheet-desc").click();
+  await expect(page.locator("#pdfview")).toBeVisible();
+  expect(await sheetSize(page, goneId)).toBe(TINY_PDF.length);
+  expect(await gone()).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pdfview")).toBeHidden();
+  await page.locator("#btn-downloads").click();
+  await expect(row.locator(".dl-status")).toHaveText("✓ downloaded");
+});
+
+test("trees: dismissing the card while its sheet is fetching aborts it — no viewer, no alert", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  let requests = 0;
+  await page.route(SHEET_ROUTE, async (route) => {
+    requests++;
+    await new Promise((r) => setTimeout(r, 3000));
+    await route.fulfill({ status: 200, contentType: "application/pdf", body: Buffer.from(TINY_PDF) }).catch(() => {});
+  });
+  const alerts: string[] = [];
+  page.on("dialog", (d) => {
+    alerts.push(d.message());
+    void d.dismiss();
+  });
+  const f = isolatedTree();
+  await enableTrees(page);
+  await tapTree(page, f);
+  await page.locator(".sheet-desc").click();
+  await expect(page.locator(".sheet-desc small")).toContainText("fetching…");
+  await expect.poll(() => requests).toBe(1);
+  await page.keyboard.press("Escape"); // closes the card -> aborts the fetch
+  await expect(page.locator("#sheet")).toBeHidden();
+  await page.waitForTimeout(3500);
+  await expect(page.locator("#pdfview")).toBeHidden();
+  expect(alerts).toEqual([]);
+  expect(await sheetSize(page, f.properties.sheet)).toBeNull();
+});
+
+test("trees: of two dots inside one tap box the nearest answers", async ({ page }) => {
+  await enableTrees(page);
+  const [a, b] = closeTreePair();
+  for (const f of [a, b, a]) {
+    await tapTree(page, f);
+    await expect(page.locator("#sheet .sheet-code")).toHaveText(f.properties.ref);
+  }
+});
+
+test("trees: a vegetation card survives the trees toggle; a tree card survives an overlay switch", async ({ page }) => {
+  const viewport = page.viewportSize()!;
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  const sheet = page.locator("#sheet");
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toHaveAttribute("data-kind", "veg");
+  await enableTrees(page); // flips `trees` — not this card's concern
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toHaveAttribute("data-kind", "veg");
+  await tapTree(page, isolatedTree());
+  await expect(sheet).toHaveAttribute("data-kind", "tree");
+  await chooseLayer(page, "overlay", "geo"); // a tree card does not depend on the overlay
+  await closePanel(page);
+  await expect(sheet).toBeVisible();
+  await page.locator("#btn-layers").click();
+  await page.locator('.lay-row[data-toggle="trees"]').click(); // trees off: the card must go with its dots
+  await closePanel(page);
+  await expect(sheet).toBeHidden();
 });

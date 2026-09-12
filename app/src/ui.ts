@@ -7,6 +7,7 @@ import {
   DETAIL_LEVELS,
   RASTER_MAXZOOM,
   SEASON_KEYS,
+  TREE_SHEET_DIR,
   packOf,
   seasonLabel,
   type RasterKey,
@@ -24,9 +25,11 @@ import {
   type BBox,
 } from "./areas";
 import {
+  QUOTA_MARGIN,
   activeDownload,
   deleteFile,
   download,
+  listDir,
   opfsFile,
   partialBytes,
   storageInfo,
@@ -35,6 +38,7 @@ import {
   COMMUNITIES,
   GEOLOGY_UNITS,
   PRE1750_UNITS,
+  TREES,
   type BaseMode,
   type LayerState,
   type OverlayMode,
@@ -42,6 +46,16 @@ import {
 } from "./style";
 import { GEO_CHIPS, PRE_CHIPS } from "./chips";
 import { refreshArchives, refreshRasterTiles, seasonAt, status, tileAt } from "./protocol";
+import {
+  SHEET_IDS,
+  SHEETS_TOTAL_BYTES,
+  SheetError,
+  clearGoneSheets,
+  fetchSheet,
+  goneSheets,
+  markSheetGone,
+  sheetPath,
+} from "./sheets";
 import f2f from "./generated/f2f_index.json";
 
 const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page: number }> };
@@ -80,7 +94,7 @@ interface LayerAccess {
 }
 let layers: LayerAccess = {
   map: null,
-  get: () => ({ base: "topo", cutoff: SEASON_KEYS.length - 1, overlay: "veg", strength: "full" }),
+  get: () => ({ base: "topo", cutoff: SEASON_KEYS.length - 1, overlay: "veg", strength: "full", trees: false }),
   set: () => {},
   reapply: () => {},
 };
@@ -103,16 +117,22 @@ const panel = () => document.getElementById("panel")!;
 const closeHooks: (() => void)[] = [];
 export function closePanel(): void {
   panel().hidden = true;
-  panel().classList.remove("see-through");
+  panel().className = "";
   for (const h of closeHooks.splice(0)) h();
 }
 export const isPanelOpen = (): boolean => !panel().hidden;
-function openPanel(html: string): HTMLElement {
+/** Runs when this panel closes or another replaces it (one-shot). */
+export function onPanelClose(h: () => void): void {
+  closeHooks.push(h);
+}
+/** `cls` is a layout variant on #panel ("search" = full-height takeover);
+ * see-through is added by callers after the fact. */
+export function openPanel(html: string, cls = ""): HTMLElement {
   for (const h of closeHooks.splice(0)) h(); // a panel replacing another
   const el = panel();
   el.innerHTML = `<div class="panel-inner" role="dialog" aria-modal="true"><div class="handle"></div><button class="panel-close" aria-label="Close">×</button>${html}</div>`;
   el.hidden = false;
-  el.classList.remove("see-through");
+  el.className = cls;
   el.querySelector<HTMLButtonElement>(".panel-close")!.onclick = closePanel;
   return el;
 }
@@ -150,6 +170,7 @@ const ICONS = {
   pre: I('<path d="M12 21v-7"/><path d="M12 14C12 10 9 7.5 4.5 7.5 4.5 12 7.5 14 12 14Z"/><path d="M12 14c0-4 3-6.5 7.5-6.5 0 4.5-3 6.5-7.5 6.5Z"/>'),
   geo: I('<path d="M3 8c3-2.5 6 1.5 9-.5s6-2 9-.5"/><path d="M3 13c3-2.5 6 1.5 9-.5s6-2 9-.5"/><path d="M3 18c3-2.5 6 1.5 9-.5s6-2 9-.5"/>'),
   off: I('<circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/>'),
+  trees: I('<path d="M12 22v-6"/><path d="M12 2 7 9.5h2.5L6 16h12l-3.5-6.5H17Z"/>'),
 };
 
 const BASE_ROWS: { base: BaseMode; label: string; hint: string; icon: string }[] = [
@@ -178,8 +199,8 @@ function baseStatus(base: BaseMode): string {
   }
   return status.rasterLocal[base] ? "✓ offline" : STREAMS;
 }
-const rowHtml = (attrs: string, on: boolean, icon: string, label: string, hint: string, stat: string) =>
-  `<button class="lay-row ${on ? "on" : ""}" role="radio" aria-checked="${on}" ${attrs}>${icon}
+const rowHtml = (attrs: string, on: boolean, icon: string, label: string, hint: string, stat: string, role = "radio") =>
+  `<button class="lay-row ${on ? "on" : ""}" role="${role}" aria-checked="${on}" ${attrs}>${icon}
     <span class="lay-text"><b>${esc(label)}</b><small>${esc(hint)}</small><small class="lay-status">${esc(stat)}</small></span></button>`;
 
 export function openLayers(): void {
@@ -211,7 +232,17 @@ export function openLayers(): void {
       ),
     ).join("")}</div>
     <h3 class="lay-h">Overlay strength</h3>
-    <div id="lay-strength">${strengthHtml(s)}</div>`);
+    <div id="lay-strength">${strengthHtml(s)}</div>
+    <h3 class="lay-h">Also show</h3>
+    <div class="lay-group" role="group" aria-label="Also show">${rowHtml(
+      'data-toggle="trees"',
+      s.trees,
+      ICONS.trees,
+      "Significant trees (Hobart)",
+      "City of Hobart register — dots and groups; tap one for its data sheet",
+      "",
+      "checkbox",
+    )}</div>`);
   el.classList.add("see-through"); // choices preview live on the map behind
 
   const inner = el.querySelector<HTMLElement>(".panel-inner")!;
@@ -255,6 +286,11 @@ export function openLayers(): void {
       b.classList.toggle("on", on);
       b.setAttribute("aria-checked", String(on));
     }
+    for (const b of inner.querySelectorAll<HTMLElement>(".lay-row[data-toggle]")) {
+      const on = b.dataset.toggle === "trees" && st.trees;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-checked", String(on));
+    }
     inner.querySelector<HTMLElement>("#lay-slider")!.hidden = st.base !== "seasons";
     inner.querySelector<HTMLElement>("#lay-cutoff")!.textContent = seasonLabel(st.cutoff);
     range.value = String(st.cutoff);
@@ -264,6 +300,7 @@ export function openLayers(): void {
     const row = (ev.target as HTMLElement).closest<HTMLElement>(".lay-row");
     if (!row) return;
     if (row.dataset.base) layers.set({ base: row.dataset.base as BaseMode });
+    if (row.dataset.toggle === "trees") layers.set({ trees: !layers.get().trees });
     if (row.dataset.overlay) {
       layers.set({ overlay: row.dataset.overlay as OverlayMode });
       // the strength options depend on the overlay (pre-1750 has no outlines)
@@ -295,6 +332,61 @@ export function openLayers(): void {
 
 const chapters = [...new Set(Object.values(F2F.index).map((e) => e.file))];
 
+/** What the panel needs to know about a download in progress, whether it
+ * is one archive (storage.ts inflight) or a multi-file job (below). */
+interface Inflight {
+  status: () => string;
+  attach: (cb: () => void) => void;
+  cancel: () => void;
+  promise: Promise<void>;
+}
+
+// Multi-file downloads (F2F chapters, tree sheets): one job per item key,
+// module-level like storage.ts's inflight map so a reopened panel finds it
+// again, shows Cancel and re-attaches for progress + completion.
+interface Job {
+  controller: AbortController;
+  promise: Promise<void>;
+  message: string;
+  listeners: Set<() => void>;
+}
+const jobs = new Map<string, Job>();
+const PAUSED = "paused — tap the button to continue";
+function runJob(
+  key: string,
+  body: (signal: AbortSignal, report: (msg: string) => void) => Promise<void>,
+  onReport?: (msg: string) => void,
+): Promise<void> {
+  const existing = jobs.get(key);
+  if (existing) return existing.promise;
+  const controller = new AbortController();
+  const job: Job = { controller, promise: undefined as unknown as Promise<void>, message: "", listeners: new Set() };
+  const report = (msg: string) => {
+    job.message = msg;
+    onReport?.(msg);
+    for (const cb of job.listeners) cb();
+  };
+  job.promise = body(controller.signal, report)
+    .catch((e: unknown) => {
+      // a Cancel surfaces as whatever the aborted await threw — normalise
+      if (controller.signal.aborted) throw new Error(PAUSED);
+      throw e;
+    })
+    .finally(() => jobs.delete(key));
+  jobs.set(key, job);
+  return job.promise;
+}
+function activeJob(key: string): Inflight | null {
+  const j = jobs.get(key);
+  if (!j) return null;
+  return {
+    status: () => j.message,
+    attach: (cb) => j.listeners.add(cb),
+    cancel: () => j.controller.abort(),
+    promise: j.promise,
+  };
+}
+
 interface Item {
   key: string;
   section: string;
@@ -308,13 +400,33 @@ interface Item {
   update: boolean; // installed, but the server archive differs (rebuilt)
   action: (report: (msg: string) => void) => Promise<void>;
   remove: () => Promise<void>;
+  /** multi-file items: the running job, if any (single archives are
+   * looked up through storage.ts's activeDownload instead) */
+  busy?: () => Inflight | null;
+  /** multi-file items: bytes already on the device (for "… on this device") */
+  partialBytes?: () => Promise<number>;
+  /** appended to "✓ downloaded" (e.g. sheets the council has withdrawn) */
+  presentNote?: () => string;
 }
+const inflightOf = (it: Item): Inflight | null => {
+  if (it.busy) return it.busy();
+  if (!it.archive) return null;
+  const a = activeDownload(it.archive);
+  return a && {
+    status: () => fmtProgress(a.progress),
+    attach: (cb) => a.attach(() => cb()),
+    cancel: a.cancel,
+    promise: a.promise,
+  };
+};
+const refreshPartial = (it: Item): Promise<number> =>
+  it.partialBytes ? it.partialBytes() : it.archive ? partialBytes(it.archive) : Promise.resolve(0);
 
 const SECTION_TITLES: Record<string, string> = {
   overlays: "Overlays",
   base: "Base maps",
   seasons: "Aerial photos by season",
-  text: "Descriptions",
+  text: "Descriptions & documents",
 };
 
 export async function openDownloads(): Promise<void> {
@@ -386,7 +498,13 @@ export async function openDownloads(): Promise<void> {
     await archiveItem(key, "seasons", p.label, p.hint, p.file);
   }
 
-  const f2fPresent = (await Promise.all(chapters.map((c) => opfsFile("f2f/" + c)))).every(Boolean);
+  // bytes of the chapters already on the device (one directory walk)
+  const f2fPartial = async () => {
+    const have = await listDir("f2f");
+    return chapters.reduce((sum, c) => sum + (have.get(c) ?? 0), 0);
+  };
+  const f2fHave = await listDir("f2f");
+  const f2fPresent = chapters.every((c) => (f2fHave.get(c) ?? 0) > 0);
   items.push({
     key: "f2f",
     section: "text",
@@ -395,18 +513,143 @@ export async function openDownloads(): Promise<void> {
     archive: null,
     bytes: 37e6,
     present: f2fPresent,
-    partial: 0,
+    partial: f2fPresent ? 0 : chapters.reduce((sum, c) => sum + (f2fHave.get(c) ?? 0), 0),
     update: false,
-    action: async (report) => {
-      if (!F2F_PROXY) throw new Error("not configured yet");
-      for (let i = 0; i < chapters.length; i++) {
-        report(`chapter ${i + 1} of ${chapters.length}`);
-        if (await opfsFile("f2f/" + chapters[i])) continue;
-        await download(`${F2F_PROXY}/${chapters[i]}`, "f2f/" + chapters[i]);
-      }
-    },
+    busy: () => activeJob("f2f"),
+    partialBytes: f2fPartial,
+    action: (report) =>
+      runJob(
+        "f2f",
+        async (signal, rep) => {
+          if (!F2F_PROXY) throw new Error("not configured yet");
+          for (let i = 0; i < chapters.length; i++) {
+            if (signal.aborted) throw new Error(PAUSED);
+            rep(`chapter ${i + 1} of ${chapters.length}`);
+            const name = "f2f/" + chapters[i];
+            if (await opfsFile(name)) continue;
+            // Cancel reaches the chapter in flight through its own controller
+            const p = download(`${F2F_PROXY}/${chapters[i]}`, name);
+            const onAbort = () => activeDownload(name)?.cancel();
+            signal.addEventListener("abort", onAbort, { once: true });
+            try {
+              await p;
+            } finally {
+              signal.removeEventListener("abort", onAbort);
+            }
+          }
+        },
+        report,
+      ),
     remove: async () => {
       for (const c of chapters) await deleteFile("f2f/" + c);
+    },
+  });
+
+  // Hobart significant-tree data sheets: 282 council PDFs from arcgis.com,
+  // one file each under trees/. Optional — a tap fetches a single sheet
+  // while online; this is the "take them all up the mountain" path.
+  // "Complete" = every sheet is on the device OR the council has withdrawn
+  // it (sheets.ts gone-set; ArcGIS answers those with HTTP 400 + HTML, and
+  // one such item must not brick the whole batch for ever).
+  const sheetsHave = await listDir(TREE_SHEET_DIR);
+  // a zero-byte file is an interrupted write's shell, not a sheet
+  const sheetOnDevice = (have: Map<string, number>, id: string) => (have.get(id + ".pdf") ?? 0) > 0;
+  const sheetsPartial = (have: Map<string, number>) =>
+    SHEET_IDS.reduce((sum, id) => sum + (sheetOnDevice(have, id) ? TREES.sheets[id].bytes : 0), 0);
+  const sheetsPresent = (have: Map<string, number>) => {
+    const gone = goneSheets();
+    return SHEET_IDS.every((id) => sheetOnDevice(have, id) || id in gone);
+  };
+  // withdrawn ids (a successful fetch always clears the mark, so "marked"
+  // already means "not on the device"); read live — a reopened panel must
+  // not show a count snapshotted before the batch finished
+  const sheetsGoneCount = () => {
+    const gone = goneSheets();
+    return SHEET_IDS.filter((id) => id in gone).length;
+  };
+  const present0 = sheetsPresent(sheetsHave);
+  // Several withdrawals IN A ROW are not withdrawals: a captive portal (or a
+  // 403 wall) answers every request the same way. Undo those marks and stop
+  // — otherwise a login page would file all 282 sheets as "gone" and the row
+  // would read "✓ downloaded".
+  const GONE_STREAK_LIMIT = 5;
+  items.push({
+    key: "treeSheets",
+    section: "text",
+    label: "Significant tree data sheets",
+    hint: "City of Hobart — one PDF per listed tree; sheets also fetch on tap while online",
+    archive: null,
+    bytes: SHEETS_TOTAL_BYTES,
+    present: present0,
+    partial: present0 ? 0 : sheetsPartial(sheetsHave),
+    update: false,
+    busy: () => activeJob("treeSheets"),
+    partialBytes: async () => sheetsPartial(await listDir(TREE_SHEET_DIR)),
+    presentNote: () => {
+      const n = sheetsGoneCount();
+      return n ? `${n} sheet${n === 1 ? "" : "s"} no longer published` : "";
+    },
+    action: (report) =>
+      runJob(
+        "treeSheets",
+        async (signal, rep) => {
+          const have = await listDir(TREE_SHEET_DIR);
+          const n = SHEET_IDS.length;
+          const total = SHEETS_TOTAL_BYTES;
+          let done = sheetsPartial(have);
+          // preflight like storage.ts does per archive: 282 small writes
+          // would otherwise fail one by one at the quota wall
+          const { usage, quota } = await storageInfo();
+          const remaining = total - done;
+          if (quota && quota - usage < remaining + QUOTA_MARGIN) {
+            throw new Error(
+              `Not enough free space — this needs about ${fmtMB(remaining)} free. ` +
+                "Delete something and try again.",
+            );
+          }
+          let streak = 0;
+          const skipped: string[] = [];
+          const retried = new Set<string>();
+          for (let i = 0; i < n; i++) {
+            const id = SHEET_IDS[i];
+            if (sheetOnDevice(have, id)) continue;
+            if (signal.aborted) throw new Error(PAUSED);
+            rep(`sheet ${i + 1} of ${n} · ${fmtMB(done)} of ${fmtMB(total)}`);
+            try {
+              await fetchSheet(id, signal);
+            } catch (e) {
+              // fetchSheet dedupes per id: this may have JOINED a tap's fetch
+              // that the card's dismissal aborted — not our Cancel, so fetch
+              // the sheet again ourselves (the map entry is gone by now)
+              if (e instanceof SheetError && e.kind === "aborted" && !signal.aborted && !retried.has(id)) {
+                retried.add(id);
+                i--;
+                continue;
+              }
+              // network loss / our abort / 5xx stop the batch as before; a
+              // 4xx or a non-PDF body is "the council took this one down":
+              // remember it, skip it, keep going
+              if (!(e instanceof SheetError) || (e.kind !== "gone" && e.kind !== "notpdf")) throw e;
+              markSheetGone(id, true);
+              skipped.push(id);
+              if (++streak >= GONE_STREAK_LIMIT) {
+                for (const s of skipped.slice(-streak)) markSheetGone(s, false);
+                throw new Error(
+                  "Several sheets in a row weren't PDFs — a Wi-Fi login page may be in the way. " +
+                    "Try again on another network.",
+                );
+              }
+              continue;
+            }
+            streak = 0;
+            done += TREES.sheets[id].bytes;
+          }
+        },
+        report,
+      ),
+    remove: async () => {
+      for (const id of SHEET_IDS) await deleteFile(sheetPath(id));
+      clearGoneSheets(); // a fresh download re-checks withdrawn ids
     },
   });
 
@@ -417,8 +660,7 @@ export async function openDownloads(): Promise<void> {
   // "Download all seasons" in progress (one batch at a time; Cancel ends it).
   let batch = false;
   let batchCancelled = false;
-  const downloadable = (it: Item) =>
-    it.bytes !== null && (!it.present || it.update) && !(it.archive && activeDownload(it.archive));
+  const downloadable = (it: Item) => it.bytes !== null && (!it.present || it.update) && !inflightOf(it);
 
   const liveStatus = (key: string): HTMLElement | null =>
     list.querySelector(`[data-key="${key}"] .dl-status`);
@@ -428,7 +670,7 @@ export async function openDownloads(): Promise<void> {
     let section = "";
     list.innerHTML = items
       .map((it) => {
-        const inflight = it.archive ? activeDownload(it.archive) : null;
+        const inflight = inflightOf(it);
         const btn = inflight ? "Cancel"
           : it.update ? "Update"
           : it.present ? "Delete"
@@ -436,13 +678,17 @@ export async function openDownloads(): Promise<void> {
           : "Download";
         const status = errors.get(it.key)
           ?? (inflight
-            ? fmtProgress(inflight.progress)
+            ? inflight.status() || "starting…"
             : it.update
               ? `✓ downloaded · newer version available${it.bytes ? " (" + fmtMB(it.bytes) + ")" : ""}`
               : it.present
-                ? "✓ downloaded"
+                ? `✓ downloaded${it.presentNote?.() ? " · " + it.presentNote() : ""}`
                 : it.partial > 0
-                  ? `paused at ${fmtMB(it.partial)}${it.bytes ? " of " + fmtMB(it.bytes) : ""}`
+                  // multi-file items hold usable files (a tap-fetched sheet
+                  // was never "paused"); an archive's chunks are a pause
+                  ? it.partialBytes
+                    ? `${fmtMB(it.partial)}${it.bytes ? " of " + fmtMB(it.bytes) : ""} on this device`
+                    : `paused at ${fmtMB(it.partial)}${it.bytes ? " of " + fmtMB(it.bytes) : ""}`
                   : "");
         const size = it.bytes ? " · " + fmtMB(it.bytes) : it.present ? "" : " · not available yet";
         const disabled = !inflight && !it.present && it.partial === 0 && it.bytes === null && it.key !== "f2f";
@@ -476,12 +722,12 @@ export async function openDownloads(): Promise<void> {
     });
     // any in-flight download must re-render this panel when it settles
     for (const it of items) {
-      const act = it.archive ? activeDownload(it.archive) : null;
-      if (act && it.archive && !watched.has(it.archive)) {
-        watched.add(it.archive);
-        act.attach((pr) => {
+      const act = inflightOf(it);
+      if (act && !watched.has(it.key)) {
+        watched.add(it.key);
+        act.attach(() => {
           const stat = liveStatus(it.key);
-          if (stat && !errors.get(it.key)) stat.textContent = fmtProgress(pr);
+          if (stat && !errors.get(it.key)) stat.textContent = act.status();
         });
         void act.promise
           .then(() => {
@@ -490,11 +736,11 @@ export async function openDownloads(): Promise<void> {
             it.update = false;
           })
           .catch(async (e: Error) => {
-            it.partial = it.archive ? await partialBytes(it.archive) : 0;
+            it.partial = await refreshPartial(it);
             errors.set(it.key, e.message);
           })
           .finally(() => {
-            if (it.archive) watched.delete(it.archive);
+            watched.delete(it.key);
             render();
           });
       }
@@ -530,7 +776,7 @@ export async function openDownloads(): Promise<void> {
       it.present = true;
       it.partial = 0;
     } catch (e) {
-      it.partial = it.archive ? await partialBytes(it.archive) : 0;
+      it.partial = await refreshPartial(it);
       errors.set(it.key, e instanceof Error ? e.message : String(e));
     }
     render();
@@ -565,9 +811,11 @@ export async function openDownloads(): Promise<void> {
     if (!it) return;
     errors.delete(it.key);
 
-    const act = it.archive ? activeDownload(it.archive) : null;
+    const act = inflightOf(it);
     if (act) {
-      batchCancelled = true;
+      // only a season's Cancel ends "Download all seasons" — cancelling a
+      // sheet batch or an overlay must leave that batch marching on
+      if (it.section === "seasons") batchCancelled = true;
       act.cancel();
       await act.promise.catch(() => {}); // settles via the watcher above
       return;
@@ -947,6 +1195,7 @@ export function openAbout(): void {
     <p>Topographic Basemap from theLIST © State of Tasmania<br>
     TASVEG 5.0 from theLIST © State of Tasmania<br>
     Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania<br>
+    Place names and street addresses: Nomenclature, Transport Segments, Named Feature Extents, Locality areas and Address Points from theLIST © State of Tasmania<br>
     <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a></p>
     <p>Aerial Photo Basemap and seasonal aerial photos from theLIST © State of Tasmania<br>
     Tasmap 1:25,000 / 100,000 / 250,000 / 500,000 sheets from theLIST © State of Tasmania<br>
@@ -957,6 +1206,10 @@ export function openAbout(): void {
     <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> —
     an estimate of what grew where before European clearing, modelled from
     remnant vegetation and historical records.</p>
+    <p>Significant trees: City of Hobart significant tree register (ArcGIS
+    Online, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
+    The per-tree data sheets are City of Hobart documents this device fetches
+    from arcgis.com and keeps only on the device.</p>
     <p>Community descriptions: Kitchener &amp; Harris (2013), <i>From Forest to
     Fjaeldmark</i>, Ed. 2, DPIPWE — © Government of Tasmania.</p>
     <p class="muted">TASVEG mapping boundaries are indicative only.
