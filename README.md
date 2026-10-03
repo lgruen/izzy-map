@@ -58,6 +58,9 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
 - Topographic Basemap from [theLIST](https://www.thelist.tas.gov.au)
   © State of Tasmania —
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
+- Hillshade from [theLIST](https://www.thelist.tas.gov.au) © State of
+  Tasmania — [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
+  (drawn by the app as translucent relief shading)
 - TASVEG 5.0 from [theLIST](https://listdata.thelist.tas.gov.au/opendata/)
   © State of Tasmania —
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)

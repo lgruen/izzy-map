@@ -94,7 +94,7 @@ interface LayerAccess {
 }
 let layers: LayerAccess = {
   map: null,
-  get: () => ({ base: "topo", cutoff: SEASON_KEYS.length - 1, overlay: "veg", strength: "full", trees: false }),
+  get: () => ({ base: "topo", cutoff: SEASON_KEYS.length - 1, overlay: "veg", strength: "full", trees: false, relief: false }),
   set: () => {},
   reapply: () => {},
 };
@@ -171,6 +171,7 @@ const ICONS = {
   geo: I('<path d="M3 8c3-2.5 6 1.5 9-.5s6-2 9-.5"/><path d="M3 13c3-2.5 6 1.5 9-.5s6-2 9-.5"/><path d="M3 18c3-2.5 6 1.5 9-.5s6-2 9-.5"/>'),
   off: I('<circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/>'),
   trees: I('<path d="M12 22v-6"/><path d="M12 2 7 9.5h2.5L6 16h12l-3.5-6.5H17Z"/>'),
+  relief: I('<path d="M2 19 9 8l3.5 5.5L15 10l7 9Z"/><path d="M9 8l-1.5 11M15 10l-1 9" opacity=".5"/>'),
 };
 
 const BASE_ROWS: { base: BaseMode; label: string; hint: string; icon: string }[] = [
@@ -235,6 +236,14 @@ export function openLayers(): void {
     <div id="lay-strength">${strengthHtml(s)}</div>
     <h3 class="lay-h">Also show</h3>
     <div class="lay-group" role="group" aria-label="Also show">${rowHtml(
+      'data-toggle="relief"',
+      s.relief,
+      ICONS.relief,
+      "Relief shading",
+      "hill shading — ridges and valleys stand out",
+      status.rasterLocal.hillshade ? "✓ offline" : STREAMS,
+      "checkbox",
+    )}${rowHtml(
       'data-toggle="trees"',
       s.trees,
       ICONS.trees,
@@ -287,7 +296,7 @@ export function openLayers(): void {
       b.setAttribute("aria-checked", String(on));
     }
     for (const b of inner.querySelectorAll<HTMLElement>(".lay-row[data-toggle]")) {
-      const on = b.dataset.toggle === "trees" && st.trees;
+      const on = (b.dataset.toggle === "trees" && st.trees) || (b.dataset.toggle === "relief" && st.relief);
       b.classList.toggle("on", on);
       b.setAttribute("aria-checked", String(on));
     }
@@ -301,6 +310,7 @@ export function openLayers(): void {
     if (!row) return;
     if (row.dataset.base) layers.set({ base: row.dataset.base as BaseMode });
     if (row.dataset.toggle === "trees") layers.set({ trees: !layers.get().trees });
+    if (row.dataset.toggle === "relief") layers.set({ relief: !layers.get().relief });
     if (row.dataset.overlay) {
       layers.set({ overlay: row.dataset.overlay as OverlayMode });
       // the strength options depend on the overlay (pre-1750 has no outlines)
@@ -489,6 +499,7 @@ export async function openDownloads(): Promise<void> {
     ["geology", "Geology map", "what rock am I standing on? Statewide 1:500,000 (Mineral Resources Tasmania); boundaries approximate"],
   ] as const)
     await archiveItem(key, "overlays", label, hint, ARCHIVES[key]);
+  await archiveItem("hillshade", "overlays", packOf("hillshade").label, packOf("hillshade").hint, packOf("hillshade").file);
   for (const key of BASE_KEYS) {
     const p = packOf(key);
     await archiveItem(key, "base", p.label, p.hint, p.file);
@@ -841,6 +852,7 @@ const LAYER_CHOICES: { id: string; label: string; hint: string; keys: readonly R
   { id: "seasons", label: "Aerial photos by season", hint: "all seasons, where flown", keys: SEASON_KEYS },
   { id: "tasmap", label: "Paper map", hint: "1:25,000 sheets, to zoom 16", keys: ["tasmap"] },
   { id: "topo", label: "Topographic map", hint: "to zoom 18", keys: ["topo"] },
+  { id: "hillshade", label: "Relief shading", hint: "to zoom 18 — finest where LiDAR has been flown", keys: ["hillshade"] },
 ];
 
 const areaLayerLabel = (meta: AreaMeta): string =>
@@ -1194,6 +1206,7 @@ export function openAbout(): void {
     following — close the app or press the side button to save battery.</p>
     <p>Topographic Basemap from theLIST © State of Tasmania<br>
     TASVEG 5.0 from theLIST © State of Tasmania<br>
+    Hillshade from theLIST © State of Tasmania (drawn as translucent relief shading)<br>
     Geology 1:500,000 from Mineral Resources Tasmania © State of Tasmania<br>
     Place names and street addresses: Nomenclature, Transport Segments, Named Feature Extents, Locality areas and Address Points from theLIST © State of Tasmania<br>
     <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a></p>

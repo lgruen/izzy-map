@@ -125,6 +125,17 @@
       "attribution": "Tasmap from theLIST (CC BY-NC-ND 3.0 AU) © State of Tasmania",
       "licence": "CC BY-NC-ND 3.0 AU",
       "_why": "No descendant pruning: TasmapRaster switches source sheets per zoom (500K/250K -> 100K at z13-14 -> 25K at z15), so a blank z14 parent does NOT imply blank z15 children — the build's own validation caught 2/40 pruned z15 tiles with 25K content (2026-09-10). Blank tiles are still dropped per tile; every candidate is requested (~335k, ~30 min with keep-alive)."
+    },
+    {
+      "key": "hillshade",
+      "service": "HillshadeGrey",
+      "file": "hillshade_tas.pmtiles",
+      "ext": "jpg",
+      "maxzoom": 15,
+      "prune": "blank@13",
+      "label": "Relief shading (hillshade)",
+      "attribution": "Hillshade Basemap from theLIST (CC BY 3.0 AU) © State of Tasmania",
+      "licence": "CC BY 3.0 AU"
     }
   ]
 }

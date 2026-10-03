@@ -59,6 +59,7 @@ function loadState(): LayerState {
       if (OVERLAYS.includes(p.overlay as never)) s.overlay = p.overlay!;
       if (STRENGTHS.includes(p.strength as never)) s.strength = p.strength!;
       if (typeof p.trees === "boolean") s.trees = p.trees;
+      if (typeof p.relief === "boolean") s.relief = p.relief;
       return s;
     }
     const mode = localStorage.getItem("overlayMode");
@@ -244,6 +245,7 @@ async function boot(): Promise<void> {
     const missing = [
       ...(overlayMissing() ? [describeOverlay(state.overlay)] : []),
       ...(baseMissing() ? [describeBase(state)] : []),
+      ...(state.relief && !status.rasterLocal.hillshade ? ["Relief shading"] : []),
     ];
     if (missing.length) showPill(`${missing.join(" + ")} — not downloaded yet`, 3000);
   });
@@ -293,7 +295,8 @@ async function boot(): Promise<void> {
   // First-run state: no offline data downloaded yet. Shown regardless of
   // navigator.onLine — a fresh offline launch would otherwise be a blank,
   // unexplained map (and onLine lies on iOS anyway).
-  if (!status.vectorLocal.tasveg && !RASTER_KEYS.some((k) => status.rasterLocal[k])) {
+  // (relief shading alone is not a map — it doesn't count)
+  if (!status.vectorLocal.tasveg && !RASTER_KEYS.some((k) => k !== "hillshade" && status.rasterLocal[k])) {
     const nudge = byId("nudge");
     nudge.hidden = false;
     byId("nudge-text").textContent = navigator.onLine

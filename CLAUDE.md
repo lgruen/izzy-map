@@ -47,6 +47,13 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   LICENSING.md). Coverage/footprint indexes: `Public/Indexes` layers 100
   ("Digital Imagery Mosaic Index": CAP_SEASON, dates, resolution per
   project) and 107 ("Tas Imagery and LiDAR Program": planned captures).
+- Relief shading (verified 2026-10-03): `Basemaps/HillshadeGrey` = grey
+  hillshade, JPEG, z0–18, **CC BY 3.0 AU** (not ND — re-encoding/adapting
+  allowed), from the 30 m state grid + LiDAR where flown (LiDAR areas are a
+  DSM: Hobart shows buildings). Flat land ≈ 235–246, sea ≈ 251–255
+  (constant 1,651–1,658-byte white JPEGs = blank sentinels), slopes away
+  from the NW light darker. `Basemaps/Hillshade` is a colour-tinted
+  (hypsometric) variant, unused.
 - Tasmap scans: `Basemaps/TasmapRaster` (MIXED, z0–16; 500K/250K low zoom,
   100K z13–14, 25K sheets at z15 byte-identical to `Tasmap25K`). CC BY-NC-ND.
   Because each zoom comes from a DIFFERENT scanned series, a blank z14 tile
@@ -216,6 +223,11 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   interrupted part is closed and indexed, not discarded; Delete waits for
   the layer's download to stop first (an open writable makes removeEntry
   fail and would orphan gigabytes).
+- **Relief shading pack:** `python3 pipeline/build_raster.py --pack
+  hillshade` (z0–15, prune blank@13; 2026-10-03: ~20 min at ~200 tiles/s)
+  → `pipeline/upload_r2.sh data/hillshade_tas.pmtiles`. Like topo, don't
+  re-upload unless LIST republished the tiles (a rebuild changes the byte
+  size → every phone is offered a re-download).
 - **Refresh place names / addresses (yearly; address points are
   republished quarterly):** `uv run --with shapely --with pyshp --with
   pyproj python3 pipeline/build_gazetteer.py [--fresh]` (cache
@@ -301,6 +313,15 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 - Wide viewports (≥ 700 px) have NO scrim: the map, toolbar and controls
   stay live beside the card (pan while comparing seasons); close is × or
   Escape. Phones keep the tap-outside scrim.
+- **Relief shading = multiply via alpha.** MapLibre has no blend modes and
+  an opacity-blended grey raster greys the map out. `shadeTile()` in
+  protocol.ts (pack `kind: "shade"`) decodes each grey tile and returns an
+  ImageBitmap of BLACK at alpha 0.4 × (1 − g/247): "over" blending black at
+  alpha a gives map × (1 − a), i.e. an exact multiply, flat ground
+  untouched. Packs/areas keep LIST's bytes; only the render path adapts.
+  The `hillshade` layer sits above the overlay fills (veg colours get
+  shaded) and below every outline/label; it is an "Also show" toggle
+  (`LayerState.relief`), independent of base and overlay.
 - `raster://<key>/{z}/{x}/{y}` resolution: downloaded detailed area →
   local OPFS pack (z ≤ 15) → (seasons) R2 pack → LIST live → blank (z ≤ 15)
   or **throw** (z > 15). Sources run to the service's native max zoom
@@ -507,6 +528,11 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Status log
 
+- 2026-10-03: Relief shading (LIST `HillshadeGrey`, CC BY 3.0 AU) as a
+  statewide z0–15 raster pack + detailed-area layer, shown via an "Also
+  show" toggle over any base/overlay; grey tiles become translucent-black
+  "multiply" bitmaps at render time (`shadeTile`). Google-style terrain
+  look; fixed NW light (movable sun judged a gimmick).
 - 2026-09-12: Offline search + Hobart Significant Trees overlay. Search:
   five LIST datasets (Nomenclature, Transport Segments, Named Feature
   Extents, Locality areas, Address Points; CC BY 3.0 AU) → two committed

@@ -30,7 +30,10 @@ export interface RasterPack {
   maxzoom: number;
   /** typical tile size at z16–18, for detailed-area estimates (measured) */
   meanTileBytes: number;
-  kind: "base" | "season";
+  /** "base"/"shade" = statewide service: streams live while online, a pack
+   * miss outside a local archive's bounds goes live (protocol.ts treats them
+   * alike); "season" = sparse, R2 archive below z15 */
+  kind: "base" | "season" | "shade";
   /** flying-season label, seasons only */
   season?: string;
 }
@@ -66,6 +69,20 @@ export const RASTER_PACKS = {
     maxzoom: 16,
     meanTileBytes: 16_000,
     kind: "base",
+  },
+  // Relief shading: LIST's grey hillshade (CC BY 3.0 AU — derived from the
+  // 30 m state DEM plus LiDAR where flown). Stored verbatim like every pack;
+  // protocol.ts turns each grey tile into a translucent-black "shadow"
+  // bitmap on load (shadeTile), so it darkens whatever base/overlay is under
+  // it instead of greying it out.
+  hillshade: {
+    file: "hillshade_tas.pmtiles",
+    label: "Relief shading",
+    hint: "hill shading that makes ridges and valleys stand out, statewide to zoom 15 — sharpest where LiDAR has been flown. Large!",
+    live: listTile("HillshadeGrey"),
+    maxzoom: 18,
+    meanTileBytes: 15_000,
+    kind: "shade",
   },
   aerial2020: season("2019–20", "Aerial photos 2019–20", "AerialPhoto2020", "aerial_2020.pmtiles"),
   aerial2021: season("2020–21", "Aerial photos 2020–21", "AerialPhoto2021", "aerial_2021.pmtiles"),
@@ -116,6 +133,8 @@ export const ATTRIBUTION_AERIAL =
   '<a href="https://www.thelist.tas.gov.au">Aerial photos from theLIST</a> © State of Tasmania (CC BY-NC-ND 3.0 AU)';
 export const ATTRIBUTION_TASMAP =
   '<a href="https://www.thelist.tas.gov.au">Tasmap from theLIST</a> © State of Tasmania (CC BY-NC-ND 3.0 AU)';
+export const ATTRIBUTION_HILLSHADE =
+  '<a href="https://www.thelist.tas.gov.au">Hillshade from theLIST</a> © State of Tasmania (CC BY 3.0 AU)';
 export const ATTRIBUTION_TASVEG =
   '<a href="https://www.thelist.tas.gov.au">TASVEG 5.0 from theLIST</a> © State of Tasmania (CC BY 3.0 AU)';
 export const ATTRIBUTION_GEOLOGY =

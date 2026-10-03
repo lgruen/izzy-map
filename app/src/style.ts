@@ -12,6 +12,7 @@ import trees from "./generated/trees.json";
 import {
   ATTRIBUTION_AERIAL,
   ATTRIBUTION_GEOLOGY,
+  ATTRIBUTION_HILLSHADE,
   ATTRIBUTION_PRE1750,
   ATTRIBUTION_TASMAP,
   ATTRIBUTION_TASVEG,
@@ -36,6 +37,8 @@ export interface LayerState {
   /** Hobart significant-tree register: an independent "also show" toggle,
    * not an overlay mode — it sits on top of whichever overlay is chosen. */
   trees: boolean;
+  /** relief shading (LIST hillshade) over base + overlay: "also show" too */
+  relief: boolean;
 }
 export const DEFAULT_STATE: LayerState = {
   base: "topo",
@@ -43,6 +46,7 @@ export const DEFAULT_STATE: LayerState = {
   overlay: "veg",
   strength: "full",
   trees: false,
+  relief: false,
 };
 export const BASES: readonly BaseMode[] = ["topo", "tasmap", "aerial", "seasons"];
 export const OVERLAYS: readonly OverlayMode[] = ["veg", "pre", "geo", "off"];
@@ -204,6 +208,7 @@ export function overlayVisibility(s: LayerState): Record<string, boolean> {
     "geology-fill": s.overlay === "geo",
     "geology-outline": s.overlay === "geo",
     "pre1750-fill": s.overlay === "pre",
+    hillshade: s.relief,
     "trees-area-fill": s.trees,
     "trees-area-outline": s.trees,
     "trees-cluster": s.trees,
@@ -245,6 +250,7 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
     aerial: rasterSource("aerial", ATTRIBUTION_AERIAL),
   };
   for (const k of SEASON_KEYS) sources[k] = rasterSource(k, ATTRIBUTION_AERIAL);
+  sources.hillshade = rasterSource("hillshade", ATTRIBUTION_HILLSHADE);
   Object.assign(sources, {
     tasveg: { type: "vector", url: "pmtiles://tasveg", attribution: ATTRIBUTION_TASVEG },
     geology: { type: "vector", url: "pmtiles://geology", attribution: ATTRIBUTION_GEOLOGY },
@@ -295,15 +301,6 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
         paint: { "fill-color": colorMatch(), "fill-opacity": opacity },
       },
       {
-        id: "tasveg-outline",
-        type: "line",
-        source: "tasveg",
-        "source-layer": "tasveg",
-        minzoom: 11,
-        layout: vis(ov["tasveg-outline"]),
-        paint: { "line-color": "#c8c800", "line-width": 1 },
-      },
-      {
         id: "geology-fill",
         type: "fill",
         source: "geology",
@@ -311,15 +308,6 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
         layout: vis(ov["geology-fill"]),
         // official MRT unit colour ships per-feature in the tiles
         paint: { "fill-color": ["get", "color"], "fill-opacity": opacity },
-      },
-      {
-        id: "geology-outline",
-        type: "line",
-        source: "geology",
-        "source-layer": "geology",
-        minzoom: 9,
-        layout: vis(ov["geology-outline"]),
-        paint: { "line-color": "#5a5147", "line-width": 0.8 },
       },
       {
         id: "pre1750-fill",
@@ -330,6 +318,34 @@ export function buildStyle(s: LayerState, local: LocalPacks = {}): StyleSpecific
         // official NVIS class colour ships per-feature in the tiles; no
         // outline layer — the 1-ha cell edges would read as noise
         paint: { "fill-color": ["get", "color"], "fill-opacity": opacity },
+      },
+      // Relief shading: above the overlay fills (so vegetation colours get
+      // shaded too, like a terrain map) but under every line and label.
+      // The tiles arrive as translucent black (protocol.ts shadeTile).
+      {
+        id: "hillshade",
+        type: "raster",
+        source: "hillshade",
+        layout: vis(ov.hillshade),
+        paint: {},
+      },
+      {
+        id: "tasveg-outline",
+        type: "line",
+        source: "tasveg",
+        "source-layer": "tasveg",
+        minzoom: 11,
+        layout: vis(ov["tasveg-outline"]),
+        paint: { "line-color": "#c8c800", "line-width": 1 },
+      },
+      {
+        id: "geology-outline",
+        type: "line",
+        source: "geology",
+        "source-layer": "geology",
+        minzoom: 9,
+        layout: vis(ov["geology-outline"]),
+        paint: { "line-color": "#5a5147", "line-width": 0.8 },
       },
       {
         id: "area-frame",

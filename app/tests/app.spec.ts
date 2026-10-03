@@ -541,7 +541,7 @@ test("wide viewports get side cards; Escape dismisses sheets", async ({ page }) 
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
   await page.locator("#btn-layers").click();
-  await expect(page.locator(".lay-row")).toHaveCount(9); // 4 bases + 4 overlays + trees
+  await expect(page.locator(".lay-row")).toHaveCount(10); // 4 bases + 4 overlays + relief + trees
   if (wide) {
     // no scrim on wide viewports: the toolbar stays live beside the card,
     // so the legend button swaps the card instead of closing it
@@ -1058,6 +1058,88 @@ const sheetSize = (page: Page, id: string) =>
       return null;
     }
   }, id);
+
+// ---------- relief shading ----------
+
+/** Uniform grey-64 JPEG standing in for every LIST hillshade tile. */
+const HILLSHADE_GREY = readFileSync(join(HERE, "fixtures/hillshade_grey.jpg"));
+const routeHillshade = (page: Page) =>
+  page.route(/Basemaps\/HillshadeGrey\/MapServer\/tile\//, (route) =>
+    route.fulfill({ status: 200, contentType: "image/jpeg", body: HILLSHADE_GREY }),
+  );
+
+test("relief shading: grey tiles darken the map like a multiply, under lines and labels, persisted", async ({ page }) => {
+  await routeHillshade(page); // after beforeEach's blockTopoNetwork: wins
+  await page.goto("/?pixels=1");
+  await waitForMapIdle(page);
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x, CENTRE_TILE.y);
+  await chooseLayer(page, "overlay", "off");
+  expect(await vis(page, "hillshade")).toBe("none");
+  const row = page.locator('.lay-row[data-toggle="relief"]');
+  await expect(row).toHaveAttribute("role", "checkbox");
+  await expect(row.locator(".lay-status")).toContainText("not downloaded");
+  await row.click();
+  await expect(row).toHaveAttribute("aria-checked", "true");
+  await closePanel(page);
+  await waitForTiles(page);
+  expect(await vis(page, "hillshade")).toBe("visible");
+  // grey 64 -> black at alpha 0.4 × (1 − 64/247) ≈ 0.30: the topo
+  // background (#eef3f0) is MULTIPLIED by ~0.70 (an opacity blend of the
+  // grey itself would land near 186 instead)
+  const shaded = await pixelAt(page);
+  expect(near(shaded, [167, 171, 169], 8), `shaded pixel ${shaded}`).toBe(true);
+  await expect(page.locator(".maplibregl-ctrl-attrib")).toContainText("Hillshade");
+  // shading sits above the overlay fills, below every outline and label
+  const ids = await page.evaluate(() =>
+    (window as never as { __map: import("maplibre-gl").Map }).__map.getStyle().layers.map((l) => l.id),
+  );
+  for (const fill of ["tasveg-fill", "geology-fill", "pre1750-fill"])
+    expect(ids.indexOf(fill)).toBeLessThan(ids.indexOf("hillshade"));
+  for (const line of ["tasveg-outline", "geology-outline", "tasveg-label"])
+    expect(ids.indexOf(line)).toBeGreaterThan(ids.indexOf("hillshade"));
+  // persists across a reload
+  await page.reload();
+  await waitForMapIdle(page);
+  expect(await vis(page, "hillshade")).toBe("visible");
+  // and toggles off again
+  await page.locator("#btn-layers").click();
+  await page.locator('.lay-row[data-toggle="relief"]').click();
+  await closePanel(page);
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x, CENTRE_TILE.y);
+  await waitForTiles(page);
+  expect(await vis(page, "hillshade")).toBe("none");
+  expect(near(await pixelAt(page), COLOURS.topoBg)).toBe(true);
+});
+
+test("relief shading: a local pack's tiles are shaded, its in-bounds gaps stay clear, no live requests", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  // the NE-quarter blue fixture stands in for the statewide shading pack:
+  // its green channel (80) is the "grey" -> black at alpha 0.4 × (1 − 80/247)
+  await seedOpfs(page, "hillshade_tas.pmtiles", SEASON_2024_FIXTURE);
+  let liveHits = 0;
+  page.on("request", (r) => {
+    if (r.url().includes("/HillshadeGrey/")) liveHits++;
+  });
+  await page.addInitScript(() =>
+    localStorage.setItem("layerState", JSON.stringify({ base: "topo", cutoff: 6, overlay: "off", strength: "full", trees: false, relief: true })),
+  );
+  await page.goto("/?pixels=1");
+  await waitForMapIdle(page);
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x + 2, CENTRE_TILE.y - 2);
+  await waitForTiles(page);
+  const shaded = await pixelAt(page);
+  expect(near(shaded, [174, 177, 175], 8), `shaded pack pixel ${shaded}`).toBe(true);
+  // (live LIST is blocked in tests, so this colour can only come from the
+  // pack.) In the archive's bounds but no tile: a blank, NOT shaded, and
+  // no live request (the boot fly-in view at z16 went live legitimately)
+  liveHits = 0;
+  await jumpToTile(page, CENTRE_TILE.z, CENTRE_TILE.x - 3, CENTRE_TILE.y + 3);
+  await waitForTiles(page);
+  expect(near(await pixelAt(page), COLOURS.topoBg, 4)).toBe(true);
+  expect(liveHits).toBe(0);
+  await page.locator("#btn-layers").click();
+  await expect(page.locator('.lay-row[data-toggle="relief"] .lay-status')).toContainText("offline");
+});
 
 test("trees: data sanity and the layers stay on top of the style", async ({ page }) => {
   for (const f of [...TREES.points.features, ...TREES.areas.features]) {

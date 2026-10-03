@@ -31,6 +31,14 @@ this document over-read it; verified 2026-09-10.
   (`exportTilesAllowed: true`); the LIST Web Services T&C (Dec 2014, 8
   clauses) contain no prohibition on caching or offline storage — clause 7
   delegates licensing to each service's `copyrightText`, which is CC BY.
+- **LIST grey hillshade** (`Basemaps/HillshadeGrey`, copyrightText
+  "Creative Commons BY 3.0 AU © State of Tasmania", verified 2026-10-03;
+  derived by LIST from the DPIPWE 30 m elevation grid plus LiDAR). Shipped
+  as the "Relief shading" pack `hillshade_tas.pmtiles` and fetched by
+  devices for detailed areas — tiles stored as served, like every pack. The
+  app ADAPTS them at render time (grey → translucent black, protocol.ts
+  `shadeTile`), which CC BY permits (unlike the NC-ND imagery in §2); the
+  About screen says so ("drawn as translucent relief shading").
 - **LIST place-name and address datasets** behind the offline search (all
   CC BY 3.0 AU per the LISTdata/service metadata, verified 2026-09-12):
   Nomenclature (WFS `Public/OpenDataWFS`, type `LIST_Nomenclature`),
@@ -162,8 +170,8 @@ CC BY-NC-ND like its siblings. `pipeline/packs.json` carries a
 ABORTS if LIST's live text changes, so a real licence change is caught. The
 season is still being flown/published — see CLAUDE.md "Refreshing a season".
 
-Courtesy, not licence: the per-season and Tasmap services have Esri export
-disabled (`exportTilesAllowed: false`), so pulls stay polite (8 keep-alive
+Courtesy, not licence: the per-season, Tasmap and HillshadeGrey (§1)
+services have Esri export disabled (`exportTilesAllowed: false`), so pulls stay polite (8 keep-alive
 connections, disk-cached, one-off, top-down pruned so a no-imagery area
 costs one request at zoom 9 and nothing below; a fetch failure cancels the
 queue instead of retrying every tile). The Orthophoto and Topographic services explicitly allow

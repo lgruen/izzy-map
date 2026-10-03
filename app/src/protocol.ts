@@ -5,6 +5,8 @@
 //                                OPFS pack (z<=15) -> (seasons) R2 pack |
 //                                LIST live -> blank (z<=15) / error (z>15,
 //                                so MapLibre shows the stretched parent)
+//                                the "shade" pack (hillshade) is then
+//                                turned into a translucent-black bitmap
 //   pmtiles://...                vector overlays: TASVEG, geology, pre-1750
 import { addProtocol, type Map as MlMap } from "maplibre-gl";
 import { FetchSource, FileSource, PMTiles, Protocol, type Header } from "pmtiles";
@@ -28,7 +30,12 @@ import { areaTile, refreshAreaStores } from "./areas";
 export const BLANK_PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";
 const BLANK_PNG = Uint8Array.from(atob(BLANK_PNG_B64), (c) => c.charCodeAt(0));
-const blank = () => ({ data: BLANK_PNG.buffer.slice(0) });
+const blank = (): RasterTile => ({ data: BLANK_PNG.buffer.slice(0), blank: true });
+interface RasterTile {
+  data: ArrayBuffer;
+  /** the transparent placeholder, not a tile from any source */
+  blank?: true;
+}
 
 interface RasterEntry {
   archive: PMTiles;
@@ -132,7 +139,7 @@ export async function refreshArchives(rekickRemote = false): Promise<ArchiveStat
     lastBacking.set(key, backing);
     if (file) {
       if (changed) rasters.set(key, entryFor(new PMTiles(new FileSource(file)), true));
-    } else if (pack.kind === "base") {
+    } else if (pack.kind !== "season") {
       // statewide services stream straight from LIST while online (seasons
       // also carry a live URL — for z > 15 only — but their z <= 15 tiles
       // come from the R2 archive below)
@@ -223,67 +230,159 @@ export function registerProtocols(): void {
     if (!m) throw new Error("bad raster url: " + params.url);
     const key = m[1] as RasterKey;
     if (!RASTER_KEYS.includes(key)) throw new Error("unknown raster pack: " + key);
-    const pack = packOf(key);
     const [z, x, y] = [Number(m[2]), Number(m[3]), Number(m[4])];
-
-    // 1. a downloaded detailed area (the only offline source above z15)
-    const area = await areaTile(key, z, x, y);
-    if (area) return { data: area };
-
-    // 2. the statewide pack (z <= 15)
-    const e = rasters.get(key);
-    if (e && z <= PACK_MAXZOOM) {
-      try {
-        const t = await e.archive.getZxy(z, x, y);
-        if (t?.data) return { data: t.data };
-        if (e.local && (await coveredBy(e, z, x, y))) return blank();
-      } catch {
-        /* corrupt/unreadable archive must not block the fallback */
-      }
+    const tile = await rasterTile(key, z, x, y, abort);
+    if (packOf(key).kind !== "shade" || tile.blank) return { data: tile.data };
+    // a tile MapLibre already dropped (fast pan) isn't worth decoding
+    if (abort?.signal.aborted) throw new DOMException("aborted", "AbortError");
+    try {
+      return { data: await shadeTile(tile.data) };
+    } catch {
+      // Undecodable bytes / no canvas: never a hard tile error — that would
+      // hole the shading until the tile is evicted (z <= 15), or skip the
+      // retain pass that shows the stretched parent (z > 15, needs a 404)
+      if (z > PACK_MAXZOOM) throw notFound(key, z, x, y);
+      return { data: blank().data };
     }
-
-    // 3. the live service: statewide packs always; seasons only above the
-    //    pack ceiling and only where the season has a z15 tile
-    const liveOk =
-      pack.live &&
-      Date.now() >= (liveDownUntil.get(key) ?? 0) &&
-      (pack.kind === "base" || (z > PACK_MAXZOOM && (await seasonHasParent(key, z, x, y))));
-    if (liveOk) {
-      // Always attempt (no navigator.onLine gate — it lies on iOS after
-      // backgrounding); offline the fetch fails fast and we fall through.
-      const ctl = new AbortController();
-      const onAbort = () => ctl.abort();
-      abort?.signal.addEventListener("abort", onAbort);
-      const timer = z > PACK_MAXZOOM ? setTimeout(() => ctl.abort(), LIVE_TIMEOUT_MS) : 0;
-      try {
-        const res = await fetch(pack.live!(z, x, y), { signal: ctl.signal });
-        if (res.ok) {
-          const buf = await res.arrayBuffer();
-          if (isImage(buf)) return { data: buf }; // a captive portal page is not a tile
-        }
-        if (res.status >= 500) liveDownUntil.set(key, Date.now() + LIVE_BREAKER_MS);
-      } catch (err) {
-        if (abort?.signal.aborted) throw err;
-        liveDownUntil.set(key, Date.now() + LIVE_BREAKER_MS); // offline or timed out
-      } finally {
-        clearTimeout(timer);
-        abort?.signal.removeEventListener("abort", onAbort);
-      }
-    }
-
-    // 4. above the packs a miss must ERROR, not paint blank: MapLibre then
-    //    requests/retains the parent (the z15 pack tile, stretched) — a
-    //    blank would cover it with nothing. It must be a *404*: only a 404
-    //    makes MapLibre fire the `data` event that re-runs the retain pass
-    //    right away (verified in maplibre-gl 6 `_tileLoaded`); any other
-    //    error just logs and the hole stays until the camera moves.
-    if (z > PACK_MAXZOOM) {
-      const err = new Error(`no tile ${key} ${z}/${x}/${y}`) as Error & { status: number };
-      err.status = 404;
-      throw err;
-    }
-    return blank();
   });
+}
+
+function notFound(key: RasterKey, z: number, x: number, y: number): Error {
+  const err = new Error(`no tile ${key} ${z}/${x}/${y}`) as Error & { status: number };
+  err.status = 404;
+  return err;
+}
+
+/** One raster tile's bytes, from the first source that has it (see the
+ * header comment for the chain). */
+async function rasterTile(
+  key: RasterKey,
+  z: number,
+  x: number,
+  y: number,
+  abort?: AbortController,
+): Promise<RasterTile> {
+  const pack = packOf(key);
+
+  // 1. a downloaded detailed area (the only offline source above z15)
+  const area = await areaTile(key, z, x, y);
+  if (area) return { data: area };
+
+  // 2. the statewide pack (z <= 15)
+  const e = rasters.get(key);
+  if (e && z <= PACK_MAXZOOM) {
+    try {
+      const t = await e.archive.getZxy(z, x, y);
+      if (t?.data) return { data: t.data };
+      if (e.local && (await coveredBy(e, z, x, y))) return blank();
+    } catch {
+      /* corrupt/unreadable archive must not block the fallback */
+    }
+  }
+
+  // 3. the live service: statewide packs always; seasons only above the
+  //    pack ceiling and only where the season has a z15 tile
+  const liveOk =
+    pack.live &&
+    Date.now() >= (liveDownUntil.get(key) ?? 0) &&
+    (pack.kind !== "season" || (z > PACK_MAXZOOM && (await seasonHasParent(key, z, x, y))));
+  if (liveOk) {
+    // Always attempt (no navigator.onLine gate — it lies on iOS after
+    // backgrounding); offline the fetch fails fast and we fall through.
+    const ctl = new AbortController();
+    const onAbort = () => ctl.abort();
+    abort?.signal.addEventListener("abort", onAbort);
+    const timer = z > PACK_MAXZOOM ? setTimeout(() => ctl.abort(), LIVE_TIMEOUT_MS) : 0;
+    try {
+      const res = await fetch(pack.live!(z, x, y), { signal: ctl.signal });
+      if (res.ok) {
+        const buf = await res.arrayBuffer();
+        if (isImage(buf)) return { data: buf }; // a captive portal page is not a tile
+      }
+      if (res.status >= 500) liveDownUntil.set(key, Date.now() + LIVE_BREAKER_MS);
+    } catch (err) {
+      if (abort?.signal.aborted) throw err;
+      liveDownUntil.set(key, Date.now() + LIVE_BREAKER_MS); // offline or timed out
+    } finally {
+      clearTimeout(timer);
+      abort?.signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  // 4. above the packs a miss must ERROR, not paint blank: MapLibre then
+  //    requests/retains the parent (the z15 pack tile, stretched) — a
+  //    blank would cover it with nothing. It must be a *404*: only a 404
+  //    makes MapLibre fire the `data` event that re-runs the retain pass
+  //    right away (verified in maplibre-gl 6 `_tileLoaded`); any other
+  //    error just logs and the hole stays until the camera moves.
+  if (z > PACK_MAXZOOM) throw notFound(key, z, x, y);
+  return blank();
+}
+
+// ---------- relief shading ----------
+//
+// LIST's grey hillshade is white on flat ground and the sea and darker the
+// more a slope faces away from the (north-west) light. Drawn as an ordinary
+// raster on top it would GREY everything; what we want is a multiply blend
+// (result = map × shade), which MapLibre's raster layer doesn't offer. But
+// a black pixel with alpha a under normal "over" blending gives
+// map × (1 − a) — exactly a multiply by (1 − a). So each grey g becomes
+// black at alpha a = STRENGTH × (1 − g / FLAT): flat ground (g ≥ FLAT) is
+// untouched, shadows darken whatever base and overlay lie beneath.
+// (Black also sidesteps the premultiplied-vs-straight alpha question for
+// the texture upload: premultiplied (0,0,0,a) is (0,0,0,a).)
+const SHADE_STRENGTH = 0.4; // tuned by eye over topo + TASVEG, 2026-10-03
+const SHADE_FLAT = 247; // LIST's flat land reads 235–246, sea 251–255
+const SHADE_ALPHA = Uint8ClampedArray.from({ length: 256 }, (_, g) =>
+  Math.round(255 * SHADE_STRENGTH * Math.max(0, 1 - g / SHADE_FLAT)),
+);
+
+// ONE scratch canvas for every tile (Safari budgets canvas memory; a fresh
+// 256 KB backing store per tile leans on GC). Safe to share: everything
+// after the decode await is synchronous, so tiles never interleave on it.
+let scratch: {
+  canvas: OffscreenCanvas | HTMLCanvasElement;
+  ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+} | null = null;
+
+/** Grey hillshade tile (JPEG/PNG bytes) -> translucent-black ImageBitmap.
+ * Source alpha is honoured (a transparent pixel stays transparent). Throws
+ * on undecodable bytes. Runs on the main thread (~1–4 ms per tile). */
+export async function shadeTile(buf: ArrayBuffer): Promise<ImageBitmap> {
+  const src = await createImageBitmap(new Blob([buf]));
+  const { width: w, height: h } = src;
+  if (!scratch) {
+    const canvas =
+      typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(w, h) : document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true }) as
+      | OffscreenCanvasRenderingContext2D
+      | CanvasRenderingContext2D
+      | null;
+    if (!ctx) {
+      src.close();
+      throw new Error("no 2D canvas");
+    }
+    scratch = { canvas, ctx };
+  }
+  const { canvas, ctx } = scratch;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(src, 0, 0);
+  src.close();
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = (SHADE_ALPHA[d[i + 1]] * d[i + 3]) / 255; // grey: any channel will do
+    d[i] = d[i + 1] = d[i + 2] = 0;
+    d[i + 3] = a;
+  }
+  ctx.putImageData(img, 0, 0);
+  // transferToImageBitmap hands over the backing store without a copy and
+  // leaves the canvas blank for the next tile
+  return "transferToImageBitmap" in canvas ? canvas.transferToImageBitmap() : createImageBitmap(canvas);
 }
 
 /** What the season stack shows at a tile: the newest LOCAL season <= cutoff
