@@ -19,7 +19,7 @@
     "@playwright/test": "^1.55.0",
     "@types/proj4": "^2.19.0",
     "typescript": "^5.9.2",
-    "vite": "^7.1.5",
+    "vite": "^7.3.7",
     "vite-plugin-pwa": "^1.0.3"
   }
 }
