@@ -786,3 +786,212 @@ button { font-family: var(--sans); color: inherit; }
   #panel.search .panel-close { top: 8px; }
   #sr-list { max-height: 60vh; }
 }
+
+/* ---------- plants: community card section + plant sheet ---------- */
+
+/* tall, but never over the search pill (top 14 px + 44 px): its re-fly and
+   × must stay reachable while a plant sheet is open */
+#sheet.tall { max-height: min(86%, calc(100% - 72px - env(safe-area-inset-top))); }
+.plants { margin-top: 14px; }
+.pl-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 0;
+  border: none;
+  border-top: 1.5px solid var(--chrome-ink);
+  background: none;
+  text-align: left;
+}
+.pl-toggle .pl-h { margin: 0; padding: 0; border: none; }
+.pl-toggle small { flex: 1; color: var(--stone); font-size: 13px; }
+.pl-chev { font-size: 24px; line-height: 1; color: var(--accent); transition: transform 0.15s; }
+.plants.open > .pl-toggle .pl-chev { transform: rotate(90deg); }
+.pl-h {
+  margin: 0 0 2px;
+  padding-bottom: 6px;
+  font: 600 18px/1.2 var(--serif);
+  border-bottom: 1.5px solid var(--chrome-ink);
+}
+.pl-list { margin-top: 12px; }
+.pl-h4 { margin: 0; font: 600 15px/1.3 var(--sans); color: var(--ink); }
+.pl-sub { margin: 2px 0 4px; color: var(--stone); font-size: 12px; line-height: 1.45; }
+.pl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 0;
+  border: none;
+  border-top: 1px solid var(--hairline);
+  background: none;
+  text-align: left;
+  font-size: 15px;
+}
+.pl-row:active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pl-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pl-sci { color: var(--ink); line-height: 1.25; }
+.pl-text small { color: var(--stone); font-size: 12.5px; line-height: 1.3; }
+.pl-n { flex: none; font: 500 12px/1 var(--mono); color: var(--stone); padding-right: 2px; }
+.pl-more {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+}
+.pl-few { font-style: italic; color: var(--ink); }
+.pl-credit { margin: 14px 0 0; color: var(--stone); font-size: 11px; line-height: 1.45; }
+
+/* photo box: a neutral placeholder the <img> fades into; a failed or
+   impossible load (offline, not downloaded) leaves just the placeholder —
+   never a broken-image icon */
+.ph {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--stone) 14%, var(--paper));
+  color: color-mix(in srgb, var(--stone) 55%, transparent);
+}
+.ph img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.ph.loaded img { opacity: 1; }
+.ph.loaded .ph-leaf { visibility: hidden; }
+.ph-thumb { flex: none; width: 44px; height: 44px; border-radius: 8px; }
+.ph-thumb img { object-fit: cover; }
+.ph-none .ph-leaf { width: 18px; height: 18px; }
+.nw { white-space: nowrap; }
+.ph-large { width: 100%; aspect-ratio: 4 / 3; max-height: 46vh; border-radius: 10px; }
+.ph-large img { object-fit: contain; }
+.ph-large .ph-leaf { width: 32px; height: 32px; }
+
+.plant-view, .group-view { position: relative; }
+.pl-group .pl-chev { flex: none; font-size: 22px; line-height: 1; color: var(--accent); }
+/* Back / × stay reachable while a long plant sheet scrolls */
+.pl-top {
+  position: sticky;
+  top: -10px; /* the sheet's top padding */
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -4px -18px 8px; /* full bleed, so the divider spans the sheet */
+  padding: 0 10px 0 12px;
+  background: var(--paper);
+  transition: box-shadow 0.15s;
+}
+/* once scrolled, a hairline + soft shadow keeps labels from peeking under it */
+#sheet.scrolled .pl-top { box-shadow: 0 1px 0 var(--hairline), 0 6px 10px -8px rgba(10, 20, 14, 0.35); }
+.pl-back {
+  min-height: 44px;
+  padding: 0 10px 0 6px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+}
+.pl-back span { font-size: 22px; line-height: 1; vertical-align: -2px; margin-right: 2px; }
+.pl-close {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--stone);
+}
+.pl-photos {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.pl-photos::-webkit-scrollbar { display: none; }
+.pl-fig { flex: 0 0 100%; margin: 0; scroll-snap-align: start; }
+.pl-photos.multi .pl-fig { flex-basis: 92%; }
+.pl-fig figcaption { margin-top: 4px; color: var(--stone); font-size: 11px; line-height: 1.35; }
+.pl-swipe { margin: 2px 0 0; color: var(--stone); font-size: 12px; line-height: 1.3; }
+.pl-head { margin: 12px 0 8px; }
+.pl-name { font: 400 21px/1.25 var(--serif); color: var(--ink); }
+.pl-common { margin-top: 3px; font-size: 15px; color: var(--ink); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pl-status {
+  display: inline-block;
+  padding: 3px 8px 2px;
+  border-radius: 6px;
+  font: 700 11px/1.2 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: #8a6a00;
+}
+.pl-status[data-status="vulnerable"] { background: #b35c00; }
+.pl-status[data-status="endangered"] { background: #a3242a; }
+.pl-flowering { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--hairline); }
+.pl-label { color: var(--stone); font-size: 13px; flex: none; }
+.pl-months { display: grid; grid-template-columns: repeat(12, 1fr); gap: 2px; flex: 1; max-width: 264px; }
+.pl-months span {
+  text-align: center;
+  font: 600 11px/20px var(--mono);
+  border-radius: 4px;
+  color: var(--stone);
+  background: color-mix(in srgb, var(--stone) 10%, transparent);
+}
+.pl-months span.on { color: #3b2a00; background: var(--wattle); }
+.pl-facts { margin: 4px 0 0; padding-top: 6px; border-top: 1px solid var(--hairline); }
+.pl-facts dt { margin-top: 8px; color: var(--stone); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.pl-facts dd { margin: 2px 0 0; font-size: 14.5px; line-height: 1.5; }
+.pl-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.pl-tags span {
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.pl-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-top: 16px;
+  border-radius: 13px;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 15px;
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .pl-row:hover, .pl-more:hover, .pl-back:hover, .pl-link:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .pl-close:hover { color: var(--chrome-ink); }
+}
+@media (min-width: 700px) {
+  /* the side card grows to the available height (search-pill clearance
+     kept) once there is a lot to read: a stacked view, or the Plants lists
+     expanded on the card itself */
+  #sheet.tall, #sheet.plants-open { max-height: calc(100% - 30px - 72px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .ph-large { max-height: 300px; }
+}

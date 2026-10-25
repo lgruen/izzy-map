@@ -155,6 +155,27 @@ export const TREE_SHEET_BASE = "https://www.arcgis.com/sharing/rest/content/item
 export const treeSheetUrl = (id: string): string => `${TREE_SHEET_BASE}/${id}/data`;
 /** OPFS directory holding the fetched sheets (`<id>.pdf`). */
 export const TREE_SHEET_DIR = "trees";
+/** Transparent, non-caching CORS relay (Cloudflare Worker
+ * pipeline/f2f-proxy/): the F2F chapter PDFs at its root, Understorey
+ * Network photo files under `/un/` (see PLANT_RELAY). Empty = not
+ * configured (the downloads that need it say so). */
+export const F2F_PROXY: string = import.meta.env.VITE_F2F_PROXY ?? "";
+// Plants (app/src/generated/plants.json + records.json + nearby.bin,
+// committed facts; photos are © their photographers and only ever fetched
+// by the device — never committed, never on Pages/R2).
+/** Understorey Network Tasmania plant database (WordPress). */
+export const UN_BASE = "https://database.understorey-network.org.au";
+/** `${PLANT_RELAY}/<path><suffix>.<ext>` relays
+ * `${UN_BASE}/wp-content/uploads/<path><suffix>.<ext>` with CORS added —
+ * needed only to READ the bytes into OPFS; plain <img> display goes to
+ * UN directly. Same Worker as the F2F relay, separate allow-list. */
+export const PLANT_RELAY: string = F2F_PROXY ? `${F2F_PROXY}/un` : "";
+/** OPFS directory holding downloaded plant photos (flat file names). */
+export const PLANT_PHOTO_DIR = "plants";
+export const ATTRIBUTION_PLANTS =
+  "Plant profiles & photos: Understorey Network Tasmania (photos © their photographers)";
+export const ATTRIBUTION_RECORDS =
+  "Occurrence records: Atlas of Living Australia (incl. Tasmanian Natural Values Atlas, iNaturalist Australia, Australasian Virtual Herbarium)";
 // Search indexes (app/public/search/*.json, committed; see docs/LICENSING.md §1)
 export const ATTRIBUTION_NAMES =
   "Place and street names from theLIST © State of Tasmania (CC BY 3.0 AU)";

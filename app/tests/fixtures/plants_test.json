@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "built": "fixture",
+  "plants": [
+    {"id": 101, "slug": "acacia-dealbata", "name": "Acacia dealbata", "species": "Acacia dealbata", "common": "silver wattle", "family": "Fabaceae", "forms": ["Tree"], "height": "5 – 20", "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [8, 9], "habitats": [], "photos": []},
+    {"id": 102, "slug": "acacia-dealbata-subsp-dealbata", "name": "Acacia dealbata subsp. dealbata", "species": "Acacia dealbata", "common": "silver wattle", "family": "Fabaceae", "forms": ["Tree", "Shrub"], "height": "5 – 20", "form": "Fast-growing tree with silvery ferny leaves.", "flowers": "Bright yellow balls in late winter.", "fruit": "Flat pods.", "habitat": "Moist sites, gullies.", "notes": "Bird attracting.", "status": null, "flowering": [7, 8, 9], "habitats": ["Wet Forest", "Riparian"],
+     "photos": [
+       {"path": "2024/03/Acacia_dealbata-habit", "ext": "jpg", "thumb": "-150x150", "large": "-768x576", "bytes": 1000, "credit": "Test Photographer – with permission"},
+       {"path": "2024/03/Acacia_dealbata-flower", "ext": "jpe", "thumb": "-150x150", "large": "-rotated", "bytes": 1200, "credit": null}
+     ]},
+    {"id": 103, "slug": "banksia-marginata", "name": "Banksia marginata", "species": "Banksia marginata", "common": "silver banksia", "family": "Proteaceae", "forms": ["Shrub"], "height": "1 – 10", "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": "Rare", "flowering": [1, 2, 3, 12], "habitats": ["Coastal Vegetation"],
+     "photos": [
+       {"path": "2023/11/Banksia_marginata", "ext": "png", "thumb": null, "large": "", "bytes": null, "credit": "Another Person"}
+     ]},
+    {"id": 104, "slug": "correa-reflexa", "name": "Correa reflexa", "species": "Correa reflexa", "common": "common correa", "family": "Rutaceae", "forms": ["Shrub"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 105, "slug": "dianella-tasmanica", "name": "Dianella tasmanica", "species": "Dianella tasmanica", "common": "forest flaxlily", "family": "Hemerocallidaceae", "forms": ["Lily"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 106, "slug": "epacris-impressa", "name": "Epacris impressa", "species": "Epacris impressa", "common": "common heath", "family": "Ericaceae", "forms": ["Shrub"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 107, "slug": "gahnia-grandis", "name": "Gahnia grandis", "species": "Gahnia grandis", "common": "cutting grass", "family": "Cyperaceae", "forms": ["Sedge"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 108, "slug": "lomandra-longifolia", "name": "Lomandra longifolia", "species": "Lomandra longifolia", "common": "sagg", "family": "Asparagaceae", "forms": ["Sedge"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 109, "slug": "pomaderris-apetala", "name": "Pomaderris apetala", "species": "Pomaderris apetala", "common": "dogwood", "family": "Rhamnaceae", "forms": ["Shrub"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 111, "slug": "leptecophylla-juniperina", "name": "Leptecophylla juniperina", "species": "Leptecophylla juniperina", "common": "prickly pinkberry", "family": "Ericaceae", "forms": ["Shrub"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 112, "slug": "leptecophylla-divaricata", "name": "Leptecophylla divaricata", "species": "Leptecophylla divaricata", "common": "spreading pinkberry", "family": "Ericaceae", "forms": ["Shrub"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [],
+     "photos": [{"path": "2022/05/Leptecophylla_divaricata", "ext": "jpg", "thumb": "-150x150", "large": "", "bytes": 900, "credit": null}]},
+    {"id": 113, "slug": "leptecophylla-parvifolia", "name": "Leptecophylla parvifolia", "species": "Leptecophylla parvifolia", "common": "mountain pinkberry", "family": "Ericaceae", "forms": ["Shrub"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 114, "slug": "leptecophylla-oxycedrus", "name": "Leptecophylla oxycedrus", "species": "Leptecophylla oxycedrus", "common": "coast pinkberry", "family": "Ericaceae", "forms": ["Shrub"], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []},
+    {"id": 110, "slug": "zieria-sp-lunar", "name": "Zieria sp. Lunar", "species": null, "common": null, "family": "Rutaceae", "forms": [], "height": null, "form": null, "flowers": null, "fruit": null, "habitat": null, "notes": null, "status": null, "flowering": [], "habitats": [], "photos": []}
+  ],
+  "groups": {
+    "Leptecophylla juniperina": {"common": "pinkberry", "species": ["Leptecophylla juniperina", "Leptecophylla divaricata", "Leptecophylla pogonocalyx", "Leptecophylla parvifolia", "Leptecophylla oxycedrus"]}
+  },
+  "communities": {
+    "@code": ["Acacia dealbata", "Banksia marginata", "Leptecophylla juniperina", "Correa reflexa", "Dianella tasmanica", "Epacris impressa", "Gahnia grandis", "Lomandra longifolia", "Pomaderris apetala"]
+  }
+}

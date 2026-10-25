@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import {
   AERIAL_FIXTURE,
+  JPEG_FIXTURE,
+  PLANTS_FIXTURE,
+  RELAY_PHOTO_ROUTE,
+  UN_HOST_ROUTE,
   CENTRE_TILE,
   COLOURS,
   SEASON_2023_FIXTURE,
@@ -16,6 +20,7 @@ import {
   jumpToTile,
   near,
   pixelAt,
+  routePlantFixtures,
   routeRasterFixtures,
   routeTasvegFixture,
   waitForMapIdle,
@@ -51,6 +56,7 @@ const setRange = (page: Page, value: number) =>
 test.beforeEach(async ({ page }) => {
   await blockTopoNetwork(page);
   await routeRasterFixtures(page); // vector + synthetic raster fixtures
+  await routePlantFixtures(page); // plant lists + nearby grid; photo hosts cut
   await page.goto("/");
   await waitForMapIdle(page);
 });
@@ -1472,4 +1478,426 @@ test("trees: a vegetation card survives the trees toggle; a tree card survives a
   await page.locator('.lay-row[data-toggle="trees"]').click(); // trees off: the card must go with its dots
   await closePanel(page);
   await expect(sheet).toBeHidden();
+});
+
+// ---------- plants ----------
+// Fixture data (tests/fixtures/plants_test.json, records_test.json + cells
+// encoded by helpers.ts) is served for whatever community lies under the
+// test GPS point; the real generated files change with every pipeline run.
+
+/** Re-route the plant fixtures for the community at the map centre, then
+ * tap it. Returns the code. */
+async function tapCommunity(page: Page, cells?: Parameters<typeof routePlantFixtures>[2], tally = false): Promise<string> {
+  const code = (await centerFeature(page))!.VEGCODE;
+  await routePlantFixtures(page, code, cells, tally);
+  const viewport = page.viewportSize()!;
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  await expect(page.locator("#sheet")).toBeVisible();
+  await openPlants(page);
+  return code;
+}
+/** Expand the card's Plants summary row (a no-op when already open). */
+async function openPlants(page: Page): Promise<void> {
+  const toggle = page.locator("#sheet .plants .pl-toggle");
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+const plantRow = (page: Page, list: string, key: string) =>
+  page.locator(`#sheet .pl-list[data-list="${list}"] .pl-row[data-key="${key}"]`);
+
+test("plants: the community card lists named, often-recorded and nearby plants", async ({ page }) => {
+  const code = await tapCommunity(page);
+  const sheet = page.locator("#sheet");
+  const section = sheet.locator(".plants");
+  await expect(section).toBeVisible();
+  // the existing card content stays first, the section after it
+  await expect(sheet.locator(".sheet-desc")).toBeVisible();
+  await expect(section.locator(".pl-list")).toHaveCount(3);
+  // one summary row that expands in place (the card stays compact)
+  const toggle = section.locator(".pl-toggle");
+  await expect(toggle.locator("small")).toHaveText(`${PLANTS_FIXTURE.communities["@code"].length} named · 3 in records · 3 nearby`);
+  await toggle.click();
+  await expect(section.locator(".pl-body")).toBeHidden();
+  await toggle.click();
+  await expect(section.locator(".pl-body")).toBeVisible();
+  // B: first six, then "Show all (n)" reveals the rest
+  const named = section.locator('.pl-list[data-list="named"]');
+  const all = PLANTS_FIXTURE.communities["@code"].length;
+  await expect(named.locator(".pl-row")).toHaveCount(6);
+  await named.locator(".pl-more").click();
+  await expect(named.locator(".pl-row")).toHaveCount(all);
+  await expect(named.locator(".pl-more")).toHaveCount(0);
+  // an entry: thumbnail box (photo or not), italic species name, common · form
+  const acacia = plantRow(page, "named", "Acacia dealbata");
+  await expect(acacia.locator(".pl-sci i")).toHaveText("Acacia dealbata");
+  await expect(acacia).toContainText("silver wattle · Tree, Shrub"); // the profile WITH photos was picked
+  await expect(acacia.locator(".ph-thumb")).toHaveCount(1);
+  // C1: a species without a UN profile is skipped; site counts shown
+  const often = section.locator('.pl-list[data-list="often"]');
+  await expect(often.locator(".pl-row")).toHaveCount(3);
+  await expect(often.locator(".pl-h4")).toHaveText("Often recorded in this community");
+  await expect(often.locator(".pl-sub")).toContainText(`inside mapped ${code}`);
+  await expect(often.locator(".pl-sub")).toContainText("250 sites recorded");
+  await expect(often.locator(".pl-few")).toHaveCount(0);
+  await expect(plantRow(page, "often", "Banksia marginata").locator(".pl-n")).toHaveText("40");
+  // C2: the tapped cell + 8 neighbours, summed (2 + 3 for Acacia); a far
+  // cell's species never appears; the header gives the honest totals
+  const near = section.locator('.pl-list[data-list="near"]');
+  await expect(near.locator(".pl-row")).toHaveCount(3);
+  await expect(plantRow(page, "near", "Acacia dealbata").locator(".pl-n")).toHaveText("5");
+  await expect(plantRow(page, "near", "Banksia marginata").locator(".pl-n")).toHaveText("1");
+  await expect(plantRow(page, "near", "Correa reflexa")).toHaveCount(0);
+  await expect(near.locator(".pl-sub")).toContainText("3 species, 8 site records within roughly 1–1.5 km");
+  await expect(near.locator(".pl-sub")).toContainText("not a full survey");
+  await expect(section.locator(".pl-credit")).toContainText("Understorey Network Tasmania");
+  await expect(section.locator(".pl-credit")).toContainText("Atlas of Living Australia");
+  await expect(section.locator(".pl-credit")).toContainText("From Forest to Fjaeldmark");
+});
+
+test("plants: a community with few records shows its plain tally, labelled as such", async ({ page }) => {
+  await tapCommunity(page, undefined, true);
+  const often = page.locator('#sheet .pl-list[data-list="often"]');
+  await expect(often.locator(".pl-h4")).toHaveText("Recorded in this community");
+  await expect(often.locator(".pl-few")).toHaveText("few records (3 sites)");
+  await expect(often.locator(".pl-row")).toHaveCount(3); // shown, not hidden
+  await expect(plantRow(page, "often", "Banksia marginata").locator(".pl-n")).toHaveText("40");
+});
+
+test("plants: no records near the point -> no nearby list; no entries at all -> no section", async ({ page }) => {
+  await tapCommunity(page, [{ row: 50, col: 50, pairs: [[0, 4]] }]); // far away only
+  const section = page.locator("#sheet .plants");
+  await expect(section.locator('.pl-list[data-list="named"]')).toBeVisible();
+  await expect(section.locator('.pl-list[data-list="near"]')).toHaveCount(0);
+  // a code with nothing in any list keeps the section hidden
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await waitForMapIdle(page);
+  await routePlantFixtures(page, "ZZZ", []);
+  const viewport = page.viewportSize()!;
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  await expect(page.locator("#sheet")).toBeVisible();
+  await expect(page.locator('#sheet .plants[data-state="empty"]')).toHaveCount(1); // data loaded, nothing to list
+  await expect(page.locator("#sheet .plants")).toBeHidden();
+});
+
+test("plants: a plant sheet opens from the card; Back and Escape return one step", async ({ page }) => {
+  const code = await tapCommunity(page);
+  const sheet = page.locator("#sheet");
+  await plantRow(page, "named", "Acacia dealbata").click();
+  const view = sheet.locator(".plant-view");
+  await expect(view).toBeVisible();
+  await expect(sheet.locator(".plants")).toBeHidden(); // the card is parked, not shown
+  await expect(view.locator(".pl-name")).toHaveText("Acacia dealbata subsp. dealbata");
+  await expect(view.locator(".pl-name i")).toHaveCount(2); // rank word upright
+  await expect(view.locator(".pl-common")).toContainText("Silver wattle"); // headline: first letter up (rows keep UN's lowercase)
+  await expect(view).toContainText("Fabaceae");
+  await expect(view).toContainText("5 – 20 m");
+  await expect(view.locator(".kv", { hasText: "Recorded near here" })).toContainText("5 sites");
+  await expect(view.locator(".pl-months span")).toHaveCount(12);
+  await expect(view.locator(".pl-months span.on")).toHaveCount(3);
+  await expect(view.locator(".pl-facts")).toContainText("Bright yellow balls");
+  await expect(view.locator(".pl-tags span")).toHaveText(["Wet Forest", "Riparian"]);
+  await expect(view.locator(".pl-fig")).toHaveCount(2);
+  await expect(view.locator(".pl-fig figcaption").first()).toHaveText(
+    "Photo: Test Photographer – with permission · Understorey Network",
+  );
+  await expect(view.locator(".pl-fig figcaption").nth(1)).toHaveText("Photo: Understorey Network");
+  const link = view.locator(".pl-link");
+  await expect(link).toHaveAttribute("href", "https://database.understorey-network.org.au/plant/acacia-dealbata-subsp-dealbata");
+  await expect(link).toHaveAttribute("target", "_blank");
+  // Back button: the card again, untouched (F2F button, lists)
+  await view.locator(".pl-back").click();
+  await expect(sheet.locator(".plant-view")).toHaveCount(0);
+  await expect(sheet.locator(".plants")).toBeVisible();
+  await expect(sheet.locator(".sheet-code")).toHaveText(code);
+  await expect(sheet.locator(".sheet-desc")).toBeVisible();
+  // a status badge, then Escape: plant sheet -> card -> closed
+  await plantRow(page, "often", "Banksia marginata").click();
+  await expect(sheet.locator(".pl-status")).toHaveText("Rare");
+  await page.keyboard.press("Escape");
+  await expect(sheet.locator(".plant-view")).toHaveCount(0);
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator(".plants")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  // × on a plant sheet closes everything; the next card starts clean
+  await page.mouse.click(page.viewportSize()!.width / 2, page.viewportSize()!.height / 2);
+  await plantRow(page, "named", "Correa reflexa").click();
+  await sheet.locator(".pl-close").click();
+  await expect(sheet).toBeHidden();
+  await page.mouse.click(page.viewportSize()!.width / 2, page.viewportSize()!.height / 2);
+  await expect(sheet.locator(".plants")).toBeVisible();
+  await expect(sheet.locator(".plant-view")).toHaveCount(0);
+});
+
+test("plants: a broad-sense group is one entry that lists its species by local evidence", async ({ page }) => {
+  await tapCommunity(page);
+  const sheet = page.locator("#sheet");
+  const key = "Leptecophylla juniperina"; // a groups key in the fixture (also a member's species key)
+  const group = plantRow(page, "named", key);
+  await expect(group).toHaveClass(/pl-group/);
+  await expect(group.locator(".pl-sci")).toHaveText("pinkberry");
+  await expect(group.locator("small")).toHaveText(`${key} (broad sense) · 5 species`);
+  await expect(group.locator(".ph-thumb")).not.toHaveClass(/ph-none/); // a member's photo
+  await group.click();
+  const gv = sheet.locator(".group-view");
+  await expect(gv).toBeVisible();
+  await expect(sheet.locator(".plants")).toBeHidden();
+  // recorded in this community (records.json `members`: uncapped, so
+  // juniperina counts though the C1 list lacks it), then nearby, then the
+  // rest; a member without a UN profile (pogonocalyx) is left out; the
+  // counts make the order legible
+  await expect(gv.locator(".pl-row")).toHaveCount(4);
+  expect(await gv.locator(".pl-row").evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.key))).toEqual([
+    "Leptecophylla parvifolia",
+    "Leptecophylla juniperina",
+    "Leptecophylla divaricata",
+    "Leptecophylla oxycedrus",
+  ]);
+  await expect(gv.locator('.pl-list[data-list="g-here"] .pl-n')).toHaveText(["3", "1"]);
+  await expect(gv.locator('.pl-list[data-list="g-near"] .pl-n')).toHaveText("2");
+  await expect(gv.locator('.pl-list[data-list="g-rest"] .pl-row')).toHaveCount(1);
+  await expect(gv.locator('.pl-list[data-list="g-rest"] .pl-n')).toHaveCount(0);
+  // a member opens its plant sheet; Escape and Back go one step each
+  await page.waitForTimeout(450); // past the double-tap guard after a push
+  await gv.locator('.pl-row[data-key="Leptecophylla divaricata"]').click();
+  const pv = sheet.locator(".plant-view");
+  await expect(pv).toBeVisible();
+  await expect(pv.locator(".pl-name")).toHaveText("Leptecophylla divaricata");
+  await expect(pv.locator(".pl-back")).toContainText("Back to pinkberry");
+  await expect(pv.locator(".kv", { hasText: "Recorded near here" })).toContainText("2 sites");
+  await page.keyboard.press("Escape");
+  await expect(sheet.locator(".plant-view")).toHaveCount(0);
+  await expect(gv).toBeVisible();
+  await gv.locator('.pl-row[data-key="Leptecophylla juniperina"]').click();
+  await expect(pv.locator(".pl-name")).toHaveText(key);
+  await pv.locator(".pl-back").click();
+  await expect(gv).toBeVisible();
+  await gv.locator(".pl-back").click();
+  await expect(sheet.locator(".group-view")).toHaveCount(0);
+  await expect(sheet.locator(".plants")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+});
+
+test("plants: photos load from UN online; unreachable or offline leaves a placeholder, never a broken image", async ({ page, context }) => {
+  await tapCommunity(page);
+  // UN cut (helpers default): every attempted <img> is removed again
+  await plantRow(page, "named", "Acacia dealbata").click();
+  const boxes = page.locator("#sheet .plant-view .ph-large");
+  await expect(boxes).toHaveCount(2);
+  // (an <img> stays invisible until it loads, so no broken icon can show;
+  // a failed one is removed — thumbnails parked with the card may never try)
+  await expect(page.locator("#sheet .plant-view .ph img")).toHaveCount(0);
+  await expect(boxes.first().locator(".ph-leaf")).toBeVisible();
+  await page.keyboard.press("Escape");
+  // online with UN reachable: thumbnails (150 px files) fade in
+  const asked: string[] = [];
+  await page.route(UN_HOST_ROUTE, (route) => {
+    asked.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 200, contentType: "image/jpeg", body: JPEG_FIXTURE });
+  });
+  await page.keyboard.press("Escape");
+  await page.mouse.click(page.viewportSize()!.width / 2, page.viewportSize()!.height / 2);
+  const thumb = plantRow(page, "named", "Acacia dealbata").locator(".ph-thumb");
+  await expect(thumb).toHaveClass(/loaded/);
+  expect(asked).toContain("/wp-content/uploads/2024/03/Acacia_dealbata-habit-150x150.jpg");
+  // no thumbnail suffix -> the large file ("" = the original)
+  await expect(plantRow(page, "named", "Banksia marginata").locator(".ph-thumb")).toHaveClass(/loaded/);
+  expect(asked).toContain("/wp-content/uploads/2023/11/Banksia_marginata.png");
+  await plantRow(page, "named", "Acacia dealbata").click();
+  await expect(boxes.nth(1)).toHaveClass(/loaded/);
+  expect(asked).toContain("/wp-content/uploads/2024/03/Acacia_dealbata-flower-rotated.jpe");
+  const img = boxes.first().locator("img");
+  await expect(img).toHaveAttribute("loading", "lazy");
+  await expect(img).toHaveAttribute("width", "768");
+  // offline and nothing stored: no <img> is even attempted
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await context.setOffline(true);
+  const before = asked.length;
+  await page.mouse.click(page.viewportSize()!.width / 2, page.viewportSize()!.height / 2);
+  await plantRow(page, "near", "Acacia dealbata").click();
+  await expect(boxes).toHaveCount(2);
+  await page.waitForTimeout(300);
+  await expect(page.locator("#sheet .plant-view .ph img")).toHaveCount(0);
+  expect(asked.length).toBe(before);
+  await context.setOffline(false);
+});
+
+test("plants: the Plant photos row stores photos through the relay, stops on failures, shows them offline, deletes", async ({ page, context, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  // the downloads panel loads the plant data first: route it for the community
+  // under the map centre now (data loads once per page)
+  await routePlantFixtures(page, (await centerFeature(page))!.VEGCODE);
+  const relayed: string[] = [];
+  let mode: "portal" | "upstream" | "html" | "ok" = "portal";
+  await page.route(RELAY_PHOTO_ROUTE, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    relayed.push(path);
+    if (path.includes("Banksia")) {
+      // a captive portal's login page carries no CORS headers: the browser
+      // rejects the fetch (a TypeError) — Playwright would add CORS to a
+      // fulfilled response, so abort stands in for it
+      if (mode === "portal") return route.abort();
+      // the relay turns a non-image (or redirected) upstream answer into 502
+      if (mode === "upstream") return route.fulfill({ status: 502, body: "" });
+      // a 200 that isn't an image (only a misbehaving relay could) fails the magic check
+      if (mode === "html")
+        return route.fulfill({ status: 200, contentType: "text/html", body: "<html><body>Log in to Wi-Fi</body></html>" });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "image/jpeg",
+      headers: { "Access-Control-Allow-Origin": "*" },
+      body: JPEG_FIXTURE,
+    });
+  });
+  const photoSize = (name: string) =>
+    page.evaluate(async (n) => {
+      try {
+        const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("plants");
+        return (await (await dir.getFileHandle(n)).getFile()).size;
+      } catch {
+        return null;
+      }
+    }, name);
+  await page.locator("#btn-downloads").click();
+  const row = page.locator('.dl-item[data-key="plantPhotos"]');
+  await expect(row).toContainText("Plant photos");
+  await expect(row).toContainText("4 photos");
+  await expect(row.locator(".dl-btn")).toHaveText("Download");
+  await row.locator(".dl-btn").click();
+  // each failure stops the batch with its own wording; nothing stored for it
+  await expect(row.locator(".dl-status")).toContainText("Couldn't reach the photo relay");
+  expect(await photoSize("2023-11-Banksia_marginata.png")).toBeNull();
+  // the relay path maps 1:1 onto the UN upload path (+ the large suffix)
+  expect(relayed).toContain("/un/2024/03/Acacia_dealbata-habit-768x576.jpg");
+  expect(relayed).toContain("/un/2023/11/Banksia_marginata.png");
+  mode = "html";
+  await row.locator(".dl-btn:not(.dl-secondary)").click();
+  await expect(row.locator(".dl-status")).toContainText("wasn't a photo");
+  expect(await photoSize("2023-11-Banksia_marginata.png")).toBeNull();
+  // a server error on one file doesn't stop the batch: that file is skipped
+  // for this session, the rest arrive, and the row says what's missing
+  mode = "upstream";
+  await row.locator(".dl-btn:not(.dl-secondary)").click();
+  await expect(row.locator(".dl-status")).toContainText("1 photo failed, will retry next time");
+  expect(await photoSize("2023-11-Banksia_marginata.png")).toBeNull();
+  expect(await photoSize("2024-03-Acacia_dealbata-flower.jpe")).toBe(JPEG_FIXTURE.length);
+  const asked = relayed.length;
+  await row.locator(".dl-btn:not(.dl-secondary)").click(); // Resume: skipped this session, not re-asked
+  await expect(row.locator(".dl-status")).toContainText("1 photo failed");
+  expect(relayed.length).toBe(asked);
+  // next launch, on a healthy network, finishes the set
+  mode = "ok";
+  await page.reload();
+  await waitForMapIdle(page);
+  await page.locator("#btn-downloads").click();
+  await row.locator(".dl-btn:not(.dl-secondary)").click();
+  await expect(row.locator(".dl-status")).toHaveText("✓ downloaded", { timeout: 30_000 });
+  for (const n of ["2024-03-Acacia_dealbata-habit.jpg", "2024-03-Acacia_dealbata-flower.jpe", "2023-11-Banksia_marginata.png"])
+    expect(await photoSize(n)).toBe(JPEG_FIXTURE.length);
+  await closePanel(page);
+  // offline: the plant sheet shows the stored photos (UN itself is cut)
+  await context.setOffline(true);
+  await tapCommunity(page);
+  await plantRow(page, "named", "Acacia dealbata").click();
+  await expect(page.locator("#sheet .plant-view .ph-large").first()).toHaveClass(/loaded/);
+  await expect(page.locator("#sheet .plant-view .ph-large img").first()).toHaveAttribute("src", /^blob:/);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await context.setOffline(false);
+  // Delete removes the folder
+  await page.locator("#btn-downloads").click();
+  await expect(row.locator(".dl-btn")).toHaveText("Delete");
+  await row.locator(".dl-btn").click();
+  await expect(row.locator(".dl-btn")).toHaveText("Download");
+  expect(await photoSize("2024-03-Acacia_dealbata-habit.jpg")).toBeNull();
+});
+
+test("plants: photos UN no longer serves (readable 404) are remembered and the row completes", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "Playwright WebKit build lacks OPFS createWritable");
+  await page.route(RELAY_PHOTO_ROUTE, (route) =>
+    new URL(route.request().url()).pathname.includes("Acacia_dealbata-flower")
+      ? route.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "" })
+      : route.fulfill({ status: 200, contentType: "image/jpeg", headers: { "Access-Control-Allow-Origin": "*" }, body: JPEG_FIXTURE }),
+  );
+  await page.locator("#btn-downloads").click();
+  const row = page.locator('.dl-item[data-key="plantPhotos"]');
+  await row.locator(".dl-btn").click();
+  await expect(row.locator(".dl-status")).toHaveText("✓ downloaded · 1 no longer on the Understorey Network site", { timeout: 30_000 });
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("plantPhotosGone") ?? "{}")))).toEqual([
+    "2024-03-Acacia_dealbata-flower.jpe",
+  ]);
+  // Delete forgets the marks too (a fresh download re-checks them)
+  await row.locator(".dl-btn").click();
+  await expect(row.locator(".dl-btn")).toHaveText("Download");
+  expect(await page.evaluate(() => localStorage.getItem("plantPhotosGone"))).toBeNull();
+});
+
+test("plants: a failed nearby grid says so and is retried on the next tap", async ({ page }) => {
+  const code = (await centerFeature(page))!.VEGCODE;
+  await routePlantFixtures(page, code);
+  let fail = true;
+  await page.route("**/src/generated/nearby.bin*", (route) =>
+    new URL(route.request().url()).search ? route.fallback() : fail ? route.fulfill({ status: 500, body: "" }) : route.fallback(),
+  );
+  const viewport = page.viewportSize()!;
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  await openPlants(page);
+  const section = page.locator("#sheet .plants");
+  await expect(section.locator('.pl-list[data-list="near-failed"]')).toContainText("Couldn't load the nearby records");
+  await expect(section.locator(".pl-toggle small")).toContainText("nearby unavailable");
+  await expect(section.locator('.pl-list[data-list="named"]')).toBeVisible(); // the rest still works
+  fail = false;
+  await page.keyboard.press("Escape");
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  await expect(section.locator('.pl-list[data-list="near"] .pl-row').first()).toBeVisible();
+  await expect(section.locator('.pl-list[data-list="near-failed"]')).toHaveCount(0);
+});
+
+test("plants: a tall plant sheet leaves the search pill clear; a double tap on a group opens just the group", async ({ page }) => {
+  // a short window so the plant sheet has to scroll at its height cap
+  await page.setViewportSize({ width: page.viewportSize()!.width, height: 600 });
+  await openSearch(page, "kunanyi");
+  await expect(firstRow(page)).toContainText(/Wellington/, { timeout: 20_000 });
+  await page.keyboard.press("Enter");
+  await settledCamera(page);
+  await waitForMapIdle(page);
+  const pill = page.locator("#search-pill");
+  await expect(pill).toBeVisible();
+  await tapCommunity(page);
+  const sheet = page.locator("#sheet");
+  await plantRow(page, "named", "Acacia dealbata").click(); // photos + facts: a long sheet
+  await expect(sheet.locator(".plant-view")).toBeVisible();
+  expect(await sheet.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  const p = (await pill.boundingBox())!;
+  const s = (await sheet.boundingBox())!;
+  const overlap = p.x < s.x + s.width && s.x < p.x + p.width && p.y < s.y + s.height && s.y < p.y + p.height;
+  expect(overlap, `pill ${JSON.stringify(p)} vs sheet ${JSON.stringify(s)}`).toBe(false);
+  await page.keyboard.press("Escape");
+  await expect(sheet.locator(".plant-view")).toHaveCount(0);
+  // the second click of a double tap lands on the freshly pushed group view
+  // — where it hits a member row it must be swallowed, not open a plant sheet
+  // (simulated directly: a real double click's landing spot depends on layout)
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>('#sheet .pl-list[data-list="named"] .pl-row[data-key="Leptecophylla juniperina"]')!.click();
+    document.querySelector<HTMLElement>("#sheet .group-view .pl-row")!.click();
+  });
+  await expect(sheet.locator(".group-view")).toHaveCount(1);
+  await page.waitForTimeout(500);
+  await expect(sheet.locator(".plant-view")).toHaveCount(0);
+  await page.keyboard.press("Escape"); // one step: straight back to the card
+  await expect(sheet.locator(".group-view")).toHaveCount(0);
+  await expect(sheet.locator(".plants")).toBeVisible();
+});
+
+test("plants: About credits Understorey Network and the Atlas of Living Australia", async ({ page }) => {
+  await page.locator("#btn-about").click();
+  await expect(page.locator("#panel")).toContainText("Understorey Network Tasmania");
+  await expect(page.locator("#panel")).toContainText("photos © their photographers");
+  await expect(page.locator("#panel")).toContainText("Atlas of Living Australia");
+  await expect(page.locator("#panel")).toContainText("Tasmanian Natural Values Atlas");
 });

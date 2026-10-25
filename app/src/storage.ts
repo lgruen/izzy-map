@@ -47,6 +47,16 @@ export async function deleteFile(path: string): Promise<void> {
   }
 }
 
+/** Remove a whole OPFS directory and everything in it (no-op if missing). */
+export async function deleteDir(path: string): Promise<void> {
+  try {
+    const { dir, base } = await resolvePath(path, false);
+    await dir.removeEntry(base, { recursive: true });
+  } catch {
+    /* already gone */
+  }
+}
+
 /** Write a whole small file (a data-sheet PDF) atomically: bytes go to
  * `<base>.tmp`, which is then moved over the final name (copy + remove
  * where move() is missing, as commitChunk). A killed app can therefore

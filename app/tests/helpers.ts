@@ -194,3 +194,75 @@ export async function chooseLayer(page: Page, kind: "base" | "overlay", value: s
 export async function closePanel(page: Page): Promise<void> {
   await page.locator(".panel-close").click();
 }
+
+// ---------- plants ----------
+
+export const PLANTS_FIXTURE = JSON.parse(fixture("plants_test.json").toString("utf8"));
+export const RECORDS_FIXTURE = JSON.parse(fixture("records_test.json").toString("utf8"));
+/** Real JPEG bytes for routed photo responses. */
+export const JPEG_FIXTURE = fixture("hillshade_grey.jpg");
+export const UN_HOST_ROUTE = "**/database.understorey-network.org.au/**";
+export const RELAY_PHOTO_ROUTE = "**/izzy-f2f.fountouki.workers.dev/un/**";
+
+export type NearbyCell = { row: number; col: number; pairs: [number, number][] };
+/** Encode nearby.bin (NBY1, little-endian) from a cell list. */
+export function encodeNearby(cells: NearbyCell[], nlon: number): Buffer {
+  const sorted = [...cells].sort((a, b) => a.row * nlon + a.col - (b.row * nlon + b.col));
+  const n = sorted.length;
+  const total = sorted.reduce((a, c) => a + c.pairs.length, 0);
+  const b = Buffer.alloc(8 + 4 * n + 4 * (n + 1) + 4 * total);
+  let o = 0;
+  b.writeUInt32LE(0x4e425931, o); o += 4;
+  b.writeUInt32LE(n, o); o += 4;
+  for (const c of sorted) { b.writeUInt32LE(c.row * nlon + c.col, o); o += 4; }
+  let acc = 0;
+  for (const c of sorted) { b.writeUInt32LE(acc, o); o += 4; acc += c.pairs.length; }
+  b.writeUInt32LE(acc, o); o += 4;
+  for (const c of sorted)
+    for (const [i, s] of [...c.pairs].sort((x, y) => y[1] - x[1])) { b.writeUInt16LE(i, o); b.writeUInt16LE(s, o + 2); o += 4; }
+  return b;
+}
+
+/** Serve the plant fixtures in place of app/src/generated/{plants,records}
+ * .json (lazy chunks: in the dev server, JS modules at the source path) and
+ * nearby.bin, with the fixtures' "@code" community renamed to `code` — the
+ * real files change with every pipeline run. Photo hosts (UN directly, the
+ * relay) are cut unless a test routes them itself (registered later = wins).
+ * Call again inside a test (before the first tap) to change code or cells. */
+export async function routePlantFixtures(
+  page: Page,
+  code = "DAC",
+  cells?: NearbyCell[],
+  /** few-records community: C1 scores null, `sites` small */
+  tally = false,
+): Promise<void> {
+  const rename = <
+    T extends { communities: Record<string, unknown[]>; sites?: Record<string, number>; members?: Record<string, unknown> },
+  >(d: T): T => ({
+    ...d,
+    communities: {
+      [code]: tally
+        ? (d.communities["@code"] as [number, number, number][]).map(([i, s]) => [i, s, null])
+        : d.communities["@code"],
+    },
+    ...(d.sites ? { sites: { [code]: tally ? 3 : d.sites["@code"] } } : {}),
+    ...(d.members ? { members: { [code]: d.members["@code"] } } : {}),
+  });
+  const js = (d: unknown) => `export default ${JSON.stringify(d)};\n`;
+  await page.route(UN_HOST_ROUTE, (route) => route.abort());
+  await page.route(RELAY_PHOTO_ROUTE, (route) => route.abort());
+  await page.route("**/src/generated/plants.json*", (route) =>
+    route.fulfill({ status: 200, contentType: "text/javascript", body: js(rename(PLANTS_FIXTURE)) }),
+  );
+  await page.route("**/src/generated/records.json*", (route) =>
+    route.fulfill({ status: 200, contentType: "text/javascript", body: js(rename(RECORDS_FIXTURE)) }),
+  );
+  const bin = encodeNearby(cells ?? RECORDS_FIXTURE.nearbyCells, RECORDS_FIXTURE.grid.nlon);
+  // the data fetch only — `nearby.bin?url` / `?import` is the JS module
+  // that hands the app this URL
+  await page.route("**/src/generated/nearby.bin*", (route) =>
+    new URL(route.request().url()).search
+      ? route.fallback()
+      : route.fulfill({ status: 200, contentType: "application/octet-stream", body: bin }),
+  );
+}

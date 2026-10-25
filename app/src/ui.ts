@@ -5,6 +5,8 @@ import {
   BASE_KEYS,
   DATA_BASE,
   DETAIL_LEVELS,
+  F2F_PROXY,
+  PLANT_RELAY,
   RASTER_MAXZOOM,
   SEASON_KEYS,
   TREE_SHEET_DIR,
@@ -56,12 +58,21 @@ import {
   markSheetGone,
   sheetPath,
 } from "./sheets";
+import {
+  allPhotos,
+  deletePhotos,
+  downloadPhotos,
+  goneCount,
+  loadPlantData,
+  photosBytes,
+  photosOnDevice,
+} from "./plants";
 import f2f from "./generated/f2f_index.json";
 
 const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page: number }> };
-// F2F PDFs have no CORS on nre.tas.gov.au; this transparent non-caching
-// relay adds it (see docs/LICENSING.md and pipeline/f2f-proxy/).
-const F2F_PROXY: string = import.meta.env.VITE_F2F_PROXY ?? "";
+// F2F PDFs have no CORS on nre.tas.gov.au; the transparent non-caching
+// relay F2F_PROXY (config.ts) adds it (see docs/LICENSING.md and
+// pipeline/f2f-proxy/).
 
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -664,6 +675,51 @@ export async function openDownloads(): Promise<void> {
     },
   });
 
+  // Plant photos (Understorey Network, © their photographers): the large
+  // version of every profile photo, fetched by the device through the
+  // non-caching relay into OPFS plants/. Optional — online, the plant
+  // sheets show the photos straight from UN. Plant data is a lazy chunk; if
+  // it can't load (stale build after an update) the row is simply absent.
+  // Added once the data arrives, after the panel has rendered (never holds
+  // the whole panel back on a 1.5 MB chunk and an OPFS directory walk).
+  const addPlantPhotos = async () => {
+    const plantData = await loadPlantData().catch(() => null);
+    const photos = plantData ? allPhotos(plantData) : [];
+    if (!photos.length || !list.isConnected) return;
+    const st0 = await photosOnDevice(photos);
+    if (!list.isConnected || items.some((it) => it.key === "plantPhotos")) return;
+    items.push({
+      key: "plantPhotos",
+      section: "text",
+      label: "Plant photos",
+      hint: `Understorey Network Tasmania — ${photos.length.toLocaleString()} photos for the plant sheets, which show them online without this`,
+      archive: null,
+      bytes: photosBytes(photos),
+      present: st0.complete,
+      partial: st0.complete ? 0 : st0.bytes,
+      update: false,
+      busy: () => activeJob("plantPhotos"),
+      partialBytes: async () => (await photosOnDevice(photos)).bytes,
+      presentNote: () => {
+        const n = goneCount(photos);
+        return n ? `${n} no longer on the Understorey Network site` : "";
+      },
+      action: (report) =>
+        runJob(
+          "plantPhotos",
+          async (signal, rep) => {
+            if (!PLANT_RELAY) throw new Error("not configured yet");
+            await downloadPhotos(photos, signal, (done, n, b, total) =>
+              rep(`photo ${done.toLocaleString()} of ${n.toLocaleString()} · ${fmtMB(b)} of ${fmtMB(total)}`),
+            );
+          },
+          report,
+        ),
+      remove: deletePhotos,
+    });
+    render();
+  };
+
   // Last error per item, shown until the next attempt.
   const errors = new Map<string, string>();
   // Downloads whose completion already triggers a re-render.
@@ -843,6 +899,7 @@ export async function openDownloads(): Promise<void> {
   };
 
   render();
+  void addPlantPhotos();
 }
 
 // ---------- Detailed areas ----------
@@ -1224,7 +1281,16 @@ export function openAbout(): void {
     The per-tree data sheets are City of Hobart documents this device fetches
     from arcgis.com and keeps only on the device.</p>
     <p>Community descriptions: Kitchener &amp; Harris (2013), <i>From Forest to
-    Fjaeldmark</i>, Ed. 2, DPIPWE — © Government of Tasmania.</p>
+    Fjaeldmark</i>, Ed. 2, DPIPWE — © Government of Tasmania. The
+    “Named in the description” plant lists are the species names it
+    mentions per community.</p>
+    <p>Plant profiles &amp; photos: <a href="https://database.understorey-network.org.au">Understorey
+    Network Tasmania</a> plant database — photos © their photographers, shown
+    from the Understorey Network site or kept only on this device.<br>
+    Occurrence records (“Often recorded”, “Recorded near here”):
+    <a href="https://www.ala.org.au">Atlas of Living Australia</a>, incl. the
+    Tasmanian Natural Values Atlas, iNaturalist Australia and the
+    Australasian Virtual Herbarium.</p>
     <p class="muted">TASVEG mapping boundaries are indicative only.
     Built for personal use. <a href="https://github.com/lgruen/izzy-map">Source</a></p>`);
 }

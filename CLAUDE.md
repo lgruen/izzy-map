@@ -7,9 +7,9 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Non-negotiables
 
-1. **docs/LICENSING.md first.** From Forest to Fjaeldmark content and the
-   City of Hobart tree data sheets must never be committed or served from
-   our hosting (public repo!). The LIST
+1. **docs/LICENSING.md first.** From Forest to Fjaeldmark content, the
+   City of Hobart tree data sheets and Understorey Network plant photos
+   must never be committed or served from our hosting (public repo!). The LIST
    aerial/Tasmap rasters are CC BY-NC-ND: tiles stay BYTE-FOR-BYTE as
    served (no re-encoding, no merging across services), non-commercial,
    attributed — the licence text governs, not the ArcGIS export flag.
@@ -18,7 +18,8 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
    mode after setup: no CDN references, glyphs/sprites self-hosted, tiles
    never routed through the service worker cache (they live in OPFS PMTiles;
    the two search indexes under `app/public/search/` are the ONE JSON the
-   SW precaches — app shell, not map data).
+   SW precaches — app shell, not map data; the plants grid `nearby.bin` is
+   the one binary, via its own `assets/*.bin` glob).
 3. **Target device is a small iPhone**, plus an iPad in landscape with a
    keyboard/trackpad. Home-screen web app (iOS 17+ behaviours assumed:
    60%-of-disk quota, ITP exemption, persist() heuristic). Surface storage
@@ -130,6 +131,57 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   2020", hobartcity.com.au answers scripts with 403 → browser-save it to
   `pipeline/cache/trees/register.pdf`; `pdftotext -layout`; 2012-era data
   sheets embed a subset font without ToUnicode → glyph codes = ASCII − 29.
+- Understorey Network Tasmania plant database (verified 2026-10-25;
+  `pipeline/build_plants.py`): WordPress at
+  `https://database.understorey-network.org.au`. REST `/wp-json/wp/v2/plant`
+  (1,884 posts, 100/page, `X-WP-Total`/`X-WP-TotalPages`, CORS on) exposes
+  only id/slug/title + taxonomy term ids — `community` (11 habitat
+  classes), `growth-form`, `plants-status`, `municipality` (29), months,
+  `family-index`; REST `media` (~2,018) gives `media_details.file` + every
+  size's file name and filesize. REST `acf` is EMPTY: common name, family,
+  form, height, flowers, fruit, habitat/general notes and the flowering
+  calendar (`class="month assigned"`) exist only in the HTML pages
+  `/plant/<slug>` (~93 KB, ~13 KB gzip). The page's glide carousel is the
+  authority for which photos, their order and credits ("Image Credit:
+  <name> – with permission"; `<img>` via webp-express
+  `…/webp-images/doc-root/wp-content/uploads/YYYY/MM/<file>.jpg.webp`).
+  Pages and photo files send NO CORS. Footer: "© 2025 Understorey Network.
+  All rights reserved". 997 UN-hosted photos on 724 plants, all credited
+  (a few slides hotlink iNaturalist/AusGrass/VicFlora — skipped; carousel
+  files with no REST media item are dropped — the ones seen 404 upstream,
+  e.g. hibbertia-sericea-var-sericea). Descriptor fields mix in
+  propagation sentences ("Propagate from seed…", "Stand pots in a saucer
+  of water"), mostly in General Notes. Sizes:
+  `<stem>-150x150` thumbnail, `<stem>-768xH` medium_large; images ≤ 768 px
+  wide have none → the full copy, which WordPress may have renamed
+  `<stem>-rotated` / `-scaled` (EXIF rotation / big-image) while the
+  untouched original stays on disk. Server ~0.8 s/page.
+- Atlas of Living Australia occurrences (verified 2026-10-25;
+  `pipeline/build_records.py`): `https://biocache-ws.ala.org.au/ws/occurrences/search?q=*:*&fq=…&pageSize=0&facets=point-0.001,dataResourceUid,license&flimit=-1`
+  — ONE facet request per species; no raw-record download, nothing
+  email-gated. `point-0.001` is ROUNDED, not truncated (296/297 sampled =
+  round(lat, 3), round(lon, 3)) → cell centres on multiples of 0.001°;
+  `flimit=-1` returns every value (asserted: counts sum to `totalRecords`).
+  ALA's `species` field is the species-rank parent (subsp./var. roll up,
+  like the UN key); UN names missing from the statewide `species` facet go
+  through `namematching-ws.ala.org.au/api/search?q=` (APC accepted name).
+  `stateProvince:Tasmania` is coordinate-assigned and INCLUDES Macquarie
+  Island (~10.5k records) → bbox fq lat −44…−39.2, lon 143.5…149 (also
+  drops sign-flipped points; keeps King Island/Furneaux). Filters: ABSENT
+  out (106,563 statewide — marine algal transects, a guard for UN species),
+  generalised/sensitive out (threatened species snapped to 10 km = fake
+  hotspots), coordinateUncertainty > 1 km out but MISSING kept (> ¼ of
+  iNaturalist), fossils out; LIVING_SPECIMEN kept (seed-bank accessions
+  georeferenced at their wild sites); no year cut-off (~41.8k records carry
+  the "1599" unknown-year placeholder). Coarse georeferences (local, not
+  an fq): ~8 % of (species, cell) pairs sit on the whole-arc-minute grid
+  (≈ 0.36 % by chance — legacy/herbarium localities up to ~1 km off; one
+  Hobart minute point dumped 212 species into HHE) → out of C1; 0.1°-grid
+  points (~11 km) → out of C1 and C2. Kept: 1,729 UN species, 862k
+  records, 127,635 ~100 m cells. Providers: NVA 564k, iNaturalist Australia
+  137k, Tasmanian Herbarium (AVH) 100k, …; licences mostly CC BY 3.0 AU /
+  4.0, plus CC BY-NC 106k, CC BY-NC-ND 1,452, unspecified 6.2k — hence
+  aggregate counts only (LICENSING.md §1d).
 
 ## Architecture
 
@@ -146,10 +198,23 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   = search panel, scoring, pin + pill; `app/src/sheets.ts` = tree
   data-sheet fetch/store, shared by details.ts and ui.ts (neither may
   import the other).
+- Plants (Plants section of a TASVEG card + plant sheet): `app/src/plants.ts`
+  = data load/index (B "named", C1 "often recorded", C2 "near here", NBY1
+  grid parse), photo URLs and the OPFS photo store/download — shared by
+  details.ts and ui.ts like sheets.ts; `app/src/plantcard.ts` = section,
+  group list and plant-sheet DOM (details.ts stacks them, `pushView`).
+  Committed facts in `app/src/generated/`: `plants.json` (1.45 MB raw /
+  303 KB gzip) + `records.json` (151 KB) are loaded by dynamic `import()` →
+  content-hashed lazy JS chunks precached by `**/*.js`; `nearby.bin`
+  (2.31 MB) is a hashed `?url` asset precached by the explicit
+  `assets/*.bin` glob (`assetsInlineLimit` refuses to inline it as a data:
+  URL; `check-dist.mjs` asserts the .bin parses and it plus both chunks
+  are in `sw.js`). Photos are never bundled (LICENSING.md §2).
 - `pipeline/` — data prep scripts (bash/python via uv; tippecanoe/gdal/
   pmtiles from brew). Outputs to `data/` (gitignored), uploaded to R2 —
-  except `build_gazetteer.py` and `build_trees.py`, whose outputs are
-  committed (see above); their caches live under `pipeline/cache/`.
+  except `build_gazetteer.py`, `build_trees.py`, `build_plants.py` and
+  `build_records.py`, whose outputs are committed (see above); their
+  caches live under `pipeline/cache/`.
   Raster packs are declared in `pipeline/packs.json` (key, service, file,
   prune rule, attribution, optional season/note/licence_override) and built
   by `build_raster.py`; `upload_r2.sh` derives manifest keys from it; the
@@ -262,6 +327,50 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   (`SHEETS_TOTAL_BYTES`, ~446 MB) follows the `sheets` table. If the
   council republishes sheets under new item ids, phones keep the old
   `trees/<id>.pdf` files (the row's Delete only removes current ids).
+- **Refresh plants & records** (rerun plants when UN adds/edits profiles;
+  records yearly — ALA grows — or after UN's species list changed). ORDER
+  MATTERS: build_plants first — build_records reads plants.json `groups`
+  to emit `members`.
+  - `python3 pipeline/build_plants.py [--fresh] [--sample N]` (stdlib +
+    `pdftotext`; cache `pipeline/cache/plants/`: REST pages, gzipped HTML
+    one file per plant (resumable), `names/` ALA name matches, `f2f-text/`
+    keyed on PDF size + mtime + extraction mode; F2F PDFs from
+    `pipeline/cache/f2f/`, fetched if missing). Cold: HTML
+    ~13.5 min at 3 workers + ~1,900 name lookups ~20 s; warm ~3 s.
+    `--fresh` drops only the REST JSON — delete `html/` to re-pull pages,
+    `names/` to re-resolve after an APC change. Tripwires (2026-10 pull):
+    ≥ 1,800 plants, ≥ 650 with a photo, ≥ 1,000 common names, ≥ 140 F2F
+    codes with species; every `SPLITS` member must be a UN key and the
+    group key must NOT be (UN re-lumping → drop the entry). Read the
+    report: unknown HTML labels (new UN fields → `P_FIELDS`/`H5_FIELDS` or
+    the ignore lists — propagation prose stays ignored), skipped non-UN
+    photos and dropped no-media photos, descriptor changes (propagation
+    sentences dropped / 300-char caps), synonym mappings, ambiguous /
+    fuzzy-dropped names, entries dropped as absent/contrast mentions
+    (eyeball the context snippets), top unmatched (mostly
+    weeds/introduced — not in UN by design). Result 2026-10-25: 3,210
+    entries over 146/156 codes, median ~22 species (max 51), 571 distinct
+    (incl. 1 group), 75 % of entries with a photo; 16 negated entries
+    dropped.
+  - `uv run --with geopandas --with pyogrio --with pyproj --with pyarrow
+    python3 pipeline/build_records.py [--tasveg PATH] [--fresh] [--sample
+    N]` (cache `pipeline/cache/records/`, one file per species tagged with
+    the fq signature — editing a filter re-pulls everything; TASVEG zip
+    default `data/LIST_TASVEG_50_STATEWIDE.zip`, read in place via
+    `/vsizip/` into `tasveg_slim.parquet` keyed on the zip's name + size +
+    mtime). In a worktree without `data/`, pass `--tasveg
+    /Users/leo/izzy-map/data/LIST_TASVEG_50_STATEWIDE.zip`. Cold ~80 s,
+    warm ~4 s, STRtree join ~1 s. Tripwires: 1,600–1,900 species,
+    750k–1.1M records, 110–170k cells, ≥ 140 codes, `nearby.bin` ≤ 3.5 MB,
+    and Nothofagus cunninghamii in RMT's top 5 (a lat/lon or CRS slip
+    scrambles that first). Result 2026-10-25: 156 codes listed, 15 of them
+    plain tallies; `members` for 123 codes; 33,819 grid cells, 510k pairs.
+  - Both files are `version: 1`; the app refuses any other version. The
+    chunks are content-hashed, so (unlike the search indexes) a resident
+    old build never reads a newer file — bump only for a breaking shape
+    change. Photos never pass through the pipeline; the "Plant photos"
+    row total (~152 MB for 997 large versions) is Σ `bytes`. Phones keep
+    photos UN has since dropped until the row's Delete (removes `plants/`).
 - **Deploy app:** push to main → Pages workflow.
 - **Do not re-upload topo unless its tiles changed:** `build_raster.py`
   writes extra metadata (`copyright_text`, `built`, …) into the archive, so
@@ -393,7 +502,9 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   and sanity-check coordinates against Tasmania's bounds.
 - The SW precache holds `search/*.json` as an EXPLICIT glob — the only JSON
   it may hold. Never widen it to `**/*.json`: map data (manifest, unit
-  tables are bundled anyway) must never go through the SW.
+  tables are bundled anyway) must never go through the SW. Likewise
+  `assets/*.bin` exists for the plants grid `nearby.bin` alone (app data,
+  not tiles); plants.json/records.json need no rule — they are JS chunks.
 - `openSearch()` must run synchronously inside the tap's own task: iOS
   raises the keyboard only for a `focus()` in the gesture's task — never
   `await` before it. The panel is `openPanel(html, "search")`: a
@@ -403,8 +514,9 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   event after the Escape handler has already closed the panel — search.ts
   ignores input events once the panel is closed (`closed` flag), or the
   late empty value would wipe the remembered query that reopening restores.
-- Escape chain (hardware keyboards): areabar → PDF viewer → panel → details
-  sheet → search pin. `clearSearchPin()`/`isSearchPinShown()` live in
+- Escape chain (hardware keyboards): areabar → PDF viewer → panel → plant
+  sheet → group list → details card → search pin (`detailsBack()` pops one
+  stacked view; only an empty stack closes the sheet). `clearSearchPin()`/`isSearchPinShown()` live in
   search.ts; the pin is a DOM `Marker` (no sprite, no glyph range needed
   offline) with `#search-pill` (name = re-fly, × = clear).
 - Search indexes are prefetched on the first map `idle` (main.ts) ONLY when
@@ -450,7 +562,112 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 - Multi-file downloads (F2F chapters, tree sheets) share one job registry
   in ui.ts (`runJob`/`activeJob`, module-level like storage.ts's inflight
   map): a reopened panel finds the running job, shows Cancel, and resumes
-  per file (files already on disk are skipped, not re-fetched).
+  per file (files already on disk are skipped, not re-fetched). Plant
+  photos use it too (`plantPhotos`).
+- The Plants section starts COLLAPSED as one summary row ("n named · n in
+  records · n nearby"): the card must stay a compact label so the map
+  beside/above it stays tappable — comparing communities is the core
+  gesture. Once expanded, later cards this session open expanded
+  (module-level flag, not persisted). `section.dataset.state` =
+  loading → empty | ready | error (tests key on it). Named + recorded
+  lists render as soon as the chunks are in; the nearby list (2 MB grid)
+  is appended when it resolves — only a code with neither waits for the
+  grid to decide whether a section appears at all; none at all (water,
+  urban) = hidden, state "empty". `fillPlants` re-checks
+  `section.isConnected` after every await (the card may be replaced).
+- Views stacked on a card (group list, plant sheet) are PARKED, not
+  re-rendered: `pushView` moves the card's nodes into a hidden
+  `.sheet-stash`, so in-flight lookups and handlers survive and Back
+  restores scroll and focus exactly; `renderSheet`/`clearSelection` drop
+  the stack. Double tap: the second click is hit-tested AFTER the first
+  pushed the new view, landing on a member row or the UN link — a capture
+  listener swallows clicks on `.pl-row, .pl-more, a` for 400 ms after each
+  push (Back resets it), and `openEntry` ignores parked rows and a top view
+  already showing that entry (`data-entry`). `#sheet.tall` stops ≥ 72 px +
+  safe area below the top so `#search-pill` (re-fly, ×) stays reachable.
+- Plant data is a DYNAMIC import, unlike the viewer (static in details.ts
+  for exactly this reason): a background skipWaiting update can purge the
+  old build's hashed chunks while the app is resident. Hence main.ts
+  prefetches `loadPlantData()` on the first map idle when a SW controls
+  the page (like the search indexes) — held in memory before any update.
+  Failures are never cached (the next card retries); the card says "close
+  IzzyMap completely and open it again". The grid loads on its own memo
+  (reset on failure, 20 s abort): a failed grid leaves B/C1 intact and
+  shows "Couldn't load the nearby records — tap the map again". The
+  Downloads panel renders first and appends the Plant photos row when the
+  data arrives (absent if it can't load).
+- Plant photos: online a plain `<img>` straight from UN (displaying needs
+  no CORS); the relay's `/un/` route exists only to READ bytes into OPFS.
+  Stored as `plants/<path with / → ->.<ext>` — the size suffix is left
+  OUT, so a re-sized large version is still the same photo and one
+  `listDir` answers "what's on the device". `large` is a suffix, never
+  parsed: "-768x576", "" (original; 226 photos), "-rotated" (9) or
+  "-scaled" (none yet) — pixel size unknown, hence a fixed 4:3 box with
+  the photo `contain`ed (thumbs: 1:1, `cover`). Offline + not stored, or a
+  failed load, keeps the leaf placeholder — never a broken-image icon.
+- Relay refusals (403 wrong Origin, 404 off-allow-list) carry NO CORS
+  headers → the browser surfaces a TypeError and the batch stops as
+  "offline"; only an UPSTREAM 404/410 comes back readable, is filed in
+  localStorage `plantPhotosGone` ({file: isoDate}) and counts as done. Ten
+  gone in a row = broken relay/path scheme, not deletions (marks undone,
+  batch stops); a non-image 200 (captive portal) stops it too. A readable
+  server error (relay 502: upstream error, redirect or non-image type)
+  skips just that file for the session and the batch finishes as "n
+  failed, will retry next time the app opens". Both relay routes use
+  `redirect: "manual"`, any 3xx → 502: the allow-list must bound what is
+  fetched, not just what is asked for. `RELAYABLE`
+  in plants.ts mirrors the worker's `UN_PHOTO` regex — change both, or one
+  odd file name stalls Resume at the same photo for ever.
+- Plant names (`name`, verbatim UN titles: "×", curly quotes) are DOM-only,
+  like trees' `name` — never a MapLibre `text-field`.
+- F2F text must be pdftotext READING order, never `-layout`: the pages are
+  two-column and `-layout` interleaves columns line by line, so a binomial
+  wrapped across a line ("Acacia" / other column / "dealbata") vanished —
+  ~160 species over 83 codes (2026-10-25 review). Page breaks survive
+  either way, so f2f_index.json page numbers still delimit sections.
+- F2F → UN join (build_plants.py): key = first two words of the UN title
+  ("sp."/"x"/"×" → none). "E. amygdalina" expands from the last full genus
+  with that initial when that resolves (exact, gender variant or ALA
+  synonym — pass 2 queues "<last genus> <epithet>" for name matching:
+  Ehrharta acuminata = Tetrarrhena acuminata), else from the ONE UN genus
+  with that initial holding the epithet; gender-agreement swaps (us/a/um, is/e, er/ra) catch
+  "Orites revoluta"/"revolutus"; ALA name matching maps a name only when it
+  and exactly one UN key share an accepted species, and a fuzzy match only
+  as a same-genus spelling fix (fuzzy-onto-synonym chains two guesses:
+  "Eucalyptus glandulosus" ~> E. amygdalina). `SPLITS`: a broad F2F name
+  UN only has segregates for (Leptecophylla juniperina "pinkberry" → 6)
+  is listed as the group key, unless followed by "subsp. X" naming a UN
+  segregate (then that species); the app ranks members by records in the
+  community (`records.json` `members[code]` — full counts, since the ≤ 40
+  C1 list may omit them), then nearby, then A–Z.
+- Names mentioned only as ABSENT or as a contrast are not "in" the
+  community: a cue (lacks/lacking, absence of/absent, instead of, rather
+  than, rarely if ever, unlike) within ~60 chars before the name — cut at
+  the last sentence end or clause break (", is/with/but/which…", "as is")
+  — or "which/that rarely if ever / never / does not / is absent" right
+  after it; the negation carries along "A, B and C" / "(e.g. …)" lists.
+  A name also mentioned positively in the section stays (16 entries
+  dropped, 2026-10-25; the report prints each with context).
+- UN descriptors (form/flowers/fruit/habitat/notes) are cleaned: sentences
+  about propagating, sowing/germinating, potting, watering, fertilising
+  and pruning are dropped (propagation is out of scope); general gardening
+  hints ("In cultivation needs a sheltered position") deliberately STAY.
+  The regex is tuned so ecology survives (road cuttings, wind-pruned,
+  self-sowing, "relies on birds to germinate its seed"); then each field is
+  capped at 300 chars on a sentence boundary ("…").
+- C1 ranking (build_records.py): IndVal (Dufrêne & Legendre 1997) with
+  ~100 m cells as sites and the Wilson 95 % LOWER bound in place of the raw
+  proportion (3 of 330 sites counts 0.3 %, not 0.9 %); sites ≥ 3, ≤ 40 per
+  code. Codes with < 30 recorded sites (15, incl. threatened DMO/DBA/DPE/
+  SMP) get a plain tally with score null — titled "Recorded in this
+  community" and marked "few records", not hidden: rare communities are
+  the interesting ones (Leo). Known quirk, left as is: GPL ranks riparian Acacia
+  axillaris / Senecio squarrosus / Bedfordia above Poa labillardierei —
+  genuine specificity in uneven survey data. Arc-minute-grid cells are
+  excluded from sites_cs AND Sites_c (coarse herbarium georeferences
+  dumped whole floras into whichever polygon the minute point hit).
+  Counting distinct cells, not records, damps repeat surveys; C2 sums the
+  tapped 0.01° cell + 8 neighbours (≈ 1–1.5 km).
 
 ## Future ideas (discussed, not planned)
 
@@ -514,7 +731,12 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   through a deploy-use-delete multipart uploader Worker)
 - F2F CORS proxy: https://izzy-f2f.fountouki.workers.dev (Worker `izzy-f2f`,
   allowlisted f2f_*.pdf pass-through; needed because nre.tas.gov.au sends no
-  CORS headers)
+  CORS headers). Since 2026-10-25 also `/un/YYYY/MM/<file>.<img-ext>` →
+  UN `wp-content/uploads/` (separate allow-list, image content-types only,
+  no-store both ways, same Origin check). Both routes `redirect: "manual"`
+  (3xx → 502). Redeployed and verified live 2026-10-25: photo 200
+  image/jpeg with CORS, missing photo 404, 403 without Origin, 404 for
+  non-photo paths, F2F HEAD 200, F2F Range 206.
 
 ## Decisions revised during build (vs original plan)
 
@@ -528,6 +750,30 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 
 ## Status log
 
+- 2026-10-25: Plants section on TASVEG cards — three lists, each entry
+  opening a plant sheet built from the Understorey Network Tasmania
+  database (1,884 profiles: photos, common name, family, form, height,
+  flowers/fruit, habitat, flowering months): B "Named in the description"
+  (F2F binomials ∩ UN keys via abbreviations, gender endings, ALA
+  synonyms and one split group, absent/contrast mentions dropped; 3,210
+  entries over 146/156 codes, median ~22), C1 "Often recorded" (ALA
+  records joined to TASVEG, Wilson-lower-bound IndVal, arc-minute
+  georeferences out; tallies for 15 sparse codes), C2 "Recorded near
+  here" (0.01° grid, 3 × 3 cells). Committed: plants.json + records.json
+  (lazy chunks, prefetched on idle) + nearby.bin (precached asset).
+  Licence decision (Leo): species lists and short factual descriptors are
+  facts; photos © photographers, device-fetched only — online straight
+  from UN, offline via the relay's new `/un/` allow-list into OPFS ("Plant
+  photos" row, ~152 MB); propagation prose excluded (also scrubbed from
+  the descriptors). Two adversarial review rounds. Hard-won: `-layout`
+  pdftotext lost ~160 species to interleaved columns, REST `acf` empty
+  (HTML scrape), `-rotated`/`-scaled` full copies, `stateProvince:Tasmania`
+  includes Macquarie Island, ABSENT survey records, 10 km-generalised
+  threatened species, arc-minute herbarium points, point-0.001 rounds,
+  relay refusals carry no CORS (readable 404 vs network error) and must
+  not follow redirects, lazy chunks purged by an SW update, double tap
+  stacking two views, collapsed section so the map stays tappable. 11 new
+  Playwright tests.
 - 2026-10-03: Relief shading (LIST `HillshadeGrey`, CC BY 3.0 AU) as a
   statewide z0–15 raster pack + detailed-area layer, shown via an "Also
   show" toggle over any base/overlay; grey tiles become translucent-black

@@ -30,7 +30,7 @@ import {
   type LayerState,
   type OverlayMode,
 } from "./style";
-import { clearDetails, wireDetails } from "./details";
+import { clearDetails, detailsBack, wireDetails } from "./details";
 import { wireCoordReadout } from "./mga";
 import {
   closePanel,
@@ -45,6 +45,7 @@ import {
 import { closePdfViewer, isPdfOpen } from "./viewer";
 import { ensurePersistence } from "./storage";
 import { clearSearchPin, isSearchPinShown, loadIndexes, openSearch, wireSearch } from "./search";
+import { loadPlantData } from "./plants";
 
 /** Restore the Layers-sheet state; migrate the pre-sheet keys once. */
 function loadState(): LayerState {
@@ -151,7 +152,13 @@ async function boot(): Promise<void> {
     // warm the search indexes once the map is quiet (the panel retries) —
     // only under a service worker: an uncontrolled first load is precaching
     // them already (double download), and the first search loads on demand
-    if (navigator.serviceWorker?.controller) loadIndexes().catch(() => {});
+    if (navigator.serviceWorker?.controller) {
+      loadIndexes().catch(() => {});
+      // the plant data (lazy chunks + nearby.bin) likewise: held in memory
+      // before a background SW update can purge this build's precache
+      // (skipWaiting + cleanupOutdatedCaches) while the page keeps running
+      loadPlantData().catch(() => {});
+    }
   });
 
   // Keep the screen awake only while actively following GPS (iOS 18.4+
@@ -284,7 +291,7 @@ async function boot(): Promise<void> {
     if (!byId("areabar").hidden) byId("areabar-cancel").click();
     else if (isPdfOpen()) closePdfViewer();
     else if (isPanelOpen()) closePanel();
-    else if (!byId("sheet").hidden) clearDetails();
+    else if (!byId("sheet").hidden) { if (!detailsBack()) clearDetails(); } // plant sheet -> its card first
     else if (isSearchPinShown()) clearSearchPin();
   });
 

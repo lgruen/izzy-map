@@ -1,7 +1,7 @@
 # Licensing boundaries (read before touching data flows)
 
-This repo is **public**. Five licence regimes apply (§1, §1b, §1c, §2, §3;
-§4 is the refusal rule for unlicensed services) — the architecture is shaped
+This repo is **public**. Six licence regimes apply (§1, §1b, §1c, §1d, §2,
+§3; §4 is the refusal rule for unlicensed services) — the architecture is shaped
 around keeping them separate. What governs is the **copyright text
 of each dataset/service**: the LIST Web Services T&C (Dec 2014, 8 clauses,
 `listdata.thelist.tas.gov.au/public/LISTWebServicesTermsConditions.pdf`) say
@@ -88,6 +88,26 @@ badge/link. The app shows this on the About screen and map attribution.
   licence guard on a vector-overlay pipeline. The per-tree data-sheet PDFs
   the service links to are NOT covered by this licence — see §2.
 
+## 1d. Mixed-licence occurrence records (ALA) — aggregate facts only
+
+- **Atlas of Living Australia** plant occurrence records for Tasmania
+  (biocache-ws facet queries, `pipeline/build_records.py`, verified
+  2026-10-25). Each record keeps its provider's licence; the kept set
+  (862k records) is mostly CC BY 3.0 AU (571k, chiefly the Natural Values
+  Atlas) and
+  CC BY 4.0 (157k), but also CC BY-NC 4.0 (106k), CC0, CC BY-SA, CC BY-NC-SA,
+  CC BY-NC-ND 4.0 (1,452) and UNSPECIFIED (6,240) — so no record, point or
+  per-record field is ever committed. What IS committed
+  (`app/src/generated/records.json` + `nearby.bin`) is aggregated FACTS
+  derived by us: which species were recorded in which TASVEG community /
+  0.01° grid cell, and how many distinct ~100 m cells — counts, not
+  copies, so the NC/ND/unspecified minority imposes nothing on them.
+  `records.json` `sources` keeps the per-provider and per-licence tallies
+  and the access date. Attribution (card footer + About):
+  "Occurrence records: Atlas of Living Australia (incl. Tasmanian Natural
+  Values Atlas, iNaturalist Australia, Australasian Virtual Herbarium)",
+  with a link to ala.org.au on the About screen.
+
 ## 2. © All rights reserved — must NEVER enter this repo or our hosting
 
 - **From Forest to Fjaeldmark** (Ed. 2) chapter PDFs and any text extracted
@@ -97,14 +117,49 @@ badge/link. The app shows this on the About screen and map attribution.
   private use. Because that server sends no CORS headers, the request passes
   through a **transparent, non-caching relay** (Cloudflare Worker
   `pipeline/f2f-proxy/`): it forwards GET/HEAD for exactly the 11 known
-  chapter files, only for this app's origins (403 otherwise), with
+  chapter files (plus, on a separate allow-list, Understorey Network photo
+  files — below), only for this app's origins (403 otherwise), with
   `cache: "no-store"` upstream and `Cache-Control: no-store` downstream so
   nothing is ever stored at the edge. The relay must stay that way — never
-  add caching, widen the allowlist, or open the Origin check.
-- This repo may only contain `f2f_index.json` — a mapping of VEGCODE →
-  chapter file + page number, which is facts, not content. Do not commit
-  PDFs, extracted text, or host either on Pages/R2. `.gitignore` blocks
-  `*.pdf` and `f2f_pdfs/` as a guard.
+  add caching, widen either allowlist, or open the Origin check.
+- This repo may only contain FACTS from F2F: `f2f_index.json` (VEGCODE →
+  chapter file + page number) and the per-community species-name lists in
+  `app/src/generated/plants.json` `communities` (which binomials each
+  community's account names, normalised to Understorey Network keys, in
+  order of first mention — names, not text; no sentences, no
+  descriptions). Do not commit PDFs, extracted text, or host either on
+  Pages/R2; `build_plants.py` keeps its pdftotext output in the gitignored
+  `pipeline/cache/plants/f2f-text/`. `.gitignore` blocks `*.pdf` and
+  `f2f_pdfs/` as a guard.
+- **Understorey Network Tasmania plant database**
+  (database.understorey-network.org.au; footer "© 2025 Understorey
+  Network. All rights reserved"; every photo credited "<name> – with
+  permission", verified 2026-10-25). Decision (Leo, 2026-10-25): species
+  names and short factual plant descriptors are facts and may be
+  committed, like trees.json — `app/src/generated/plants.json` carries,
+  per profile, the name, common name, family, growth forms, height,
+  status, flowering months, UN habitat classes and the short Form /
+  Flowers / Fruit / Habitat Notes / General Notes descriptors, plus photo
+  PATHS and credits. Excluded entirely — never read into the output, never
+  shown: the propagation prose (seed collection/storage, germination,
+  sowing, cuttings) and the site/soil/frost tolerance blocks. Where UN
+  writes propagation-style sentences into the descriptor fields
+  themselves (propagating, sowing, potting, watering, fertilising,
+  pruning), `build_plants.py` drops those sentences too, then caps each
+  descriptor at 300 characters on a sentence boundary — short facts, not
+  the profile's text.
+  **Photos are © their photographers**: never committed, never served from
+  Pages/R2, never fetched by the pipeline. The device fetches them: online
+  a plain `<img>` straight from UN; for offline use the optional "Plant
+  photos" Downloads row (~152 MB, 997 large versions) reads them through
+  the relay's separate `/un/YYYY/MM/<file>.<img-ext>` allow-list (WordPress
+  uploads only — never pages or the API; image content-types only;
+  no-store both ways; same Origin check; redirects never followed — like
+  the F2F route, a 3xx becomes a 502, so the allow-list bounds what is
+  actually fetched) into OPFS `plants/` for private
+  use. Credit shown under every photo ("Photo: <credit> · Understorey
+  Network") and "Plant profiles & photos: Understorey Network Tasmania
+  (photos © their photographers)" on the card, plant sheet and About.
 - **Council data sheets (no stated licence):** the 282 per-tree PDFs behind
   the tree service's `Data_Sheet_URL` are separate ArcGIS Online items whose
   `licenseInfo` is null — © City of Hobart, nothing granted beyond viewing

@@ -43,7 +43,13 @@ function devData(): Plugin {
 // dev/preview/Pages all working.
 export default defineConfig({
   base: "./",
-  build: { target: "es2022", sourcemap: true },
+  build: {
+    target: "es2022",
+    sourcemap: true,
+    // nearby.bin must stay a file the SW precaches (check-dist asserts it),
+    // never a data: URL inlined into a chunk, whatever its size
+    assetsInlineLimit: (file: string) => (/\.bin($|\?)/.test(file) ? false : undefined),
+  },
   plugins: [
     devData(),
     VitePWA({
@@ -57,7 +63,10 @@ export default defineConfig({
         // one JSON the SW may hold — search works offline from first launch).
         // Explicit path, not a blanket json glob: map data still never goes
         // through the SW.
-        globPatterns: ["**/*.{js,mjs,css,html,png,svg,pbf,woff2,webmanifest}", "search/*.json"],
+        // assets/*.bin: the plants "recorded near here" grid (nearby.bin,
+        // committed facts — app data like the search indexes, not map tiles);
+        // plants.json/records.json are lazy JS chunks, covered by **/*.js.
+        globPatterns: ["**/*.{js,mjs,css,html,png,svg,pbf,woff2,webmanifest}", "search/*.json", "assets/*.bin"],
         // workbox's 2 MiB default silently drops the pdf.js worker/chunks
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",

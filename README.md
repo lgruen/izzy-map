@@ -50,6 +50,14 @@ Government.
   groups; tap one for botanical and common name, address, register note
   and the council's data sheet (a PDF the phone fetches once from ArcGIS
   Online and keeps; all 282 sheets can also be downloaded in advance).
+- **Plants**: a community's card lists the plants its *From Forest to
+  Fjaeldmark* account names, the species most often recorded in that
+  community statewide, and those recorded within about a kilometre of the
+  tapped spot (Atlas of Living Australia records). Each opens a plant sheet
+  from the Understorey Network Tasmania database — photos, common name,
+  form, height, flowers, fruit, habitat and flowering months. The lists
+  work offline; photos show online, or can be downloaded in advance
+  (~150 MB) and are never stored on our hosting.
 
 See `CLAUDE.md` for the full architecture and maintenance guide.
 
@@ -89,9 +97,21 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
   data sheets are © City of Hobart documents that the device fetches from
   ArcGIS Online for private use — not included in this repo, not
   redistributed.
+- Plant profiles and photos from the
+  [Understorey Network Tasmania](https://database.understorey-network.org.au)
+  plant database — photos © their photographers, fetched by the device and
+  not included in this repo; only species names and short factual
+  descriptors are.
+- Plant occurrence records from the
+  [Atlas of Living Australia](https://www.ala.org.au) (incl. the Tasmanian
+  Natural Values Atlas, iNaturalist Australia and the Australasian Virtual
+  Herbarium) — providers' licences, mostly CC BY; only aggregated counts
+  per community and per ~1 km cell are included.
 - Kitchener, A. and Harris, S. (2013). *From Forest to Fjaeldmark:
   Descriptions of Tasmania's Vegetation*. Edition 2. DPIPWE, Tasmania.
-  © Government of Tasmania — all rights reserved (not included in this repo).
+  © Government of Tasmania — all rights reserved (not included in this repo;
+  only the page index and the species names each community's account
+  mentions are).
 
 ## Licence
 

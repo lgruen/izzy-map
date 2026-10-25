@@ -26,4 +26,28 @@ for (const [rel, key, min] of [["search/gazetteer.json", "rows", 30_000], ["sear
   if (!sw.includes(rel)) { console.error(`check-dist: ${rel} not precached by sw.js`); ok = false; continue; }
   console.log(`check-dist: ${rel} v${j.version}, ${j[key].length.toLocaleString()} ${key}, precached`);
 }
+// Plants: the "recorded near here" grid ships as a hashed .bin asset the SW
+// must precache (a data: URL or a missed glob = no nearby list offline), and
+// it must parse (NBY1 magic, consistent offsets). plants.json/records.json
+// are lazy JS chunks (named after the JSON file): check they are precached.
+{
+  const bin = assets.find((f) => /^nearby-.*\.bin$/.test(f));
+  if (!bin) { console.error("check-dist: no nearby-*.bin asset (inlined? see assetsInlineLimit)"); ok = false; }
+  else if (!sw.includes(`assets/${bin}`)) { console.error(`check-dist: ${bin} not precached by sw.js`); ok = false; }
+  else {
+    const b = readFileSync(`dist/assets/${bin}`);
+    const n = b.length >= 8 ? b.readUInt32LE(4) : -1;
+    const pairsAt = 8 + 4 * n + 4 * (n + 1);
+    const magicOk = b.length >= 8 && b.readUInt32LE(0) === 0x4e425931;
+    const sizeOk = magicOk && b.length >= pairsAt && b.length >= pairsAt + 4 * b.readUInt32LE(8 + 4 * n + 4 * n);
+    if (!magicOk || !sizeOk) { console.error(`check-dist: ${bin} does not parse as NBY1`); ok = false; }
+    else console.log(`check-dist: ${bin} NBY1, ${n.toLocaleString()} cells, ${(b.length / 1e6).toFixed(2)} MB, precached`);
+  }
+  for (const [label, re] of [["plants.json", /^plants-.*\.js$/], ["records.json", /^records-.*\.js$/]]) {
+    const chunk = assets.find((f) => re.test(f));
+    if (!chunk) { console.error(`check-dist: no chunk carrying ${label}`); ok = false; continue; }
+    if (!sw.includes(`assets/${chunk}`)) { console.error(`check-dist: ${label} chunk ${chunk} not precached by sw.js`); ok = false; continue; }
+    console.log(`check-dist: ${label} -> ${chunk} (${(readFileSync(`dist/assets/${chunk}`).length / 1e6).toFixed(2)} MB), precached`);
+  }
+}
 process.exit(ok ? 0 : 1);

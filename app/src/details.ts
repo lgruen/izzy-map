@@ -8,6 +8,8 @@ import { SHEETS_TOTAL_BYTES, SheetError, fetchSheet, fmtSheetMB, goneSheets, she
 // Static import (not dynamic): a skipWaiting SW update while the app is
 // resident would purge an old lazy chunk and strand descriptions offline.
 import { openPdfViewer } from "./viewer";
+import { type PlantCtx, fillPlants, groupView, plantView } from "./plantcard";
+import type { Entry } from "./plants";
 
 const F2F = f2f as { baseUrl: string; index: Record<string, { file: string; page: number }> };
 
@@ -29,6 +31,9 @@ const esc = (s: string) =>
 /** Closes the sheet and clears the highlight — assigned by wireDetails so
  * the overlay switcher can dismiss a stale answer on mode change. */
 export let clearDetails: () => void = () => {};
+/** One step back inside the sheet (plant sheet -> its community card);
+ * false when there is nothing to go back to. For the Escape chain. */
+export let detailsBack: () => boolean = () => false;
 
 export function wireDetails(map: Map): void {
   const sheet = document.getElementById("sheet")!;
@@ -42,13 +47,30 @@ export function wireDetails(map: Map): void {
     sheetFetch?.abort();
     sheetFetch = null;
   };
+  // Views stacked on a community card (group list, plant sheet): one undo
+  // per level, newest last. renderSheet/clearSelection drop them all (the
+  // innerHTML they replace takes the parked nodes with it).
+  const views: (() => void)[] = [];
+  // the sticky Back bar of a stacked view gets its divider once scrolled
+  const markScrolled = () => sheet.classList.toggle("scrolled", sheet.scrollTop > 2);
+  sheet.addEventListener("scroll", markScrolled, { passive: true });
+  const resetPlant = () => {
+    views.length = 0;
+    sheet.classList.remove("tall", "plants-open", "scrolled");
+  };
   const clearSelection = () => {
     cancelSheetFetch();
+    resetPlant();
     sheet.hidden = true;
     selection()?.setData({ type: "FeatureCollection", features: [] });
   };
 
   clearDetails = clearSelection;
+  detailsBack = () => {
+    if (!views.length || sheet.hidden) return false;
+    back();
+    return true;
+  };
 
   map.on("click", (e) => {
     // Trees first: a dot is a small target, so it gets a 12 px padded box
@@ -107,7 +129,7 @@ export function wireDetails(map: Map): void {
     });
     if (feats[0].layer.id === "geology-fill") showGeology(feats[0]);
     else if (feats[0].layer.id === "pre1750-fill") showPre1750(feats[0]);
-    else show(feats[0]);
+    else show(feats[0], e.lngLat);
   });
 
   /** Shared sheet shell (handle, close button, swatch + code + name head,
@@ -125,6 +147,7 @@ export function wireDetails(map: Map): void {
     tail: string;
   }): void {
     cancelSheetFetch(); // a new card supersedes the previous tree's fetch
+    resetPlant();
     sheet.dataset.kind = o.kind;
     sheet.innerHTML = `
       <div class="handle"></div>
@@ -259,7 +282,82 @@ export function wireDetails(map: Map): void {
     };
   }
 
-  function show(f: MapGeoJSONFeature) {
+  /** Stack a view (group list, plant sheet) on whatever the sheet shows.
+   * The current nodes are parked (hidden) rather than re-rendered, so their
+   * pending lookups and handlers survive and Back restores them exactly,
+   * scroll position and focus too. One Back / Escape = one step. */
+  function pushView(view: HTMLElement, from: HTMLElement | null) {
+    pushedAt = performance.now();
+    const scroll = sheet.scrollTop;
+    const stash = document.createElement("div");
+    stash.className = "sheet-stash";
+    stash.hidden = true;
+    stash.append(...sheet.childNodes);
+    sheet.append(stash, view);
+    sheet.classList.add("tall");
+    sheet.scrollTop = 0;
+    markScrolled();
+    view.querySelector<HTMLElement>(".pl-back")?.focus({ preventScroll: true });
+    views.push(() => {
+      view.remove();
+      sheet.append(...stash.childNodes);
+      stash.remove();
+      if (!views.length) sheet.classList.remove("tall");
+      sheet.scrollTop = scroll;
+      markScrolled();
+      from?.focus({ preventScroll: true });
+    });
+  }
+  const back = () => {
+    pushedAt = -Infinity; // the guard is about the view just pushed, not the one returned to
+    views.pop()?.();
+  };
+  // A double tap on an entry: the second click is hit-tested after the first
+  // already pushed the new view, so it lands on whatever sits there now (a
+  // member row of a group, the UN link of a plant sheet). Swallow clicks on
+  // the new view's rows and links for a moment after each push.
+  let pushedAt = -Infinity;
+  const DOUBLE_TAP_MS = 400;
+  sheet.addEventListener(
+    "click",
+    (ev) => {
+      if (performance.now() - pushedAt > DOUBLE_TAP_MS) return;
+      if (!(ev.target as HTMLElement).closest?.(".pl-row, .pl-more, a")) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+    },
+    true,
+  );
+
+  /** A tapped list entry: a group opens its species list, a species its
+   * plant sheet (from either the card or a group list). */
+  function openEntry(e: Entry, ctx: PlantCtx, from: HTMLElement | null, backLabel: string) {
+    if (sheet.hidden) return;
+    // a double tap: the second click must not stack the same view again —
+    // its row is parked by now, or the top view already shows this entry
+    if (from?.closest(".sheet-stash")) return;
+    const top = sheet.lastElementChild as HTMLElement | null;
+    const id = e.group ? `g:${e.group.key}` : `p:${e.plant.id}`;
+    if (top?.dataset.entry === id) return;
+    const g = e.group;
+    const view = g
+      ? groupView(g, ctx, {
+          back: backLabel,
+          onOpen: (m, el) => openEntry(m, ctx, el, `Back to ${g.common ?? g.key}`),
+          onBack: back,
+          onClose: clearSelection,
+        })
+      : plantView(e.plant, {
+          back: backLabel,
+          nearbySites: ctx.near?.sites.get(e.key),
+          onBack: back,
+          onClose: clearSelection,
+        });
+    view.dataset.entry = id;
+    pushView(view, from);
+  }
+
+  function show(f: MapGeoJSONFeature, at: { lng: number; lat: number } | null = null) {
     const p = f.properties as Record<string, string>;
     const code = p.VEGCODE ?? "?";
     const meta = COMMUNITIES[code];
@@ -279,6 +377,13 @@ export function wireDetails(map: Map): void {
         <small>From Forest to Fjaeldmark</small></button>`,
     });
     sheet.querySelector<HTMLButtonElement>(".sheet-desc")!.onclick = () => openDescription(code);
+    // Plants: filled in when the lazy data arrives (hidden until then, and
+    // for good when this code has no entries — water, urban, …)
+    const section = document.createElement("section");
+    section.className = "plants";
+    section.hidden = true;
+    sheet.append(section);
+    void fillPlants(section, code, at, (e, ctx, from) => openEntry(e, ctx, from, `Back to ${code}`));
   }
 }
 
