@@ -27,12 +27,13 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
    (`min-width: 700px` → side cards), never on the device/UA (iPadOS reports
    a Mac UA; Split View gives phone-width windows). Wi-Fi-only iPads have no
    GPS: the geolocate error is announced, never silently spun.
-4. **Device access:** Leo has an **Android** phone (secondary test target —
-   the PWA should work there too); the only real iPhone is the partner's.
-   iOS testing therefore runs on the Xcode iOS Simulator, with occasional
-   short verification sessions on the partner's phone — anything sent to
-   that phone must be self-explanatory and low-effort (auto-running probe,
-   copy-results buttons).
+4. **Device access (updated 2026-11-01):** Leo now has his own **iPhone**
+   and a paid Apple Developer account (TestFlight/native builds possible),
+   so real-device iOS checks can happen on his phone; the Xcode Simulator
+   stays the quick test bed. Users: Leo, his partner (iPhone) and the
+   household iPad — nobody else known. Android is low priority now, but
+   portability is valued: keep the PWA working on other platforms rather
+   than leaning on iOS-only APIs without a reason.
 
 ## Key endpoints & data facts (verified 2026-08-29)
 
@@ -219,7 +220,11 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   prune rule, attribution, optional season/note/licence_override) and built
   by `build_raster.py`; `upload_r2.sh` derives manifest keys from it; the
   app mirrors the key list by hand in `app/src/config.ts` (`RASTER_PACKS`).
-- `probe/` — standalone device capability probe page.
+- `probe/` — standalone device capability probe page; `probe/plantid/` =
+  the plant-ID phone test (can Safari run BioCLIP 2.5 via onnxruntime-web
+  WebGPU? data on R2 under `plantid-test/v1/`; see pipeline/plantid/README).
+  The app's SW has `navigateFallbackDenylist: [/\/probe\//]` — without it a
+  Safari that ever ran the app gets the MAP for any probe URL.
 - Hosting: GitHub Pages (app), Cloudflare R2 (archives). CI via Actions.
 
 ## Workflows
@@ -476,7 +481,7 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   applies — give toolbar/inline SVGs explicit width/height attributes.
 - Playwright's WebKit build has NO OPFS write support (and desktop WebKit
   quirks around it) — all OPFS-write tests run in the Chromium project;
-  real-iOS verification happens on the partner's phone.
+  real-iOS verification happens on a real iPhone (Leo's own since 2026-11).
 - OPFS `createWritable({keepExistingData:true})` copies the whole file into
   its swap on every open — never use it for incremental appends to large
   files (hence the chunked part-file download design in storage.ts).

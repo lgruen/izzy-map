@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plant ID phone test</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.45 -apple-system, system-ui, sans-serif; margin: 0; padding: 12px calc(14px + env(safe-area-inset-right)) 48px calc(14px + env(safe-area-inset-left)); max-width: 640px; }
+  h1 { font-size: 1.25rem; margin: 8px 0; }
+  .card { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
+  .card h2 { font-size: 1rem; margin: 0 0 6px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; margin: 3px 0; }
+  .row .k { opacity: .75; }
+  .row .v { text-align: right; font-variant-numeric: tabular-nums; word-break: break-word; }
+  .ok { color: #1a7f37; font-weight: 600; }
+  .bad { color: #cf222e; font-weight: 600; }
+  .warn { color: #9a6700; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .ok { color: #4ac26b; } .bad { color: #ff7b72; } .warn { color: #d29922; } }
+  button, .filebtn { font: inherit; padding: 11px 14px; border-radius: 9px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: color-mix(in srgb, currentColor 8%, transparent); color: inherit; margin: 4px 6px 4px 0; display: inline-block; }
+  button:disabled { opacity: .45; }
+  .big { width: 100%; font-weight: 600; font-size: 1.05rem; }
+  .primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+  progress { width: 100%; height: 10px; }
+  #verdict { font-size: 1.1rem; font-weight: 600; margin: 4px 0; }
+  #results { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; max-height: 260px; overflow: auto; background: color-mix(in srgb, currentColor 5%, transparent); padding: 6px; border-radius: 6px; }
+  .samples { display: flex; gap: 8px; margin: 6px 0; }
+  .samples figure { margin: 0; flex: 1; font-size: 12px; }
+  .samples img, #own img { width: 100%; border-radius: 6px; aspect-ratio: 1; object-fit: cover; }
+  #own img { width: 120px; }
+  ol.steps { padding-left: 1.3em; margin: 4px 0; }
+  ol.steps li { margin: 3px 0; }
+  small { opacity: .75; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<h1>Plant ID: can this phone run the model?</h1>
+<p><small>This page tests whether the plant-identification model (<span id="modelName">BioCLIP 2.5,
+the most accurate one</span>) runs on this phone, straight in Safari. It downloads
+the model once (<b id="size">1.3 GB</b>, so use Wi-Fi), keeps it on the
+phone, and then names three test photos. Keep Safari open and the screen
+on until it says it's done (a few minutes).</small></p>
+<p><small><b>If the page reloads by itself or Safari shows “A problem
+repeatedly occurred”</b>, that is a result too: just open this page again
+and press <b>Copy results</b>.</small></p>
+
+<div class="card" id="prev" hidden><h2>Previous attempt</h2><div id="prevText"></div>
+  <small>Its details are included when you press <b>Copy results</b>.</small></div>
+
+<div class="card">
+  <button class="big primary" id="start">Start test</button>
+  <ol class="steps" id="steps"></ol>
+  <progress id="prog" max="1" value="0" hidden></progress>
+  <div id="status"><small>Not started.</small></div>
+  <div id="hint" hidden><small>Nothing has changed for a few minutes. If it stays like this, press <b>Copy results</b> and send them.</small></div>
+</div>
+
+<div class="card"><h2>Result</h2>
+  <div id="verdict"><small>Waiting for the test.</small></div>
+  <div id="summary"></div>
+  <div class="samples" id="samples"></div>
+</div>
+
+<div class="card" id="ownCard"><h2>Try your own photo (optional)</h2>
+  <small>After the test has finished, take or pick a photo of a plant. The
+  answer uses the photo only (the real app would also use your location).</small><br>
+  <label class="filebtn" id="ownBtn"><input type="file" id="ownFile" accept="image/*">Choose or take a photo</label>
+  <div id="own"></div>
+</div>
+
+<div class="card"><h2>Send the results</h2>
+  <button class="big primary" id="copy">Copy results</button>
+  <button id="share">Share…</button>
+  <div><small>Copy, then paste into a message to Leo. Nothing is sent
+  anywhere by itself.</small></div>
+  <details><summary><small>Show the results text</small></summary><div id="results"></div></details>
+</div>
+
+<div class="card"><h2>Clean up</h2>
+  <div id="stored"><small>Checking storage…</small></div>
+  <button id="del">Delete the downloaded model</button>
+  <button id="small">Run with the small model instead (0.2 GB)</button>
+  <div><small>Delete frees the space when you're done. The small model is
+  less accurate. Only run it if Leo asks, or if the big one keeps
+  failing.</small></div>
+</div>
+
+<script type="module">
+import { resizeCrop, normalise } from "./pilresize.js";
+// Plant-ID on-device feasibility test. Data (model shards, runtime, labels,
+// sample photos) comes from one base URL; see pipeline/plantid/export_onnx.py
+// and pipeline/plantid/upload_test.sh. Query params (all optional):
+//   model=bioclip25|bioclip   data=<base url>
+//   localhost only: auto=1 (start at once), report=1 (POST results to /report),
+//   own=<url> (run that image through "your own photo" after the test)
+const Q = new URLSearchParams(location.search);
+const MODEL = Q.get("model") === "bioclip" ? "bioclip" : "bioclip25";
+const DATA = new URL((Q.get("data") || "https://pub-0ef9b8ef1e7541f8814d3e4374485b76.r2.dev/plantid-test/v1/").replace(/\/?$/, "/"), location.href).href;
+const MBASE = DATA + MODEL + "/";
+const ORT_BASE = DATA + "ort/";
+const LS = "plantidTest.v1";
+const AUTOSTART = "plantidTest.autostart";
+const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
+const $ = (id) => document.getElementById(id);
+const fmtMB = (b) => (b / 1e6).toFixed(0) + " MB";
+const fmtS = (ms) => (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + " s";
+const fmtClock = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
+const now = () => performance.now();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const errText = (e) => String(e?.message || e);
+
+// ---------- results + crash markers ----------
+// localStorage[LS] = { run: {step, done, hidden, …} (the attempt in progress),
+//   results: R (saved at every step), verified: {"<dir>/<file>": sha256} }.
+// iOS kills the tab when it uses too much memory and Safari reloads it; the
+// reloaded page finds run.done === false and reports run.step.
+const R = { test: "plantid-phone-test v2", model: MODEL, data: DATA, started: new Date().toISOString(),
+            page: location.origin + location.pathname, steps: {}, hidden: [], errors: [] };
+const STEPS = [
+  ["env", "Check the phone"],
+  ["fetch", "Get the test files"],
+  ["download", "Download the model"],
+  ["verify", "Check the download"],
+  ["read", "Load the model into memory"],
+  ["session", "Prepare the model on the graphics chip"],
+  ["first", "First run (slow: sets up)"],
+  ["speed", "Timing 5 more runs"],
+  ["check", "Name the 3 test photos"],
+];
+const EXTRA = { picker: "Taking or choosing a photo", own: "Naming your own photo", done: "Finished" };
+const labelOf = (k) => (STEPS.find(([x]) => x === k) || [, EXTRA[k] || k])[1];
+function store() {
+  try { const s = JSON.parse(localStorage.getItem(LS) || "{}"); return s && typeof s === "object" ? s : {}; }
+  catch { return {}; }
+}
+function save(patch) {
+  try { localStorage.setItem(LS, JSON.stringify({ ...store(), ...patch })); }
+  catch (e) { if (!R.errors.includes("localStorage: " + errText(e))) R.errors.push("localStorage: " + errText(e)); }
+}
+function report() { if (LOCAL && Q.get("report")) fetch("/report", { method: "POST", body: JSON.stringify(R) }).catch(() => {}); }
+let current = null, stepT0 = 0;
+/** Record that `step` starts now; done=true marks a resting state. */
+function mark(step, done = false) {
+  current = step; stepT0 = now();
+  R.inProgress = done ? null : step;
+  save({ run: { model: MODEL, started: R.started, step, at: new Date().toISOString(), done,
+                hidden: document.visibilityState === "hidden" }, results: R });
+  renderSteps(); report();
+}
+document.addEventListener("visibilitychange", () => {
+  const hidden = document.visibilityState === "hidden";
+  const s = store();
+  if (current && s.run && !s.run.done) {
+    R.hidden.push({ step: current, state: document.visibilityState, at: new Date().toISOString() });
+    if (hidden) save({ run: { ...s.run, hidden: true }, results: R });  // this step only: mark() resets it
+  }
+  if (!hidden) { resumedAt = now(); if (running) wake(); }
+});
+let resumedAt = 0;  // stall timers don't count time the page spent suspended
+window.addEventListener("error", (e) => R.errors.push("window: " + (e.message || e)));
+window.addEventListener("unhandledrejection", (e) => R.errors.push("promise: " + errText(e.reason)));
+
+function renderSteps() {
+  $("steps").innerHTML = STEPS.map(([k, label]) => {
+    const st = R.steps[k];
+    let icon = "○", t = "";
+    if (st?.ok === true) icon = "✓"; else if (st?.ok === false) icon = "✗";
+    else if (running && k === current) { icon = "…"; t = ` <small>(${fmtClock(now() - stepT0)})</small>`; }
+    if (st?.ms != null) t = ` <small>(${fmtS(st.ms)})</small>`;
+    return `<li>${icon} ${label}${t}</li>`;
+  }).join("");
+}
+let lastActivity = 0;  // last visible progress (status text or download bytes)
+setInterval(() => {
+  $("hint").hidden = !running || now() - Math.max(lastActivity, stepT0) < 180000;
+  if (running) renderSteps();
+}, 1000);
+function status(html) { $("status").innerHTML = html; lastActivity = now(); }
+function resultsText() {
+  const head = [`Plant ID phone test — ${R.verdict || (running ? `still running: ${labelOf(current)}` : "not finished")}`];
+  if (R.summary) head.push(R.summary);
+  if (R.previous?.endedDuring) head.push(`Previous attempt stopped during: ${labelOf(R.previous.endedDuring)}`);
+  return head.join("\n") + "\n\n" + JSON.stringify(R, null, 1);
+}
+function renderResults() { $("results").textContent = resultsText(); }
+
+// ---------- previous attempt ----------
+(function showPrevious() {
+  const s = store();
+  if (!s.run) return;
+  const r = s.run, prevResults = s.results || {};
+  // keep one level of history: the previous attempt's own "previous" shrinks to a line
+  if (prevResults.previous) prevResults.previous = { endedDuring: prevResults.previous.endedDuring ?? null, verdict: prevResults.previous.verdict ?? null };
+  R.previous = { endedDuring: r.done ? null : r.step, hiddenDuringThatStep: !!r.hidden, at: r.at, results: prevResults };
+  $("prev").hidden = false;
+  let html;
+  if (r.done) html = `Finished ${new Date(r.at).toLocaleString()}: ${prevResults.verdict || ""}`;
+  else if (r.step === "picker") html = `The page was closed or reloaded while taking or choosing a photo
+    (${new Date(r.at).toLocaleString()}). The test itself had finished: ${prevResults.verdict || ""}`;
+  else html = `<span class="warn">The attempt from ${new Date(r.started).toLocaleString()} stopped during
+    “${labelOf(r.step)}”.</span> ${r.hidden ? "Safari was in the background during that step, so iOS may have paused or closed it." :
+    "If you didn't close the page yourself, iOS most likely shut it down for using too much memory."}`;
+  $("prevText").innerHTML = html;
+  // the marker stays as it is: reopening the page again reports the same
+  // attempt again, until a new run overwrites it
+})();
+
+// ---------- helpers ----------
+async function copyText(text, btn) {
+  let ok = true;
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = document.createElement("textarea"); ta.value = text; document.body.append(ta);
+    ta.select(); ok = document.execCommand("copy"); ta.remove();
+  }
+  const old = btn.textContent;
+  btn.textContent = ok ? "Copied ✓" : "Couldn't copy: try Share…";
+  setTimeout(() => (btn.textContent = old), 2500);
+}
+$("copy").onclick = () => { renderResults(); copyText(resultsText(), $("copy")); };
+$("share").onclick = async () => {
+  renderResults();
+  try { await navigator.share({ title: "Plant ID phone test", text: resultsText() }); }
+  catch (e) { if (e.name !== "AbortError") copyText(resultsText(), $("share")); }
+};
+let wakeLock = null;
+async function wake() {
+  try { if (!wakeLock) { wakeLock = await navigator.wakeLock?.request("screen"); wakeLock?.addEventListener("release", () => (wakeLock = null)); } }
+  catch {}
+}
+async function sha256(buf) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", buf));
+  return [...h].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+// One OPFS folder per model AND data version (named from the manifest's
+// checksums): a re-exported model never mixes with an older download.
+let dirName = null;
+async function opfsDir() {
+  const top = await (await navigator.storage.getDirectory()).getDirectoryHandle("plantid-test", { create: true });
+  for await (const [name, h] of top.entries())  // older versions of this model: free the space
+    if (h.kind === "directory" && (name === MODEL || name.startsWith(MODEL + "-")) && name !== dirName)
+      await top.removeEntry(name, { recursive: true }).catch((e) => R.errors.push(`remove ${name}: ${errText(e)}`));
+  return await top.getDirectoryHandle(dirName, { create: true });
+}
+async function opfsFile(dir, name) {
+  try { return await (await dir.getFileHandle(name)).getFile(); } catch { return null; }
+}
+let H2F = null;
+function halfToFloat(u16) {
+  if (!H2F) {
+    H2F = new Float32Array(65536);
+    for (let h = 0; h < 65536; h++) {
+      const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 0x1f, f = h & 0x3ff;
+      H2F[h] = e === 0 ? s * 2 ** -14 * (f / 1024) : e === 31 ? (f ? NaN : s * Infinity) : s * 2 ** (e - 15) * (1 + f / 1024);
+    }
+  }
+  const out = new Float32Array(u16.length);
+  for (let i = 0; i < u16.length; i++) out[i] = H2F[u16[i]];
+  return out;
+}
+const fname = (url) => url.slice(DATA.length) || url;
+async function get(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(`${fname(url)}: HTTP ${r.status}`);
+  return r;
+}
+async function getJSON(url) {
+  const text = await (await get(url, { cache: "no-cache" })).text();
+  try { return JSON.parse(text); }
+  catch { throw new Error(`${fname(url)}: not JSON (a Wi-Fi login page?) — starts “${text.slice(0, 60)}”`); }
+}
+const getBuf = async (url) => (await get(url)).arrayBuffer();
+
+// ---------- environment ----------
+async function environment() {
+  const env = { ua: navigator.userAgent, cores: navigator.hardwareConcurrency, screen: `${screen.width}x${screen.height}@${devicePixelRatio}`,
+                standalone: matchMedia("(display-mode: standalone)").matches, webgpu: !!navigator.gpu };
+  try { const e = await navigator.storage.estimate(); env.quotaGB = +(e.quota / 1e9).toFixed(1); env.usedGB = +(e.usage / 1e9).toFixed(2); } catch {}
+  try { env.persisted = await navigator.storage.persisted(); } catch {}
+  if (navigator.gpu) {
+    try {
+      const a = await navigator.gpu.requestAdapter();
+      if (!a) env.adapter = null;
+      else {
+        const info = a.info || {};
+        env.adapter = { vendor: info.vendor, architecture: info.architecture, device: info.device, description: info.description };
+        env.features = [...a.features].sort();
+        const L = a.limits;
+        env.limits = Object.fromEntries(["maxBufferSize", "maxStorageBufferBindingSize", "maxComputeWorkgroupStorageSize",
+          "maxComputeInvocationsPerWorkgroup", "maxComputeWorkgroupSizeX", "maxStorageBuffersPerShaderStage"].map((k) => [k, L[k]]));
+        env.shaderF16 = a.features.has("shader-f16");
+      }
+    } catch (e) { env.adapterError = errText(e); }
+  }
+  return env;
+}
+
+// ---------- the test ----------
+let running = false, session = null, ort = null, labels = null, textVecs = null, manifest = null, inputMeta = null;
+
+async function step(key, fn) {
+  if (R.steps[key]) { delete R.steps[key].ok; delete R.steps[key].ms; }
+  mark(key);
+  const t = now();
+  try {
+    const v = await fn();
+    R.steps[key] = { ...(R.steps[key] || {}), ok: true, ms: Math.round(now() - t) };
+    return v;
+  } catch (e) {
+    R.steps[key] = { ...(R.steps[key] || {}), ok: false, ms: Math.round(now() - t), error: errText(e).slice(0, 600) };
+    throw e;
+  } finally { renderSteps(); renderResults(); }
+}
+
+const STALL_MS = 30000;  // no bytes for this long: abort the request and retry
+async function downloadAll(dir, pass) {
+  const files = manifest.files;
+  const total = files.reduce((s, f) => s + f.bytes, 0);
+  let have = 0;
+  const todo = [];
+  for (const f of files) {
+    const got = await opfsFile(dir, f.name);
+    if (got && got.size === f.bytes) have += f.bytes; else todo.push(f);
+  }
+  const info = (R.steps.download ||= {});
+  if (pass === 1) Object.assign(info, { alreadyOnPhoneMB: +(have / 1e6).toFixed(0), toFetchMB: +((total - have) / 1e6).toFixed(0) });
+  else info.refetchedAfterCheck = todo.map((f) => f.name);
+  if (!todo.length) { status("Model already on the phone."); return; }
+  const need = todo.reduce((s, f) => s + f.bytes, 0);
+  let free = null;
+  try { const e = await navigator.storage.estimate(); free = e.quota - e.usage; } catch {}
+  if (free != null && free < need * 1.1) throw new Error(`not enough space on the phone: need ${fmtMB(need)}, free ${fmtMB(free)}`);
+  try { info.persist = await navigator.storage.persist(); } catch {}
+  $("prog").hidden = false;
+  const t0 = now();
+  let inflight = 0, doneBytes = 0, stop = null;
+  const show = () => {
+    lastActivity = now();
+    const cur = doneBytes + inflight, rate = cur / Math.max(1, now() - t0) * 1000;
+    $("prog").value = (have + cur) / total;
+    status(`Downloading: ${fmtMB(have + cur)} of ${fmtMB(total)} · ${(rate / 1e6).toFixed(1)} MB/s`);
+  };
+  const queue = todo.slice();
+  async function worker() {
+    for (let f; !stop && (f = queue.shift()); ) {
+      for (let attempt = 1; !stop; attempt++) {
+        let got = 0, w = null, rd = null, stalled = false;
+        const ac = new AbortController();
+        // abort after STALL_MS without data — unless the page was suspended
+        // meanwhile (iOS freezes timers in the background): then wait again
+        const onStall = () => {
+          if (document.visibilityState === "hidden" || now() - resumedAt < STALL_MS) { timer = setTimeout(onStall, STALL_MS); return; }
+          stalled = true; ac.abort(); rd?.cancel().catch(() => {});
+        };
+        let timer = setTimeout(onStall, STALL_MS);
+        try {
+          const r = await get(MBASE + f.name, { cache: "no-store", signal: ac.signal });
+          w = await (await dir.getFileHandle(f.name, { create: true })).createWritable();
+          rd = r.body.getReader();
+          for (;;) {
+            const { done, value } = await rd.read();
+            if (done) break;
+            clearTimeout(timer); timer = setTimeout(onStall, STALL_MS);
+            if (stop) throw new Error("stopped");
+            await w.write(value); got += value.length; inflight += value.length; show();
+          }
+          await w.close(); w = null;
+          if (got !== f.bytes) throw new Error(`got ${got} bytes, expected ${f.bytes}`);
+          inflight -= got; doneBytes += got; show();
+          break;
+        } catch (e) {
+          if (w) await w.abort().catch(() => {});
+          inflight -= got;
+          if (stop) return;
+          const why = stalled ? `no data for ${STALL_MS / 1000} s` : errText(e);
+          if (got > 8e6) attempt = 0;  // it was making progress: don't count this one
+          if (attempt >= 4) { stop = new Error(`${f.name}: ${why}`); return; }
+          R.errors.push(`download retry ${f.name}: ${why}`);
+          await sleep(2000 * Math.max(1, attempt));
+        } finally {
+          clearTimeout(timer);
+          ac.abort(); rd?.cancel().catch(() => {});  // never leave a body streaming (no-op once complete)
+        }
+      }
+    }
+  }
+  await Promise.allSettled([worker(), worker(), worker()]);  // all workers have stopped writing
+  if (stop) throw stop;
+  const s = (now() - t0) / 1000;
+  Object.assign(info, { seconds: +s.toFixed(1), MBps: +(doneBytes / 1e6 / s).toFixed(1) });
+}
+
+/** Returns the names of damaged files (already deleted). */
+async function verifyAll(dir, pass) {
+  const ok = store().verified || {};
+  const bad = [];
+  let n = 0;
+  for (const f of manifest.files) {
+    const key = `${dirName}/${f.name}`;
+    if (ok[key] === f.sha256) continue;
+    status(`Checking ${f.name}…`);
+    const file = await opfsFile(dir, f.name);
+    const h = file ? await sha256(await file.arrayBuffer()) : null;
+    n++;
+    if (h !== f.sha256) { bad.push(f.name); await dir.removeEntry(f.name).catch(() => {}); continue; }
+    ok[key] = f.sha256;
+    save({ verified: ok });
+  }
+  const info = (R.steps.verify ||= {});
+  info.checked = (info.checked || 0) + n;
+  if (bad.length) info.damaged = [...(info.damaged || []), ...bad];
+  if (bad.length && pass >= 2) throw new Error(`damaged download, twice: ${bad.join(", ")} — please press the button at the top again`);
+  return bad;
+}
+
+async function loadRuntime() {
+  ort = await import(ORT_BASE + "ort.webgpu.min.mjs");
+  ort.env.wasm.wasmPaths = ORT_BASE;
+  ort.env.wasm.numThreads = 1;  // no cross-origin isolation on GitHub Pages
+  ort.env.logLevel = "warning";
+  R.ortVersion = ort.env.versions?.web;
+}
+
+async function readAll(dir) {
+  const ext = [];
+  let graph = null, bytes = 0;
+  for (const f of manifest.files) {
+    const buf = new Uint8Array(await (await opfsFile(dir, f.name)).arrayBuffer());
+    bytes += buf.byteLength;
+    if (f.name === "model.onnx") graph = buf; else ext.push({ path: f.name, data: buf });
+  }
+  R.steps.read = { MB: +(bytes / 1e6).toFixed(0) };
+  return { graph, ext };
+}
+
+function toTensor(bmp) {
+  // Exactly open_clip's preprocessing (Pillow bicubic resize, centre crop,
+  // normalise; pilresize.js). Huge camera photos are first shrunk on a
+  // canvas to 4x the model size, which keeps the pixel buffer small; on
+  // the 500 px test photos the pixels match the laptop's exactly.
+  const S = inputMeta.size;
+  let w = bmp.width, h = bmp.height;
+  const k = Math.min(w, h) > 6 * S ? (4 * S) / Math.min(w, h) : 1;
+  w = Math.round(w * k); h = Math.round(h * k);
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+  g.drawImage(bmp, 0, 0, w, h);
+  const rgba = g.getImageData(0, 0, w, h).data;
+  c.width = c.height = 0;
+  return normalise(resizeCrop(rgba, w, h, S), S, inputMeta.mean, inputMeta.std);
+}
+
+async function embed(pixels) {
+  const S = inputMeta.size;
+  const out = await session.run({ pixel_values: new ort.Tensor("float32", pixels, [1, 3, S, S]) });
+  const e = out.embedding.data;
+  let n = 0; for (const v of e) n += v * v; n = Math.sqrt(n);
+  return Float32Array.from(e, (v) => v / n);
+}
+function cosine(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+function top5(u) {
+  const D = manifest.labels.dim, N = manifest.labels.count, s = new Float32Array(N);
+  for (let j = 0; j < N; j++) { let d = 0; const o = j * D; for (let i = 0; i < D; i++) d += textVecs[o + i] * u[i]; s[j] = d; }
+  const idx = [...s.keys()].sort((a, b) => s[b] - s[a]).slice(0, 5);
+  // rough confidence: softmax over all species at CLIP's logit scale (100)
+  let z = 0; const m = s[idx[0]]; for (let j = 0; j < N; j++) z += Math.exp(100 * (s[j] - m));
+  return idx.map((j) => ({ i: j, name: labels.names[j], family: labels.families[j], cos: +s[j].toFixed(4), p: Math.exp(100 * (s[j] - m)) / z }));
+}
+// Pillow (the laptop side, i.e. training and evaluation) ignores embedded
+// colour profiles, while Safari converts e.g. Display P3 (every iPhone photo,
+// and many iNat photos) to sRGB even with colorSpaceConversion "none". So
+// drop the JPEG's ICC_PROFILE segments first: Safari then reads the raw
+// values as sRGB, exactly as Pillow does.
+function stripIcc(buf) {
+  const b = new Uint8Array(buf);
+  if (b[0] !== 0xff || b[1] !== 0xd8) return { buf, stripped: 0 };
+  const keep = [b.subarray(0, 2)];
+  let i = 2, stripped = 0;
+  while (i + 4 <= b.length && b[i] === 0xff) {
+    const m = b[i + 1];
+    if (m === 0xda || m === 0xd9) break;              // start of scan / end: rest verbatim
+    if (m === 0xff) { i++; continue; }                 // fill byte
+    const len = (b[i + 2] << 8) | b[i + 3];
+    const seg = b.subarray(i, i + 2 + len);
+    const icc = m === 0xe2 && String.fromCharCode(...b.subarray(i + 4, i + 15)) === "ICC_PROFILE";
+    if (icc) stripped++; else keep.push(seg);
+    i += 2 + len;
+  }
+  if (!stripped) return { buf, stripped: 0 };
+  keep.push(b.subarray(i));
+  return { buf: new Blob(keep, { type: "image/jpeg" }), stripped };
+}
+async function decode(blob) {
+  const { buf, stripped } = stripIcc(await blob.arrayBuffer());
+  const src = buf instanceof Blob ? buf : new Blob([buf], { type: blob.type });
+  const bmp = await createImageBitmap(src, { imageOrientation: "from-image", colorSpaceConversion: "none" });
+  bmp.iccStripped = stripped;
+  return bmp;
+}
+
+function setButtons() {
+  $("start").disabled = $("small").disabled = $("del").disabled = running;
+  $("ownFile").disabled = running || !session;
+}
+
+async function run() {
+  if (running) return;
+  // A second run in the same page would hold two copies of the model in
+  // memory; reload instead and start once (the flag is consumed before the
+  // run, so a crash-reload never restarts it by itself).
+  if (session || Object.keys(R.steps).length) {
+    try { sessionStorage.setItem(AUTOSTART, MODEL); } catch {}
+    location.reload();
+    return;
+  }
+  running = true; setButtons();
+  $("verdict").innerHTML = "<small>Running…</small>";
+  await wake();
+  try {
+    R.env = await step("env", environment);
+    if (!R.env.webgpu) throw new Error("Safari has no WebGPU here (needs iOS 26 or newer)");
+    if (!R.env.adapter) throw new Error("WebGPU is present but gave no graphics adapter");
+    let samplesBuf, sampleBlobs, sampleImgs, dir;
+    await step("fetch", async () => {
+      manifest = await getJSON(MBASE + "manifest.json");
+      inputMeta = manifest.input;
+      R.modelInfo = { model: manifest.model, built: manifest.built, weightsMB: +(manifest.weights_bytes / 1e6).toFixed(0), dtype: manifest.dtype };
+      if (manifest.dtype === "float16" && !R.env.shaderF16) R.errors.push("adapter lacks shader-f16 (float16 model may fail)");
+      dirName = `${MODEL}-${(await sha256(new TextEncoder().encode(manifest.files.map((f) => f.sha256).join()))).slice(0, 12)}`;
+      await loadRuntime();
+      let tv, sb;
+      [labels, tv, sb, sampleBlobs] = await Promise.all([getJSON(MBASE + "labels.json"), getBuf(MBASE + "text-f16.bin"),
+        getBuf(MBASE + "samples-f16.bin"), Promise.all(manifest.samples.map(async (x) => (await get(MBASE + x.file)).blob()))]);
+      textVecs = halfToFloat(new Uint16Array(tv));
+      samplesBuf = halfToFloat(new Uint16Array(sb));
+      sampleImgs = await Promise.all(sampleBlobs.map(decode));
+      dir = await opfsDir();
+    });
+    for (let pass = 1; ; pass++) {
+      await step("download", () => downloadAll(dir, pass));
+      $("prog").hidden = true;
+      const bad = await step("verify", () => verifyAll(dir, pass));
+      if (!bad.length) break;
+      R.errors.push(`damaged, re-downloading: ${bad.join(", ")}`);
+    }
+
+    status("Reading the model from storage…");
+    let { graph, ext } = await step("read", () => readAll(dir));
+    status("Preparing the model on the graphics chip (can take a minute)…");
+    session = await step("session", () => ort.InferenceSession.create(graph, {
+      executionProviders: ["webgpu"], externalData: ext, graphOptimizationLevel: "all" }));
+    graph = ext = null;
+    const S = inputMeta.size, n = 3 * S * S;
+    const px0 = samplesBuf.slice(0, n);
+    status("First run…");
+    await step("first", () => embed(px0));
+    status("Timing…");
+    const times = [];
+    await step("speed", async () => {
+      for (let i = 0; i < 5; i++) { const t = now(); await embed(px0); times.push(Math.round(now() - t)); }
+      times.sort((a, b) => a - b);
+      R.steps.speed = { runsMs: times, medianMs: times[2] };
+    });
+    status("Naming the test photos…");
+    const checks = await step("check", async () => {
+      const out = [];
+      for (let k = 0; k < manifest.samples.length; k++) {
+        const ref = manifest.samples[k];
+        const eT = await embed(samplesBuf.slice(k * n, (k + 1) * n));       // laptop-preprocessed input
+        const tp = now();
+        const pix = toTensor(sampleImgs[k]);
+        const prepMs = Math.round(now() - tp);
+        const eJ = await embed(pix);                                         // phone-preprocessed input
+        const t5 = top5(eJ), laptop = labels.names[ref.top5[0][0]];
+        // cosModel/top1Model: the laptop's input tensor through the phone's
+        // model; cosPhone/top1Phone: the phone's own JPEG decode + resize too
+        out.push({ photo: ref.photo_id, species: ref.species, laptopTop1: laptop,
+                   cosModel: +cosine(eT, ref.embedding).toFixed(5), cosPhone: +cosine(eJ, ref.embedding).toFixed(5), prepMs,
+                   top1Model: labels.names[top5(eT)[0].i], top1Phone: t5[0].name,
+                   right: t5[0].name === ref.species, top3: t5.slice(0, 3).map((x) => `${x.name} ${(x.p * 100).toFixed(0)}%`) });
+      }
+      R.steps.check = { photos: out };
+      return out;
+    });
+    // verdict: the model must reproduce the laptop's embeddings (cosine
+    // 0.9995 on the Mac; fp16 drift past 0.995 starts to flip close calls)
+    const med = R.steps.speed.medianMs;
+    const minCos = Math.min(...checks.map((c) => c.cosModel)), minPhone = Math.min(...checks.map((c) => c.cosPhone));
+    const sameModel = checks.every((c) => c.top1Model === c.laptopTop1), samePhone = checks.every((c) => c.top1Phone === c.laptopTop1);
+    R.summary = `loaded in ${fmtS(R.steps.read.ms + R.steps.session.ms)} · first run ${fmtS(R.steps.first.ms)} · then ${fmtS(med)} per photo · ` +
+      `match with laptop: model ${minCos.toFixed(4)}, whole path ${minPhone.toFixed(4)} (min cosine) · ` +
+      `same answers as laptop ${checks.filter((c) => c.top1Phone === c.laptopTop1).length}/3 · right species ${checks.filter((c) => c.right).length}/3`;
+    if (!(minCos >= 0.99 && sameModel)) {
+      R.verdict = "RUNS BUT WRONG OUTPUT";
+      $("verdict").innerHTML = `<span class="bad">✗ It runs, but the answers don't match the laptop.</span>`;
+    } else if (med >= 10000) {
+      R.verdict = "WORKS BUT SLOW";
+      $("verdict").innerHTML = `<span class="warn">It works, but slowly.</span>`;
+    } else {
+      R.verdict = minCos < 0.995 ? "WORKS (but numbers drift from the laptop's)"
+        : !(minPhone >= 0.995 && samePhone) ? "WORKS (model matches; the phone's photo decoding shifts answers a little)" : "WORKS";
+      $("verdict").innerHTML = `<span class="ok">✓ It works on this phone.</span>`;
+    }
+    $("summary").innerHTML = `<small>${R.summary}</small>`;
+    $("samples").innerHTML = checks.map((c, k) => `<figure><img src="${URL.createObjectURL(sampleBlobs[k])}" alt="">
+      <figcaption>${c.top1Phone === c.laptopTop1 ? "✓" : "✗"} <i>${c.top1Phone}</i><br><small>${c.top3[0].replace(/.* /, "")}${
+        c.right ? "" : c.top1Phone === c.laptopTop1 ? " · the laptop makes the same mistake, so that's fine" : ""}</small></figcaption></figure>`).join("");
+    status(`<span class="ok">Done.</span> Now press <b>Copy results</b> below and send them to Leo.`);
+    mark("done", true);
+    running = false; setButtons();
+    if (LOCAL && Q.get("own")) await classifyOwn(await (await get(new URL(Q.get("own"), location.href).href)).blob());  // local testing only
+  } catch (e) {
+    const failedAt = current;
+    R.verdict = `FAILED at “${labelOf(failedAt)}”`;
+    R.errors.push(`${errText(e)}\n${e?.stack || ""}`.slice(0, 1500));
+    $("prog").hidden = true;
+    $("verdict").innerHTML = `<span class="bad">✗ ${R.verdict}</span><br><small>${errText(e)}</small>`;
+    status("Stopped. Please press <b>Copy results</b> and send them to Leo.");
+    mark("done", true);
+    R.failedAt = failedAt;
+    save({ results: R });
+  } finally {
+    running = false; setButtons();
+    $("start").textContent = "Run the test again";
+    try { await wakeLock?.release(); } catch {}
+    wakeLock = null;
+    renderSteps(); renderResults(); showStored(); report();
+  }
+}
+
+// ---------- own photo ----------
+// The camera can push a memory-heavy page over the edge, so opening the
+// picker is itself a step: a kill there is reported as such.
+$("ownBtn").onclick = (e) => {
+  if (running) { e.preventDefault(); return; }
+  if (!session) { e.preventDefault(); alert("Please run the test first (the button at the top)."); return; }
+  mark("picker");
+};
+$("ownFile").addEventListener("cancel", () => { if (current === "picker") mark("done", true); });
+$("ownFile").onchange = () => {
+  const f = $("ownFile").files[0];
+  $("ownFile").value = "";
+  if (f && session && !running) classifyOwn(f); else if (current === "picker") mark("done", true);
+};
+async function classifyOwn(f) {
+  const entry = { type: f.type, MB: +(f.size / 1e6).toFixed(1) };
+  (R.ownPhotos ||= []).push(entry);
+  running = true; setButtons();
+  mark("own");
+  $("own").innerHTML = "<small>Working…</small>";
+  try {
+    const t0 = now();
+    const bmp = await decode(f);
+    entry.px = `${bmp.width}x${bmp.height}`; entry.iccStripped = bmp.iccStripped;
+    const t1 = now();
+    const pix = toTensor(bmp);
+    bmp.close();
+    const t2 = now();
+    const t5 = top5(await embed(pix));
+    const t3 = now();
+    Object.assign(entry, { decodeMs: Math.round(t1 - t0), prepMs: Math.round(t2 - t1), modelMs: Math.round(t3 - t2),
+                           top3: t5.slice(0, 3).map((x) => `${x.name} ${(x.p * 100).toFixed(0)}%`) });
+    $("own").innerHTML = `<img src="${URL.createObjectURL(f)}" alt=""><ol>` +
+      t5.map((x) => `<li><i>${x.name}</i> <small>(${x.family}) · ${(x.p * 100).toFixed(0)}%</small></li>`).join("") +
+      `</ol><small>${fmtS(t3 - t0)} in total. Percentages are rough.</small>`;
+  } catch (e) {
+    entry.error = errText(e);
+    $("own").innerHTML = `<span class="bad">✗ ${entry.error}</span>`;
+  }
+  running = false; setButtons();
+  mark("done", true);
+  renderResults(); report();
+}
+
+// ---------- storage / delete / small model ----------
+async function showStored() {
+  try {
+    let total = 0; const root = await navigator.storage.getDirectory();
+    const top = await root.getDirectoryHandle("plantid-test").catch(() => null);
+    if (top) for await (const [, d] of top.entries()) if (d.kind === "directory") for await (const [, f] of d.entries()) if (f.kind === "file") total += (await f.getFile()).size;
+    $("stored").innerHTML = `<small>Stored by this test: ${fmtMB(total)}</small>`;
+  } catch { $("stored").innerHTML = "<small>Stored by this test: unknown</small>"; }
+}
+$("del").onclick = async () => {
+  if (running || !confirm("Delete the downloaded model from this phone?")) return;
+  try { await (await navigator.storage.getDirectory()).removeEntry("plantid-test", { recursive: true }); }
+  catch (e) { if (e.name !== "NotFoundError") alert("Couldn't delete everything: " + errText(e)); }
+  save({ verified: {} });
+  showStored();
+};
+$("small").onclick = () => { if (!running) location.search = "?model=bioclip"; };
+$("start").onclick = run;
+
+if (MODEL !== "bioclip25") {
+  $("start").textContent = "Start test (small model)";
+  $("modelName").textContent = "the small BioCLIP, less accurate";
+}
+getJSON(MBASE + "manifest.json").then((m) => {
+  $("size").textContent = (m.files.reduce((s, f) => s + f.bytes, 0) / 1e9).toFixed(2) + " GB";
+}).catch(() => {});
+setButtons(); renderSteps(); renderResults(); showStored();
+let auto = false;
+try { auto = sessionStorage.getItem(AUTOSTART) === MODEL; sessionStorage.removeItem(AUTOSTART); } catch {}
+if (auto || (LOCAL && Q.get("auto") === "1")) run();
+</script>
+</body>
+</html>

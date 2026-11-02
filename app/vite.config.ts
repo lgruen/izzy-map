@@ -70,6 +70,9 @@ export default defineConfig({
         // workbox's 2 MiB default silently drops the pdf.js worker/chunks
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",
+        // probe/ pages (device probe, plant-ID phone test) are separate
+        // documents deployed beside the app: never answer them with the map
+        navigateFallbackDenylist: [/\/probe\//],
         // tile/archive requests bypass the SW entirely
         runtimeCaching: [],
       },
