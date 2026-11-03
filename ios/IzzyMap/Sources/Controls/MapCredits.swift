@@ -49,6 +49,17 @@ struct AttributionSheet: View {
                     Text("On the map now").panelHeader()
                 }
                 .panelRows()
+                Section {
+                    NavigationLink {
+                        AcknowledgementsView(onGlass: true)
+                    } label: {
+                        Label("Acknowledgements", systemImage: "doc.text")
+                    }
+                    .accessibilityIdentifier("acknowledgements-link")
+                } footer: {
+                    Text("The software and model inside IzzyMap, with their licences.")
+                }
+                .panelRows()
                 // TODO(M7): link to About's full credits by licence regime.
             }
             .panelListSurface()

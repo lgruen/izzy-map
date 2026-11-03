@@ -84,10 +84,17 @@ nonisolated enum Attribution {
     /// Sources that carry no third-party data (the app's own drawing).
     /// The selection shapes, and the highlight source (the visible overlay's
     /// own archive again, credited under the overlay's source).
-    static let uncreditedSources: Set<String> = [StyleBuilder.SourceID.selection, StyleBuilder.SourceID.highlight]
+    static let uncreditedSources: Set<String> = [StyleBuilder.SourceID.selection, StyleBuilder.SourceID.highlight,
+                                                 StyleBuilder.SourceID.areaOutlines]
+
+    /// A style source's credit: the table, or a detailed area's layer
+    /// (`area-<id>-<layer>`: the same LIST data and licence as the pack).
+    static func credit(forSource id: String) -> Credit? {
+        bySource[id] ?? AreaStyleSource.layer(ofSource: id)?.credit
+    }
 
     /// The credits for these sources, deduplicated, in a stable order.
     static func credits(forSources sources: Set<String>) -> [Credit] {
-        Set(sources.compactMap { bySource[$0] }).sorted { $0.title < $1.title }
+        Set(sources.compactMap { credit(forSource: $0) }).sorted { $0.title < $1.title }
     }
 }

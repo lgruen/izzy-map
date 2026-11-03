@@ -49,9 +49,48 @@ nonisolated enum Pack: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// Its files that aren't map archives, as paths in the pack (plant ID's
+    /// model and tables; a trailing "/" is a directory). Mirrors the pack's
+    /// `files` in asset_packs.json (build_packs.py checks).
+    var otherFiles: [String] {
+        switch self {
+        case .plantid: PlantIDFiles.packPaths
+        default: []
+        }
+    }
+
     /// On-demand packs are the ones a person gets and removes; essential and
     /// prefetch packs are the core layers that arrive with the install.
     var isRemovable: Bool { policy == .onDemand }
+}
+
+/// The `plantid` pack's files (pipeline/build_packs.py stages them from
+/// pipeline/cache/plantid/ship: the 8-bit encoder compiled to .mlmodelc,
+/// the scorer's tables and the training-photo credits). They sit in a
+/// `plantid/` folder: every pack shares ONE namespace on the device.
+nonisolated enum PlantIDFiles {
+    static let folder = "plantid"
+    /// The image encoder, compiled (`xcrun coremlcompiler`): Core ML loads
+    /// it in place — no on-device compile, no second 0.6 GB copy.
+    static let encoder = "PlantEncoder-w8.mlmodelc"
+    static let head = "head.bin"
+    static let bank = "bank-int8.bin"
+    static let prior = "prior.bin"
+    static let labels = "labels.json"
+    static let pipeline = "pipeline.json"
+    static let credits = "credits.json"
+    static let photoCredits = "credits-photos.tsv.gz"
+
+    static let packPaths = [
+        "plantid/PlantEncoder-w8.mlmodelc/",
+        "plantid/head.bin",
+        "plantid/bank-int8.bin",
+        "plantid/prior.bin",
+        "plantid/labels.json",
+        "plantid/pipeline.json",
+        "plantid/credits.json",
+        "plantid/credits-photos.tsv.gz",
+    ]
 }
 
 extension Archive {

@@ -128,6 +128,19 @@ final class MapCoordinator: NSObject {
 
     func apply(chrome: MapChrome, to map: MLNMapView) {
         guard chrome != appliedChrome else { return }
+        let wasFraming = appliedChrome.map { $0.areaFrame != nil || $0.areaDraft != nil } ?? false
+        let framing = chrome.areaFrame != nil || chrome.areaDraft != nil
+        let draftShown = appliedChrome?.areaDraft
+        let oldInsets = appliedChrome?.framingInsets
+        defer {
+            updateFramedBox(map)
+            if framing != wasFraming { framingChanged(framing, map: map) }
+            // the card is measured a moment after it appears: check again when it is
+            if let box = chrome.areaDraft, box != draftShown || chrome.framingInsets != oldInsets {
+                showDraft(box, insets: chrome.framingInsets, map: map)
+            }
+            updateDraftRect(map)
+        }
         if appliedChrome?.contentInset != chrome.contentInset {
             // the inset change re-centres the map, cancelling a flight in
             // progress: fly it again from where it stopped
@@ -216,6 +229,70 @@ final class MapCoordinator: NSObject {
         spotlights.apply(spotlight, framing: appliedChrome?.framingInsets ?? .zero, model: model, to: map)
     }
 
+    // MARK: Framing an area
+
+    /// The dashed frame's box on the ground, while framing (live, 60 Hz on a
+    /// pan: only the framing bar reads it).
+    private func updateFramedBox(_ map: MLNMapView) {
+        guard let rect = appliedChrome?.areaFrame, rect.width > 0, rect.height > 0 else {
+            if model.map.framedBox != nil { model.map.framedBox = nil }
+            return
+        }
+        let b = map.convert(rect, toCoordinateBoundsFrom: map)
+        let box = AreaBox(west: b.sw.longitude, south: b.sw.latitude, east: b.ne.longitude, north: b.ne.latitude)
+        if model.map.framedBox != box { model.map.framedBox = box }
+    }
+
+    /// Framing: the frame is the box that downloads, so the map is north
+    /// up (a rotated frame's box would be larger than what she framed) and
+    /// stays so while framing.
+    private func framingChanged(_ framing: Bool, map: MLNMapView) {
+        map.allowsRotating = !framing
+        if framing, map.direction != 0 { map.setDirection(0, animated: !UIAccessibility.isReduceMotionEnabled) }
+    }
+
+    /// The setup card opened beside the map: keep the framed box in view
+    /// clear of it (inset like the frame, 8 % × 10 %).
+    private func showDraft(_ box: AreaBox, insets: UIEdgeInsets, map: MLNMapView) {
+        let free = map.bounds.inset(by: insets)
+        guard free.width > 60, free.height > 60 else { return }
+        let margin = UIEdgeInsets(top: insets.top + free.height * 0.10, left: insets.left + free.width * 0.08,
+                                  bottom: insets.bottom + free.height * 0.10, right: insets.right + free.width * 0.08)
+        let target = map.convert(MLNCoordinateBounds(sw: CLLocationCoordinate2D(latitude: box.south, longitude: box.west),
+                                                     ne: CLLocationCoordinate2D(latitude: box.north, longitude: box.east)),
+                                 toRectTo: map)
+        // already clear of the card: leave the map where she put it
+        if map.bounds.inset(by: margin).insetBy(dx: -2, dy: -2).contains(target) { return }
+        let fit = MapCamera.fit([box.west, box.south, box.east, box.north], maxZoom: CameraPolicy.maxZoom, insets: margin, in: map)
+        camera.move(map, to: fit, insets: margin, duration: 0.35)
+    }
+
+    private var appliedAreaFocus: Int?
+
+    /// "Show on map" for a detailed area: framed in the uncovered map, no
+    /// closer than z17.
+    func apply(areaFocus: AppModel.AreaFocus?, framing: UIEdgeInsets, to map: MLNMapView) {
+        guard let areaFocus, areaFocus.serial != appliedAreaFocus else { return }
+        appliedAreaFocus = areaFocus.serial
+        let b = areaFocus.box
+        let free = map.bounds.inset(by: framing)
+        let margin = UIEdgeInsets(top: framing.top + free.height * 0.08, left: framing.left + free.width * 0.06,
+                                  bottom: framing.bottom + free.height * 0.08, right: framing.right + free.width * 0.06)
+        camera.move(map, to: MapCamera.fit([b.west, b.south, b.east, b.north], maxZoom: 17, insets: margin, in: map), insets: margin)
+    }
+
+    /// Where the setup card's box is on screen (the frame follows it).
+    private func updateDraftRect(_ map: MLNMapView) {
+        guard let box = appliedChrome?.areaDraft else {
+            if model.map.draftRect != nil { model.map.draftRect = nil }
+            return
+        }
+        let rect = map.convert(MLNCoordinateBounds(sw: CLLocationCoordinate2D(latitude: box.south, longitude: box.west),
+                                                   ne: CLLocationCoordinate2D(latitude: box.north, longitude: box.east)),
+                               toRectTo: map)
+        if model.map.draftRect != rect { model.map.draftRect = rect }
+    }
+
     // MARK: Taps
 
     /// Half the side of the box a tree dot is looked up in: the dots are
@@ -226,7 +303,8 @@ final class MapCoordinator: NSObject {
     /// area under the finger), then the visible overlay. Hidden layers are
     /// not in the style, so this answers for whatever is on screen.
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-        guard gesture.state == .ended, let map else { return }
+        // framing an area: the map only moves
+        guard gesture.state == .ended, let map, !model.isFraming else { return }
         tap(at: gesture.location(in: map))
     }
 
@@ -415,6 +493,14 @@ final class MapCoordinator: NSObject {
             else { continue }
             ids.insert(source)
         }
+        // a detailed area counts only while it is in view
+        let visible = map.visibleCoordinateBounds
+        let view = AreaBox(west: visible.sw.longitude, south: visible.sw.latitude,
+                           east: visible.ne.longitude, north: visible.ne.latitude)
+        ids = ids.filter { id in
+            guard AreaStyleSource.layer(ofSource: id) != nil else { return true }
+            return model.shared.areas.box(ofSource: id)?.intersects(view) ?? false
+        }
         if ids != model.map.visibleSources { model.map.visibleSources = ids }
     }
 
@@ -470,6 +556,11 @@ extension MapCoordinator: MLNMapViewDelegate {
             openedLayers = true
             model.present(.layers)
         }
+        // `-startFraming YES`: framing an area once the map settles (screenshots)
+        if UserDefaults.standard.bool(forKey: "startFraming"), !openedLayers {
+            openedLayers = true
+            model.startFraming()
+        }
         if !debugTaps.isEmpty {
             let p = debugTaps.removeFirst()
             tap(at: CGPoint(x: p.x * mapView.bounds.width, y: p.y * mapView.bounds.height))
@@ -490,6 +581,8 @@ extension MapCoordinator: MLNMapViewDelegate {
 
     func mapViewRegionIsChanging(_ mapView: MLNMapView) {
         model.map.centre = mapView.centerCoordinate
+        if appliedChrome?.areaFrame != nil { updateFramedBox(mapView) }
+        if appliedChrome?.areaDraft != nil { updateDraftRect(mapView) }
         // the scale bar follows a pinch (MapLiveState only: RootView doesn't re-render)
         if model.map.zoom != mapView.zoomLevel { model.map.zoom = mapView.zoomLevel }
     }
@@ -499,6 +592,8 @@ extension MapCoordinator: MLNMapViewDelegate {
         model.map.centre = centre
         model.map.zoom = mapView.zoomLevel
         refreshVisibleSources(mapView)
+        updateFramedBox(mapView)
+        updateDraftRect(mapView)
         guard CameraPolicy.contains(latitude: centre.latitude, longitude: centre.longitude) else { return }
         cameraStore.save(SavedCamera(
             latitude: centre.latitude, longitude: centre.longitude,

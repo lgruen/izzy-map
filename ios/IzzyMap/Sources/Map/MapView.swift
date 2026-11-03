@@ -1,3 +1,4 @@
+import IzzyKit
 import MapLibre
 import SwiftUI
 
@@ -19,6 +20,13 @@ nonisolated struct MapChrome: Equatable, Sendable {
     /// bounds — measured frames (`MapFraming`). A camera that frames an
     /// extent keeps it inside.
     var framingInsets: UIEdgeInsets = .zero
+    /// While framing a detailed area: the dashed frame, in the map view's
+    /// coordinates (its box on the ground goes to `MapLiveState.framedBox`).
+    var areaFrame: CGRect?
+    /// The framed box while its setup shows as the side card (wide
+    /// layouts): the map keeps it in view beside the card and reports
+    /// where it is (`MapLiveState.draftRect`) for the frame to follow.
+    var areaDraft: AreaBox?
 }
 
 /// The one MapLibre map view. SwiftUI owns the state (`AppModel`); the
@@ -33,6 +41,8 @@ struct MapView: UIViewRepresentable {
     var spotlight: Spotlight?
     /// The picked search place (Search/SearchPinPresenter.swift).
     var searchPin: SearchModel.Pin?
+    /// A detailed area to frame ("Show on map" in Storage).
+    var areaFocus: AppModel.AreaFocus?
 
     func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
 
@@ -51,5 +61,6 @@ struct MapView: UIViewRepresentable {
         coordinator.apply(keyHighlight: keyHighlight)
         coordinator.apply(spotlight: spotlight, to: map)
         coordinator.searchPins.apply(searchPin, framing: chrome.framingInsets, to: map)
+        coordinator.apply(areaFocus: areaFocus, framing: chrome.framingInsets, to: map)
     }
 }

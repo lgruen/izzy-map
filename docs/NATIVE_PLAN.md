@@ -56,7 +56,7 @@ Decisions already taken (Leo, 2026-11-03):
 | `vector` | TASVEG, geology, pre-1750 | 0.39 GB | essential (installs with the app) |
 | `topo` | topo z0–15 | 2.04 GB | prefetch (starts during install) |
 | `relief` | relief shading, pre-rendered AVIF (see §3) | 1.29 GB | prefetch |
-| `plantid` | Core ML encoder + head + kNN bank + prior | ~1.4 GB | prefetch |
+| `plantid` | Core ML encoder (w8, compiled) + head + int8 kNN bank + prior + credits | 0.73 GB | prefetch |
 | `aerial` | statewide photo mosaic | 1.93 GB | on demand (one tap) |
 | `tasmap` | paper-map scans | 3.24 GB | on demand |
 | `season-2020` … `season-2026` | one per flying season | 0.21–0.99 GB | on demand; plus "all seasons" |
@@ -82,7 +82,9 @@ Decisions already taken (Leo, 2026-11-03):
 - Everything lives in Application Support, excluded from iCloud backup.
   The Storage screen shows per-item sizes and free space, and Remove for any
   on-demand pack or extra.
-- `plantid` stays in the table but has no files until milestone 6.
+- `plantid` (milestone 6): the w8 encoder compiled to `.mlmodelc` plus the
+  scorer's tables and credits in a `plantid/` folder, staged and packed by
+  `build_packs.py plantid` (pipeline/plantid/README.md "Shipping artefacts").
 
 ### Pack facts (researched 2026-11-03, Xcode 27.2 / iOS 27.2 SDK)
 

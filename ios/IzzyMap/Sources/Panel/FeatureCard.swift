@@ -149,8 +149,8 @@ struct FeatureCard: View {
         case let .tree(t):
             let ref = model.tables.trees?.refs[t.ref]
             VStack(alignment: .leading, spacing: 1) {
-                if let common = ref?.common, !common.isEmpty {
-                    NameText(AttributedString(common.prefix(1).uppercased() + common.dropFirst()))
+                if let common = ref.flatMap({ CommonName.headline($0.common) }) {
+                    NameText(AttributedString(common))
                     Text(BotanicalNames.species(ref?.name ?? ""))
                         .font(.body)
                         .fontDesign(.serif)

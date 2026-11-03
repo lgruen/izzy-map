@@ -14,33 +14,37 @@ struct StorageView: View {
     /// Done in a sheet of its own (iPad: back to the Layers popover); nil
     /// when pushed in the Layers sheet (Done closes the whole modal).
     var done: (() -> Void)?
+    /// A section to scroll to on appearing ("areas" after an area's Download).
+    var scrollTo: String?
     @State private var storage: StorageModel
     @State private var spaceRequest: PackSpaceRequest?
     @State private var removal: Removal?
     @State private var footprints = FootprintStore.shared
 
-    init(model: AppModel, done: (() -> Void)? = nil) {
+    init(model: AppModel, done: (() -> Void)? = nil, scrollTo: String? = nil) {
         self.model = model
         self.done = done
-        _storage = State(initialValue: StorageModel(packs: model.shared.packs, trees: model.tables.trees))
+        self.scrollTo = scrollTo
+        _storage = State(initialValue: StorageModel(packs: model.shared.packs, trees: model.tables.trees, areas: model.shared.areas))
     }
 
     private var packs: PackStore { storage.packs }
 
     var body: some View {
-        #if DEBUG
         ScrollViewReader { proxy in
             list
                 .task {
-                    // DEBUG screenshots: `-storageScroll more|seasons|extras`
-                    guard let target = UserDefaults.standard.string(forKey: "storageScroll") else { return }
+                    // DEBUG screenshots: `-storageScroll more|seasons|extras|areas`
+                    #if DEBUG
+                    let target = scrollTo ?? UserDefaults.standard.string(forKey: "storageScroll")
+                    #else
+                    let target = scrollTo
+                    #endif
+                    guard let target else { return }
                     try? await Task.sleep(for: .milliseconds(600))
-                    proxy.scrollTo(target, anchor: .top)
+                    withAnimation { proxy.scrollTo(target, anchor: .top) }
                 }
         }
-        #else
-        list
-        #endif
     }
 
     /// The list starts BELOW the navigation bar, behind a hairline: rows
@@ -114,8 +118,9 @@ struct StorageView: View {
                     .foregroundStyle(DesignColor.inkSecondary)
             }
             .panelRows()
-            // "Detailed areas" joins here once framing an area ships
-            // (milestone 5b) — no placeholder row before then
+
+            DetailedAreasSection(model: model)
+                .panelRows()
         }
         .panelListSurface()
         .listSectionSpacing(.compact)

@@ -275,6 +275,58 @@ struct SplitMix {
         fresh.cancel()
     }
 
+    /// Journal records follow the synced bytes in batches: a kill keeps the
+    /// synced tiles and nothing the journal can't back.
+    @Test func journalRecordsOnlyFollowSyncedBytes() throws {
+        let dir = PMTilesFixtures.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appending(path: "sync.pmtiles")
+        let w = try PMTilesWriter(destination: url, tileType: .png, syncEvery: 4)
+        for x in 0 ..< 10 { try w.add(z: 10, x: x, y: 0, data: Data([UInt8(x), 7])) }
+        #expect(w.tileCount == 10)
+        #expect(w.journalledTiles == 8)
+        let journal = url.appendingPathExtension("journal")
+        #expect(try Data(contentsOf: journal).count == 16 + 8 * 52)
+        try w.sync()
+        #expect(w.journalledTiles == 10)
+        #expect(try Data(contentsOf: journal).count == 16 + 10 * 52)
+        w.cancel()
+    }
+
+    /// Resume re-hashes the journalled bytes: a damaged tile is dropped (to
+    /// be fetched again), the rest kept.
+    @Test func resumeDropsTilesWhoseBytesDontMatch() throws {
+        let dir = PMTilesFixtures.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appending(path: "rot.pmtiles")
+        do {
+            let w = try PMTilesWriter(destination: url, tileType: .png, syncEvery: 1)
+            for x in 0 ..< 6 { try w.add(z: 10, x: x, y: 0, data: Data(repeating: UInt8(x + 1), count: 100)) }
+            // tile 5 shares tile 2's bytes
+            try w.add(z: 10, x: 9, y: 0, data: Data(repeating: 3, count: 100))
+        }
+        // flip a byte inside tile 2's blob (offset 200…299)
+        let data = url.appendingPathExtension("tiles")
+        let fh = try FileHandle(forWritingTo: data)
+        try fh.seek(toOffset: 250); try fh.write(contentsOf: Data([0xEE])); try fh.close()
+
+        let w = try PMTilesWriter(destination: url, tileType: .png, resume: true)
+        #expect(w.droppedOnResume == 2)
+        #expect(w.tileCount == 5)
+        #expect(!w.contains(z: 10, x: 2, y: 0) && !w.contains(z: 10, x: 9, y: 0))
+        #expect(w.contains(z: 10, x: 5, y: 0))
+        // fetched again, then finished: every tile byte for byte
+        try w.add(z: 10, x: 2, y: 0, data: Data(repeating: 3, count: 100))
+        try w.add(z: 10, x: 9, y: 0, data: Data(repeating: 3, count: 100))
+        var steps: [Double] = []
+        try w.finish(name: "r", attribution: "a") { steps.append($0) }
+        #expect(steps.last == 1 && steps == steps.sorted())
+        let r = try PMTilesReader(url: url)
+        for x in 0 ..< 6 { #expect(try r.tileData(z: 10, x: x, y: 0) == Data(repeating: UInt8(x + 1), count: 100)) }
+        #expect(try r.tileData(z: 10, x: 9, y: 0) == Data(repeating: 3, count: 100))
+        // the journal was rewritten without the bad records: a second resume agrees
+    }
+
     @Test func refusesBadInput() throws {
         let dir = PMTilesFixtures.scratch()
         defer { try? FileManager.default.removeItem(at: dir) }

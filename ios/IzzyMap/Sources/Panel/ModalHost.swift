@@ -21,6 +21,8 @@ struct ModalHost: ViewModifier {
             get: {
                 guard let modal = model.modal, modal.layout == layout else { return nil }
                 if layout == .card, modal.presentation == .layers { return nil }
+                // the card layout shows an area's setup as the side card (RootView)
+                if layout == .card, modal.presentation == .areaSetup { return nil }
                 return modal
             },
             set: { new in
@@ -45,11 +47,18 @@ struct ModalContent: View {
                 // and strength on the live map above the sheet (and can pan it)
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         case .plantID:
-            PlantIDPlaceholder()
-                .presentationDetents([.medium])
+            // the camera, framing and results want the room: large on
+            // iPhone, a page-sized sheet on iPad (results beside the photo)
+            PlantIDView(model: model)
+                .presentationDetents([.large])
+                .presentationSizing(.page)
         case .attribution:
             AttributionSheet(map: model.map)
                 .presentationDetents([.medium, .large])
+        case .areaSetup:
+            AreaSetupSheet(model: model)
+                .presentationDetents([.large])
+                .presentationSizing(.form)
         }
     }
 }

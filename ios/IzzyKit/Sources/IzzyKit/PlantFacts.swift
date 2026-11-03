@@ -296,6 +296,23 @@ public enum Flowering {
     }
 }
 
+/// Common names are lowercase in the Understorey Network data, the
+/// Tasmanian convention ("christmas bells"), and list rows keep them so; a
+/// common name standing as a HEADLINE (a sheet's title, the plant-ID
+/// answer, a navigation title) gets its first letter up: "Christmas bells".
+public enum CommonName {
+    /// nil for an empty name.
+    public static func headline(_ name: String) -> String? {
+        guard let first = name.first else { return nil }
+        return first.uppercased() + name.dropFirst()
+    }
+}
+
+extension PlantCatalog.Group {
+    /// The group's common name as a headline (`CommonName.headline`).
+    public var headlineCommon: String? { common.flatMap(CommonName.headline) }
+}
+
 extension Plant {
     /// Growth forms in UN order (unknown words dropped).
     public var growthForms: [GrowthForm] { forms.compactMap(GrowthForm.init(un:)) }
@@ -307,12 +324,9 @@ extension Plant {
     public var silhouette: PlantSilhouette { PlantSilhouette(form: primaryForm, name: name, description: form) }
     public var conservationStatus: PlantStatus? { status.flatMap(PlantStatus.init(rawValue:)) }
 
-    /// The common name as a headline: first letter up (UN spells them
-    /// lowercase, the Tasmanian convention — list rows keep it so).
-    public var headlineCommon: String? {
-        guard let common, !common.isEmpty else { return nil }
-        return common.prefix(1).uppercased() + common.dropFirst()
-    }
+    /// The common name as a headline ("Christmas bells"); list rows keep
+    /// UN's lowercase (`CommonName.headline`).
+    public var headlineCommon: String? { common.flatMap(CommonName.headline) }
 
     /// "common · Tree, Shrub" for a list row's second line.
     public var subline: String {

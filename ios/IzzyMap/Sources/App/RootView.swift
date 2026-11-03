@@ -56,7 +56,34 @@ struct RootView: View {
                 spotlight: model.spotlight
             )
 
-            if !usesSheet {
+            // framing a detailed area: the frame over the uncovered map (with
+            // the setup card open beside it: the framed box, wherever the map
+            // puts it)
+            if showsSetupCard {
+                AreaDraftLayer(map: model.map)
+                    .ignoresSafeArea()
+            } else if model.isFraming, let rect = areaFrame {
+                AreaFrameLayer(map: model.map, rect: rect)
+                    .ignoresSafeArea()
+            }
+
+            if showsSetupCard {
+                // the setup as the side card (DESIGN.md ≥ 700 pt): the frame
+                // stays in sight beside it
+                AreaSetupSheet(model: model)
+                    .frame(width: max(cardWidth, 360))
+                    .frame(maxHeight: max(320, screen.size.height - pillHeight - 4 * Self.margin))
+                    // opaque: a dense form over a busy map (glass let the
+                    // map read through the words in dark mode)
+                    .background(Color(uiColor: .systemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 28))
+                    .shadow(color: .black.opacity(0.18), radius: 16, y: 4)
+                    // its own piece: the panel it replaces clears `.card` as it goes
+                    .reportFrame(.setupCard, into: $chromeFrames)
+                    .padding([.leading, .top], Self.margin)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            } else if !usesSheet {
                 FloatingPanel(model: model, maxHeight: max(120, screen.size.height - pillHeight - 4 * Self.margin))
                     .frame(width: cardWidth)
                     .animation(.snappy, value: cardWidth)
@@ -99,6 +126,17 @@ struct RootView: View {
                     .transition(.opacity)
             }
 
+            if model.isFraming, !showsSetupCard {
+                AreaFramingBar(model: model, map: model.map)
+                    .frame(maxWidth: 520)
+                    .reportFrame(.framingBar, into: $chromeFrames)
+                    .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
+                    .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
+                    .padding(.top, Self.margin)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: usesSheet ? .topLeading : .top)
+                    .transition(.opacity)
+            }
+
             if let notice = model.notice {
                 NoticeBanner(notice: notice) { model.dismissNotice() }
                     .frame(maxWidth: 440)
@@ -114,6 +152,8 @@ struct RootView: View {
             }
         }
         .animation(.snappy, value: model.notice)
+        .animation(.snappy, value: model.isFraming)
+        .animation(.snappy, value: showsSetupCard)
         .animation(.snappy, value: model.spotlight?.code)
         // card layout: modals hang off the root (the sheet layout's are on the panel sheet)
         .modifier(ModalHost(model: model, layout: .card))
@@ -197,8 +237,29 @@ struct RootView: View {
             pillHeight: pillHeight,
             compassTop: Self.margin + controlsHeight + 12,
             controlsCentreFromTrailing: Self.margin + MapControls.buttonSize / 2,
-            framingInsets: framingInsets
+            framingInsets: framingInsets,
+            areaFrame: model.isFraming && !showsSetupCard ? areaFrame : nil,
+            areaDraft: showsSetupCard ? model.areaDraft : nil
         )
+    }
+
+    /// Wide layouts show an area's setup as the side card, not a sheet.
+    private var showsSetupCard: Bool {
+        !usesSheet && model.isFraming && model.modal?.presentation == .areaSetup && model.areaDraft != nil
+    }
+
+    /// The window in the map view's coordinates (the map is full-window).
+    private var windowSize: CGSize {
+        CGSize(width: screen.size.width + screen.safe.leading + screen.safe.trailing,
+               height: screen.size.height + screen.safe.top + screen.safe.bottom)
+    }
+
+    /// Framing an area: the uncovered map (clear of every piece of chrome,
+    /// the framing bar included), inset 8 % × 10 %.
+    private var areaFrame: CGRect? {
+        let size = windowSize
+        guard size.width > 0, size.height > 0 else { return nil }
+        return AreaFramingMetrics.frame(in: CGRect(origin: .zero, size: size).inset(by: framingInsets))
     }
 
     /// The map area no chrome covers, from the measured frames: the map is
@@ -223,7 +284,7 @@ struct RootView: View {
 
 /// Floating chrome whose frame the framing keeps clear of.
 nonisolated enum ChromePiece: Hashable, Sendable {
-    case card, controls, gridPill, attribution, spotlightPill, notice
+    case card, controls, gridPill, attribution, spotlightPill, notice, framingBar, setupCard
 }
 
 extension View {
@@ -268,7 +329,8 @@ private struct MapLayer: View {
 
     var body: some View {
         MapView(model: model, chrome: chrome, trackingMode: trackingMode, hasSelection: hasSelection,
-                layers: layers, keyHighlight: keyHighlight, spotlight: spotlight, searchPin: model.search.pin)
+                layers: layers, keyHighlight: keyHighlight, spotlight: spotlight, searchPin: model.search.pin,
+                areaFocus: model.areaFocus)
             .ignoresSafeArea()
             .accessibilityLabel("Map")
             // UI tests wait for "idle" (camera settled, tiles loaded) before tapping

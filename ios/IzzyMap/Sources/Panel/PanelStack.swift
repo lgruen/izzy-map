@@ -1,3 +1,4 @@
+import IzzyKit
 import SwiftUI
 
 /// The panel's navigation stack (bottom sheet and floating card alike):
@@ -31,7 +32,7 @@ struct PanelStack<Root: View>: View {
         switch route {
         case let .group(key, context):
             GroupList(model: model, key: key, context: context)
-                .navigationTitle(PlantLibrary.shared.catalog?.group(key)?.common ?? "Group")
+                .navigationTitle(PlantLibrary.shared.catalog?.group(key)?.headlineCommon ?? "Group")
         case let .plant(id, key, context, source):
             PlantSheet(model: model, plantID: id, key: key, context: context, source: source)
                 .navigationTitle("")

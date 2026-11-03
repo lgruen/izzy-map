@@ -84,6 +84,15 @@ struct PanelHeader: View {
                 .hoverEffect(.highlight)
                 .accessibilityLabel("Identify a plant")
                 .accessibilityIdentifier("plant-id-button")
+                #if DEBUG
+                // screenshots: `-debugPlantID YES` opens Identify at launch
+                .task {
+                    guard UserDefaults.standard.bool(forKey: "debugPlantID"), !PlantIDDebug.opened else { return }
+                    PlantIDDebug.opened = true
+                    try? await Task.sleep(for: .seconds(1.5))
+                    model.present(.plantID)
+                }
+                #endif
             }
         }
         .animation(.snappy, value: model.search.isActive)

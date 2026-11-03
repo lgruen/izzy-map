@@ -64,15 +64,18 @@ nonisolated struct FeatureSelection: Equatable, Identifiable, Sendable {
 nonisolated struct AppData: Sendable {
     let packs: PackStore
     let tables: MapTables
+    /// Detailed areas (the style draws their finished layers).
+    let areas: AreaStore
 
-    @MainActor init(packs: PackStore, tables: MapTables) {
+    @MainActor init(packs: PackStore, tables: MapTables, areas: AreaStore) {
         self.packs = packs
         self.tables = tables
+        self.areas = areas
     }
 
-    /// Tests and previews: fixed archives.
-    @MainActor init(location: DataLocation, tables: MapTables) {
-        self.init(packs: PackStore(fixed: location), tables: tables)
+    /// Tests and previews: fixed archives, no areas.
+    @MainActor init(location: DataLocation, tables: MapTables, areas: AreaStore? = nil) {
+        self.init(packs: PackStore(fixed: location), tables: tables, areas: areas ?? AreaStore(directory: nil, backgroundTask: false))
     }
 
     /// The archives readable now.
@@ -100,7 +103,7 @@ nonisolated struct AppData: Sendable {
         } else {
             logger.fault("bundled data folder missing")
         }
-        return AppData(packs: PackStore.launch(), tables: tables)
+        return AppData(packs: PackStore.launch(), tables: tables, areas: .shared)
     }
 }
 
@@ -118,6 +121,11 @@ final class MapLiveState {
     var visibleSources: Set<String> = []
     /// Map zoom, written when the camera settles (season caption).
     var zoom: Double = 0
+    /// While framing a detailed area: the frame's box on the ground,
+    /// written by the map as it moves (the framing bar's live gauge).
+    var framedBox: AreaBox?
+    /// The setup card's box on screen (map view coordinates), while it shows.
+    var draftRect: CGRect?
 }
 
 /// Which container holds the panel: the compact bottom sheet or the
@@ -138,6 +146,8 @@ nonisolated struct ModalRequest: Identifiable, Equatable, Sendable {
 /// What can be shown modally. One owner (the window's model) for all of them.
 nonisolated enum Presentation: String, Identifiable, Sendable {
     case layers, plantID, attribution
+    /// A framed area's setup: name, layers, detail, size (Next).
+    case areaSetup
     var id: String { rawValue }
 
     var title: String {
@@ -145,6 +155,7 @@ nonisolated enum Presentation: String, Identifiable, Sendable {
         case .layers: "Layers"
         case .plantID: "Identify a Plant"
         case .attribution: "Map Credits"
+        case .areaSetup: "Detailed area"
         }
     }
 }
@@ -155,6 +166,8 @@ nonisolated enum EscapeStep: Equatable, Sendable {
     /// The full-screen document reader (over everything, so first).
     case closeDocument
     case dismiss(Presentation)
+    /// Framing a detailed area: Cancel.
+    case cancelFraming
     /// One view back in the card's stack (plant sheet → group list → card).
     case back
     case closeCard
@@ -168,6 +181,7 @@ nonisolated enum EscapeStep: Equatable, Sendable {
         switch self {
         case .closeDocument: "Close Document"
         case let .dismiss(presentation): "Close \(presentation.title)"
+        case .cancelFraming: "Cancel Framing"
         case .back: "Back"
         case .closeCard: "Close Card"
         case .clearHighlight: "Clear Highlight"
@@ -245,7 +259,7 @@ final class AppModel {
     /// LIST sources only while there is a network path).
     func styleJSON(selection style: SelectionStyle) -> String {
         StyleBuilder.json(state: layers, data: data, tables: tables, selection: style,
-                          online: Connectivity.shared.online)
+                          online: Connectivity.shared.online, areas: shared.areas.styleSources)
     }
 
     /// The selection as the style draws it (feature id from the map tap).
@@ -377,6 +391,7 @@ final class AppModel {
     var escapeStep: EscapeStep? {
         if documents.isReading { return .closeDocument }
         if let modal { return .dismiss(modal.presentation) }
+        if isFraming { return .cancelFraming }
         if search.fieldFocused { return .leaveSearchField }
         if search.isActive { return .closeSearch }
         if selection != nil, !cardPath.isEmpty { return .back }
@@ -391,6 +406,7 @@ final class AppModel {
         switch escapeStep {
         case .closeDocument: documents.closeReader()
         case .dismiss: modal = nil
+        case .cancelFraming: cancelFraming()
         case .back: cardPath.removeLast()
         case .closeCard: clearSelection()
         case .clearHighlight: keyHighlight = nil
@@ -399,6 +415,71 @@ final class AppModel {
         case .clearSearchPin: search.clearPin()
         case nil: break
         }
+    }
+
+    // MARK: Detailed areas
+
+    /// Framing an area on the map: a dashed frame over the uncovered map and
+    /// a glass bar with the live size (AreaFraming.swift). Taps on the map
+    /// don't select anything meanwhile.
+    private(set) var isFraming = false
+    /// The framed box handed to the setup sheet by Next.
+    private(set) var areaDraft: AreaBox?
+    /// Layers opens with Storage pushed (after Download: the new row).
+    var opensStorage = false
+    /// "Show on map" for a detailed area: the map frames it (each request
+    /// a new serial, so the same area can be asked for twice).
+    private(set) var areaFocus: AreaFocus?
+
+    nonisolated struct AreaFocus: Equatable, Sendable {
+        let box: AreaBox
+        let serial: Int
+    }
+
+    func showArea(_ box: AreaBox) {
+        modal = nil
+        if isFraming { cancelFraming() }
+        if trackingMode != .off { trackingMode = .off }
+        areaFocus = AreaFocus(box: box, serial: (areaFocus?.serial ?? 0) + 1)
+    }
+
+    /// "Download an area…" (Storage, Layers): the modal goes, the map frames.
+    func startFraming() {
+        modal = nil
+        endSpotlight()
+        if search.isActive { search.end() }
+        clearSelection()
+        keyHighlight = nil
+        areaDraft = nil
+        // the frame is the box that downloads: north up, the map still
+        // (following would drag it away; the map turns north as it opens)
+        if trackingMode != .off { trackingMode = .off }
+        isFraming = true
+    }
+
+    func cancelFraming() {
+        isFraming = false
+        areaDraft = nil
+        map.framedBox = nil
+        map.draftRect = nil
+        if modal?.presentation == .areaSetup { modal = nil }
+    }
+
+    /// Next: the setup sheet for the box in the frame (if it fits).
+    func framingNext() {
+        guard isFraming, let box = map.framedBox, AreaPlan.fitsFraming(box) else { return }
+        areaDraft = box
+        present(.areaSetup)
+    }
+
+    /// Download tapped: framing ends and Storage shows the new row.
+    func areaStarted() {
+        isFraming = false
+        areaDraft = nil
+        map.framedBox = nil
+        map.draftRect = nil
+        opensStorage = true
+        present(.layers)
     }
 
     // MARK: Location

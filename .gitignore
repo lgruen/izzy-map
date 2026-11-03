@@ -6,6 +6,11 @@
 *.mbtiles
 *.gpkg
 *.fgb
+# Background Assets packs and Core ML models (data/packs/, pipeline/cache/
+# plantid/ship/ — never committed; the model is shipped via the plantid pack)
+*.aar
+*.mlpackage/
+*.mlmodelc/
 
 # From Forest to Fjaeldmark content — NOT redistributable (see docs/LICENSING.md)
 # (only the derived f2f_index.json of page numbers may be committed)

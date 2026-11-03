@@ -44,6 +44,7 @@ public struct BundledData: Sendable {
         public static let records = "records.json"
         public static let f2f = "f2f_index.json"
         public static let nearby = "nearby.bin"
+        public static let acknowledgements = "acknowledgements.json"
     }
 
     public func communities() throws -> CommunityTable { try decode(File.communities) }

@@ -9,8 +9,13 @@ import Foundation
 /// destination (`<dest>.tiles`); RAM holds only tile id → blob, and per
 /// distinct blob its SHA-256, offset and length (~100 bytes a tile).
 /// Identical bytes (LIST's constant sea / blank tiles) are stored once.
-/// A journal (`<dest>.journal`, 52 bytes a tile, appended after the bytes)
-/// lets a killed download pick up where it stopped: `init(…, resume: true)`.
+/// A journal (`<dest>.journal`, 52 bytes a tile) lets a killed download pick
+/// up where it stopped: `init(…, resume: true)`. Durability: journal records
+/// are held back and written in batches of `syncEvery` tiles, each batch only
+/// after an `fsync` of the tile bytes it points at — a power loss can never
+/// leave a journalled tile whose bytes didn't reach the disk. On resume every
+/// distinct blob is re-hashed against its journalled SHA-256; a mismatch
+/// (torn page, bit rot) drops the tiles using it, to be fetched again.
 ///
 /// `finish` sorts by Hilbert tile id, lays the blobs out in that order
 /// (clustered), run-length-encodes consecutive ids sharing a blob, splits
@@ -29,6 +34,13 @@ public final class PMTilesWriter {
     private var blobs: [Blob] = []
     private var blobByDigest: [DigestKey: Int32] = [:]
     private var journalRecords = 0
+    /// Records not yet in the journal (written after the next data fsync).
+    private var pendingJournal = Data()
+    private var pendingRecords = 0
+    /// Tiles per data fsync + journal batch.
+    public let syncEvery: Int
+    /// Journalled tiles dropped on resume because their bytes didn't match.
+    public private(set) var droppedOnResume = 0
     private var tiles: [UInt64: Int32] = [:]
     private var dataEnd: UInt64 = 0
     private var dataFD: Int32 = -1
@@ -48,8 +60,9 @@ public final class PMTilesWriter {
     /// tile type and compression are continued (a torn last record or bytes
     /// past the last journalled tile are dropped); otherwise they are deleted.
     public init(destination: URL, tileType: PMTiles.TileType, tileCompression: PMTiles.Compression = .none,
-                resume: Bool = false) throws(PMTilesError) {
+                resume: Bool = false, syncEvery: Int = 64) throws(PMTilesError) {
         self.destination = destination
+        self.syncEvery = max(1, syncEvery)
         self.tileType = tileType
         self.tileCompression = tileCompression
         let fm = FileManager.default
@@ -58,7 +71,8 @@ public final class PMTilesWriter {
             if journalFD >= 0 { close(journalFD) }
             try? fm.removeItem(at: dataURL)
             try? fm.removeItem(at: journalURL)
-            blobs = []; blobByDigest = [:]; tiles = [:]; dataEnd = 0; journalRecords = 0
+            blobs = []; blobByDigest = [:]; tiles = [:]; dataEnd = 0; journalRecords = 0; droppedOnResume = 0
+            dataFD = -1; journalFD = -1
             dataFD = try Self.openForWriting(dataURL, truncate: true)
             journalFD = try Self.openForWriting(journalURL, truncate: true)
             var head = Self.journalMagic
@@ -70,6 +84,8 @@ public final class PMTilesWriter {
     }
 
     deinit {
+        // a writer dropped without finish (a stopped download) keeps its batch
+        try? sync()
         if dataFD >= 0 { close(dataFD) }
         if journalFD >= 0 { close(journalFD) }
     }
@@ -102,16 +118,31 @@ public final class PMTilesWriter {
             blobByDigest[key] = blob
             dataEnd += UInt64(data.count)
         }
-        // journal after the bytes: a journalled tile always has its data on disk
-        var rec = Data(capacity: Self.recordLength)
-        rec.appendLE(id)
-        rec.appendLE(blobs[Int(blob)].offset)
-        rec.appendLE(blobs[Int(blob)].length)
-        digest.withUnsafeBytes { rec.append(contentsOf: $0) }
-        try Self.writeAll(journalFD, rec, at: UInt64(Self.journalHeaderLength + journalRecords * Self.recordLength))
-        journalRecords += 1
+        // journalled only after its bytes are synced (`sync`)
+        pendingJournal.appendLE(id)
+        pendingJournal.appendLE(blobs[Int(blob)].offset)
+        pendingJournal.appendLE(blobs[Int(blob)].length)
+        digest.withUnsafeBytes { pendingJournal.append(contentsOf: $0) }
+        pendingRecords += 1
         tiles[id] = blob
+        if pendingRecords >= syncEvery { try sync() }
     }
+
+    /// Makes every tile added so far resumable: fsyncs the tile bytes, then
+    /// appends their journal records (and fsyncs the journal). Called every
+    /// `syncEvery` tiles, and by a download that stops.
+    public func sync() throws(PMTilesError) {
+        guard pendingRecords > 0, !closed, dataFD >= 0, journalFD >= 0 else { return }
+        guard fsync(dataFD) == 0 else { throw .io("fsync: \(String(cString: strerror(errno)))") }
+        try Self.writeAll(journalFD, pendingJournal, at: UInt64(Self.journalHeaderLength + journalRecords * Self.recordLength))
+        _ = fsync(journalFD)
+        journalRecords += pendingRecords
+        pendingRecords = 0
+        pendingJournal.removeAll(keepingCapacity: true)
+    }
+
+    /// Records in the journal file (tests: what a kill now would keep).
+    public var journalledTiles: Int { journalRecords }
 
     /// Writes the archive and removes the work files. `name` and `attribution`
     /// go into the metadata (overriding `metadata`'s keys). Zooms come from
@@ -120,7 +151,8 @@ public final class PMTilesWriter {
     @discardableResult
     public func finish(name: String, attribution: String, metadata extra: [String: Any] = [:],
                        bounds: PMTiles.Bounds? = nil,
-                       center: (longitude: Double, latitude: Double, zoom: Int)? = nil) throws(PMTilesError) -> PMTiles.Header {
+                       center: (longitude: Double, latitude: Double, zoom: Int)? = nil,
+                       progress: ((Double) -> Void)? = nil) throws(PMTilesError) -> PMTiles.Header {
         guard !closed else { throw .invalidArgument("writer already finished") }
         guard !tiles.isEmpty else { throw .invalidArgument("no tiles added") }
         if tileType == .mvt, extra["vector_layers"] == nil {
@@ -202,11 +234,19 @@ public final class PMTilesWriter {
             try sink.write(metaGz)
             try sink.write(leaves)
             var buffer = Data()
+            var copied: UInt64 = 0
+            var reported: UInt64 = 0
+            let step = max(cursor / 50, 1)
             for b in order {
                 let blob = blobs[Int(b)]
                 buffer.count = Int(blob.length)
                 try Self.readAll(dataFD, into: &buffer, at: blob.offset)
                 try sink.write(buffer)
+                copied += UInt64(blob.length)
+                if let progress, copied - reported >= step {
+                    reported = copied
+                    progress(Double(copied) / Double(max(cursor, 1)))
+                }
             }
             try sink.flush()
             guard sink.written == h.tileDataOffset + h.tileDataLength else { throw .io("archive size mismatch") }
@@ -220,6 +260,7 @@ public final class PMTilesWriter {
         guard rename(partialURL.path(percentEncoded: false), destination.path(percentEncoded: false)) == 0
         else { throw .io("rename: \(String(cString: strerror(errno)))") }
         discardWorkFiles()
+        progress?(1)
         // as stored: positions round to E7
         return try PMTiles.Header(parsing: h.serialized)
     }
@@ -229,6 +270,8 @@ public final class PMTilesWriter {
 
     private func discardWorkFiles() {
         closed = true
+        pendingJournal = Data()
+        pendingRecords = 0
         if dataFD >= 0 { close(dataFD); dataFD = -1 }
         if journalFD >= 0 { close(journalFD); journalFD = -1 }
         let fm = FileManager.default
@@ -283,28 +326,54 @@ public final class PMTilesWriter {
         else { return false }
         var r = ByteReader(journal)
         r.skip(Self.journalHeaderLength)
-        var records = 0
+        // the valid records, in order (a bad one ends the journal: torn tail)
+        var parsed: [(id: UInt64, offset: UInt64, length: UInt32, digest: Data)] = []
         while r.at + Self.recordLength <= journal.endIndex {
             let id = r.u64(), offset = r.u64(), length = r.u32()
-            let digestBytes = journal[r.at ..< r.at + 32]
+            let digestBytes = Data(journal[r.at ..< r.at + 32])
             r.skip(32)
             guard length > 0, offset + UInt64(length) <= dataSize, id < PMTiles.tileIDLimit
             else { break }
-            let key = DigestKey(digestBytes)
-            let blob: Int32
-            if let known = blobByDigest[key] {
-                blob = known
-            } else {
-                blob = Int32(blobs.count)
-                blobs.append(Blob(offset: offset, length: length))
-                blobByDigest[key] = blob
-                dataEnd = max(dataEnd, offset + UInt64(length))
-            }
-            tiles[id] = blob
-            records += 1
+            parsed.append((id, offset, length, digestBytes))
         }
         dataFD = try Self.openForWriting(dataURL, truncate: false)
+        // every distinct blob re-hashed: bytes that don't match their digest
+        // (never synced, or damaged) drop every tile using them
+        var verified: [DigestKey: Bool] = [:]
+        var buffer = Data()
+        var kept = Data()
+        var records = 0
+        for rec in parsed {
+            let key = DigestKey(rec.digest)
+            if verified[key] == nil {
+                buffer.count = Int(rec.length)
+                let ok: Bool
+                if (try? Self.readAll(dataFD, into: &buffer, at: rec.offset)) != nil {
+                    ok = DigestKey(SHA256.hash(data: buffer)) == key
+                } else {
+                    ok = false
+                }
+                verified[key] = ok
+                if ok {
+                    blobByDigest[key] = Int32(blobs.count)
+                    blobs.append(Blob(offset: rec.offset, length: rec.length))
+                    dataEnd = max(dataEnd, rec.offset + UInt64(rec.length))
+                }
+            }
+            guard verified[key] == true, let blob = blobByDigest[key] else {
+                droppedOnResume += 1
+                continue
+            }
+            tiles[rec.id] = blob
+            kept.appendLE(rec.id)
+            kept.appendLE(blobs[Int(blob)].offset)
+            kept.appendLE(blobs[Int(blob)].length)
+            kept.append(rec.digest)
+            records += 1
+        }
         journalFD = try Self.openForWriting(journalURL, truncate: false)
+        // the journal keeps only verified records (rewritten when any went)
+        if droppedOnResume > 0 { try Self.writeAll(journalFD, kept, at: UInt64(Self.journalHeaderLength)) }
         guard ftruncate(dataFD, off_t(dataEnd)) == 0,
               ftruncate(journalFD, off_t(Self.journalHeaderLength + records * Self.recordLength)) == 0
         else { throw .io("ftruncate: \(String(cString: strerror(errno)))") }

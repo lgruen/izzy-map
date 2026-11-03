@@ -9,6 +9,7 @@ data/packs/<id>.aar. Stdlib only; needs Xcode 27 (ba-package 2.0, `aa`).
     python3 pipeline/build_packs.py vector season-2021
     python3 pipeline/build_packs.py --verify all     # extract + hash every pack
     python3 pipeline/build_packs.py --data /Users/leo/izzy-map/data   # from a worktree
+    python3 pipeline/build_packs.py plantid --verify plantid          # plant ID (milestone 6)
 
 An .aar is an Apple Archive (pbz block compression). PMTiles are already
 compressed tiles, so the archive is ~the size of its inputs (vector: +7 KB on
@@ -17,6 +18,17 @@ touches the bytes: `--verify` extracts with `aa` and compares SHA-256 against
 data/ — the CC BY-NC-ND imagery must stay byte-for-byte (LICENSING.md).
 By default the smallest pack (`vector`) is verified in full and every pack's
 entry sizes are checked against data/ from `aa list`.
+
+`plantid` is staged first (`"stage": "plantid"`): its files come from
+pipeline/cache/plantid/ship (build_ship.py), each SHA-256-checked against
+ship/pipeline.json, hard-linked into <out>/stage-plantid/plantid/; the 8-bit
+encoder .mlpackage is compiled to .mlmodelc there (`xcrun coremlcompiler
+compile --platform iOS --deployment-target 26.0`, ~1 s: it re-encodes the
+program, the 0.63 GB weight file is copied verbatim — checked). Shipping
+the compiled model (what Xcode puts in app bundles) means no on-device
+compile and no second 0.6 GB copy in Application Support.
+
+A `files` entry ending in "/" is a directory (packed recursively).
 
 Upload is a separate, LOCAL, approved step: pipeline/upload_packs.sh.
 """
@@ -27,6 +39,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,6 +49,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TABLE = REPO / "pipeline" / "asset_packs.json"
 POLICIES = {"essential", "prefetch", "onDemand"}
+SHIP = REPO / "pipeline" / "cache" / "plantid" / "ship"
+PLANTID_ENCODER = ("PlantEncoder-w8.mlpackage", "PlantEncoder-w8.mlmodelc")
 ENV = {**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:" + os.environ.get("PATH", "")}
 
 
@@ -59,6 +74,9 @@ def check_app_mirror(table: list[dict]) -> None:
     app = {}
     for name, archives in re.findall(r"case \.(\w+): \[([^\]]*)\]", body):
         app[raw.get(name, name)] = sorted(file_of[a] for a in re.findall(r"\.(\w+)", archives))
+    other = re.search(r"static let packPaths = \[(.*?)\]", packs_swift, re.S)
+    if other:
+        app["plantid"] = sorted(app.get("plantid", []) + re.findall(r'"([^"]+)"', other.group(1)))
     want = {p["id"]: sorted(p["files"]) for p in table}
     if app != want:
         diff = {k: (want.get(k), app.get(k)) for k in set(app) | set(want) if want.get(k) != app.get(k)}
@@ -76,7 +94,9 @@ def manifest_for(pack: dict, source_root: Path, manifest_dir: Path) -> dict:
         "assetPackID": pack["id"],
         "downloadPolicy": {policy: body},
         # files at the pack root under their data/ names (one shared namespace)
-        "fileSelectors": [{"fileSource": f, "fileDestination": f} for f in pack["files"]],
+        "fileSelectors": [{"directorySource": f.rstrip("/"), "directoryDestination": f.rstrip("/")}
+                          if f.endswith("/") else {"fileSource": f, "fileDestination": f}
+                          for f in pack["files"]],
         "platforms": ["iOS"],
         # relative to the manifest's own location (ba-package template)
         "sourceRoot": os.path.relpath(source_root, manifest_dir),
@@ -103,9 +123,74 @@ def archive_entries(aar: Path) -> dict[str, int]:
     return entries
 
 
+def expand(pack: dict, root: Path) -> dict[str, Path]:
+    """Pack path → source file for every regular file (directories walked)."""
+    out = {}
+    for f in pack["files"]:
+        if f.endswith("/"):
+            d = root / f.rstrip("/")
+            for p in sorted(d.rglob("*")):
+                if p.is_file():
+                    out[str(p.relative_to(root))] = p
+        else:
+            out[f] = root / f
+    return out
+
+
+def present(pack: dict, root: Path) -> list[str]:
+    """The pack's `files` entries missing under root."""
+    return [f for f in pack["files"]
+            if not ((root / f.rstrip("/")).is_dir() if f.endswith("/") else (root / f).is_file())]
+
+
+def stage_plantid(out: Path, ship: Path) -> Path:
+    """<out>/stage-plantid/plantid/: the ship/ tables (sha256 = pipeline.json)
+    hard-linked, the encoder compiled. Returns the stage root."""
+    root = out / "stage-plantid"
+    dest = root / "plantid"
+    dest.mkdir(parents=True, exist_ok=True)
+    pipe = json.loads((ship / "pipeline.json").read_text())
+    table = next(p for p in json.loads(TABLE.read_text())["packs"] if p["id"] == "plantid")
+    for f in table["files"]:
+        name = f.split("/", 1)[1]
+        if name.endswith("/"):
+            continue
+        src, dst = ship / name, dest / name
+        if not src.is_file():
+            sys.exit(f"plantid: {src} missing (pipeline/plantid/build_ship.py data)")
+        if name != "pipeline.json":
+            want = pipe["files"].get(name)
+            if not want or src.stat().st_size != want["bytes"] or sha256(src) != want["sha256"]:
+                sys.exit(f"plantid: {name} doesn't match ship/pipeline.json (rebuild with build_ship.py data)")
+        if not (dst.is_file() and os.path.samefile(src, dst)):
+            dst.unlink(missing_ok=True)
+            try:
+                os.link(src, dst)
+            except OSError:
+                shutil.copy2(src, dst)
+    pkg, compiled = PLANTID_ENCODER
+    src = ship / "encoder" / pkg
+    mlc = dest / compiled
+    newest = max(p.stat().st_mtime for p in src.rglob("*") if p.is_file())
+    if not mlc.is_dir() or (mlc / "coremldata.bin").stat().st_mtime < newest:
+        t = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix="mlc-", dir=root) as tmp:
+            subprocess.run(["xcrun", "coremlcompiler", "compile", str(src), tmp, "--platform", "iOS",
+                            "--deployment-target", "26.0"], env=ENV, check=True, capture_output=True)
+            if mlc.exists():
+                shutil.rmtree(mlc)
+            os.replace(Path(tmp) / compiled, mlc)
+        print(f"    {compiled}: compiled in {time.monotonic() - t:.1f} s")
+    # the weights must be the quantised ones, byte for byte
+    w_src = next(src.rglob("weight.bin"))
+    if sha256(w_src) != sha256(mlc / "weights" / "weight.bin"):
+        sys.exit("plantid: the compiled model's weights differ from the .mlpackage's")
+    return root
+
+
 def check_sizes(pack: dict, aar: Path, data: Path) -> None:
     entries = archive_entries(aar)
-    want = {f"Contents/{f}": (data / f).stat().st_size for f in pack["files"]}
+    want = {f"Contents/{f}": p.stat().st_size for f, p in expand(pack, data).items()}
     got = {k: v for k, v in entries.items() if k.startswith("Contents/")}
     if got != want:
         sys.exit(f"{pack['id']}: archive entries {got} != data/ {want}")
@@ -117,8 +202,8 @@ def verify_hashes(pack: dict, aar: Path, data: Path) -> float:
     t = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"pack-{pack['id']}-", dir=aar.parent) as tmp:
         subprocess.run(["aa", "extract", "-i", str(aar), "-d", tmp], env=ENV, check=True)
-        for f in pack["files"]:
-            a, b = sha256(Path(tmp) / "Contents" / f), sha256(data / f)
+        for f, src in expand(pack, data).items():
+            a, b = sha256(Path(tmp) / "Contents" / f), sha256(src)
             if a != b:
                 sys.exit(f"{pack['id']}: {f} differs after packaging ({a} vs {b})")
             print(f"    {f}: sha256 {a[:16]}… identical")
@@ -132,6 +217,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=None, help="output directory (default <data>/packs)")
     ap.add_argument("--verify", default="vector", help="'all', 'none' or comma-separated ids to extract + hash")
     ap.add_argument("--force", action="store_true", help="rebuild even when the .aar is newer than its inputs")
+    ap.add_argument("--plantid-ship", type=Path, default=SHIP,
+                    help="build_ship.py output for the plantid pack (default pipeline/cache/plantid/ship)")
     args = ap.parse_args()
 
     data = args.data.resolve()
@@ -161,15 +248,21 @@ def main() -> None:
         if not pack["files"]:
             print(f"- {pid}: no files yet ({pack.get('_todo', 'empty')}) — skipped")
             continue
-        missing = [f for f in pack["files"] if not (data / f).is_file()]
+        root = data
+        if pack.get("stage") == "plantid":
+            if not (args.plantid_ship / "pipeline.json").is_file():
+                print(f"- {pid}: no {args.plantid_ship}/pipeline.json (build_ship.py data) — skipped")
+                continue
+            root = stage_plantid(out, args.plantid_ship.resolve())
+        missing = present(pack, root)
         if missing:
-            print(f"- {pid}: missing {missing} in {data} — skipped")
+            print(f"- {pid}: missing {missing} in {root} — skipped")
             continue
 
         manifest_path = manifests / f"{pid}.json"
-        manifest = json.dumps(manifest_for(pack, data, manifests), indent=2) + "\n"
+        manifest = json.dumps(manifest_for(pack, root, manifests), indent=2) + "\n"
         aar = out / f"{pid}.aar"
-        inputs = [data / f for f in pack["files"]]
+        inputs = list(expand(pack, root).values())
         size_in = sum(p.stat().st_size for p in inputs)
         fresh = (aar.is_file() and manifest_path.is_file() and manifest_path.read_text() == manifest
                  and aar.stat().st_mtime > max(p.stat().st_mtime for p in inputs))
@@ -184,14 +277,14 @@ def main() -> None:
             subprocess.run(["xcrun", "ba-package", "package", str(manifest_path), "--output-path", str(aar),
                             "--quiet"], env=ENV, check=True)
             note = f"built in {time.monotonic() - t:.1f} s"
-        check_sizes(pack, aar, data)
+        check_sizes(pack, aar, root)
         size_out = aar.stat().st_size
         total_in += size_in
         total_out += size_out
         print(f"- {pid} ({pack['policy']}): {size_in / 1e9:.3f} GB in → {size_out / 1e9:.3f} GB .aar"
               f" ({size_out - size_in:+,} B), {note}")
         if pid in verify:
-            print(f"    verified byte-for-byte in {verify_hashes(pack, aar, data):.1f} s")
+            print(f"    verified byte-for-byte in {verify_hashes(pack, aar, root):.1f} s")
 
     print(f"total {total_in / 1e9:.2f} GB in → {total_out / 1e9:.2f} GB in {time.monotonic() - started:.0f} s; "
           f"output {out}")

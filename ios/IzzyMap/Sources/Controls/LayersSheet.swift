@@ -10,9 +10,12 @@ struct LayersSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// A tile's one-tap pack fetch that won't fit (the space alert).
     @State private var spaceRequest: PackSpaceRequest?
+    /// Storage pushed at once: after an area's Download (`AppModel.opensStorage`),
+    /// or DEBUG `-openStorage YES` (with `-openLayers YES`).
     #if DEBUG
-    /// DEBUG `-openStorage YES` (with `-openLayers YES`): Storage pushed at once.
     @State private var showsStorage = UserDefaults.standard.bool(forKey: "openStorage")
+    #else
+    @State private var showsStorage = false
     #endif
     /// The sheet's detent (iPhone): Storage raises it to large, where the
     /// system sheet turns opaque — a dense list of figures can't stay
@@ -20,6 +23,8 @@ struct LayersSheet: View {
     @State private var detent: PresentationDetent = .medium
     /// iPad: Storage as its own system sheet over the popover (below).
     @State private var storageSheet = false
+    /// Storage was opened by an area's Download: it scrolls to the areas.
+    @State private var storageTarget: String?
 
     /// The iPad popover: system glass that never turns opaque. Storage (a
     /// dense list of figures) opens from it as a form sheet — the system's
@@ -43,14 +48,24 @@ struct LayersSheet: View {
                     .accessibilityIdentifier("legend-link")
                     storageLink
                         .accessibilityIdentifier("storage-link")
+                    Button { model.startFraming() } label: {
+                        Label("Download an area…", systemImage: "square.dashed")
+                            .foregroundStyle(DesignColor.ink)
+                    }
+                    .accessibilityIdentifier("layers-download-area")
                 }
                 .panelRows()
             }
             .panelListSurface()
-            #if DEBUG
             .navigationDestination(isPresented: Binding(get: { showsStorage && !inPopover },
                                                         set: { showsStorage = $0 })) { storage }
-            #endif
+            .onAppear {
+                if model.opensStorage {
+                    model.opensStorage = false
+                    storageTarget = "areas"
+                    showsStorage = true
+                }
+            }
             .navigationTitle("Layers")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -62,7 +77,7 @@ struct LayersSheet: View {
         .presentationDetents([.medium, .large], selection: $detent)
         .sheet(isPresented: storageSheetShown) {
             NavigationStack {
-                StorageView(model: model) { storageSheet = false }
+                StorageView(model: model, done: { storageSheet = false }, scrollTo: storageTarget)
             }
             .presentationSizing(.form)
         }
@@ -92,17 +107,13 @@ struct LayersSheet: View {
     }
 
     private var storage: some View {
-        StorageView(model: model)
+        StorageView(model: model, scrollTo: storageTarget)
             .onAppear { detent = .large }
     }
 
     private var storageSheetShown: Binding<Bool> {
-        #if DEBUG
         Binding(get: { storageSheet || (showsStorage && inPopover) },
                 set: { if !$0 { storageSheet = false; showsStorage = false } })
-        #else
-        $storageSheet
-        #endif
     }
 
     /// The download badge for a tile whose packs aren't all on the device

@@ -53,6 +53,9 @@ final class PackStore {
     /// the map until the new one is in place — so nothing shows it as a
     /// fresh download (no Stop, no Layers badge, the gauge keeps its bytes).
     private(set) var updates: [Pack: Double] = [:]
+    /// The folder holding plant ID's files (`PlantIDFiles`) while the
+    /// `plantid` pack is on the device and every one of them is readable.
+    private(set) var plantIDDirectory: URL?
 
     @ObservationIgnored private var handlers: [UUID: @MainActor () -> Void] = [:]
     @ObservationIgnored private var fetches: [Pack: Task<Void, Never>] = [:]
@@ -360,7 +363,8 @@ final class PackStore {
 
     /// Re-reads which packs are on the device (off the main thread).
     private func refresh() async {
-        let (location, installed) = await Self.resolveInstalledOffMain()
+        let (location, installed, plantID) = await Self.resolveInstalledOffMain()
+        plantIDDirectory = plantID
         for pack in Pack.allCases {
             if installed.contains(pack) {
                 states[pack] = .installed
@@ -421,7 +425,7 @@ final class PackStore {
 
     // MARK: Resolving files
 
-    @concurrent nonisolated private static func resolveInstalledOffMain() async -> (DataLocation, Set<Pack>) {
+    @concurrent nonisolated private static func resolveInstalledOffMain() async -> (DataLocation, Set<Pack>, URL?) {
         resolveInstalled()
     }
 
@@ -438,10 +442,11 @@ final class PackStore {
     /// files itself (MapLibre's `pmtiles://file://`); its URL must not be
     /// persisted beyond this process. A pack counts as installed only when
     /// every one of its archives is readable.
-    nonisolated private static func resolveInstalled(fileManager: FileManager = .default) -> (DataLocation, Set<Pack>) {
+    nonisolated private static func resolveInstalled(fileManager: FileManager = .default) -> (DataLocation, Set<Pack>, URL?) {
         let manager = AssetPackManager.shared
         var archives: [Archive: URL] = [:]
         var installed: Set<Pack> = []
+        var plantID: URL?
         for pack in Pack.allCases {
             if #available(iOS 26.4, *) {
                 guard manager.assetPackIsAvailableLocally(withID: pack.rawValue) else { continue }
@@ -454,12 +459,54 @@ final class PackStore {
                 if let url, readable { found[archive] = url }
             }
             guard found.count == pack.archives.count else { continue }
+            let folder = otherFilesFolder(pack, manager: manager, fileManager: fileManager)
+            guard pack.otherFiles.isEmpty || folder != nil else { continue }
             // pre-26.4 has no availability call: an empty pack can't be told apart
-            if pack.archives.isEmpty, #unavailable(iOS 26.4) { continue }
+            if pack.archives.isEmpty, pack.otherFiles.isEmpty, #unavailable(iOS 26.4) { continue }
             archives.merge(found) { a, _ in a }
             installed.insert(pack)
+            if pack == .plantid { plantID = folder }
         }
-        return (DataLocation(origin: .assetPacks, archives: archives), installed)
+        return (DataLocation(origin: .assetPacks, archives: archives), installed, plantID)
+    }
+
+    /// The one folder holding all of a pack's `otherFiles`, when every one
+    /// is there (files readable, directories present). `url(for:)` may not
+    /// resolve a directory, so a directory is also looked for beside the
+    /// pack's files.
+    nonisolated private static func otherFilesFolder(_ pack: Pack, manager: AssetPackManager, fileManager: FileManager) -> URL? {
+        guard !pack.otherFiles.isEmpty else { return nil }
+        var folder: URL?
+        for path in pack.otherFiles where !path.hasSuffix("/") {
+            guard let url = try? manager.url(for: FilePath(path)),
+                  fileManager.isReadableFile(atPath: url.path(percentEncoded: false))
+            else {
+                logger.debug("\(pack.rawValue, privacy: .public)/\(path, privacy: .public): not readable")
+                return nil
+            }
+            let parent = url.deletingLastPathComponent().standardizedFileURL
+            if let folder, folder != parent {
+                logger.fault("\(pack.rawValue, privacy: .public): files in two folders (\(folder.path(percentEncoded: false), privacy: .public), \(parent.path(percentEncoded: false), privacy: .public))")
+                return nil
+            }
+            folder = parent
+        }
+        for path in pack.otherFiles where path.hasSuffix("/") {
+            let name = String(path.dropLast())
+            let leaf = String(name.split(separator: "/").last ?? Substring(name))
+            let candidates = [(try? manager.url(for: FilePath(name))), folder?.appending(path: leaf, directoryHint: .isDirectory)]
+            let found = candidates.compactMap { $0 }.first { url in
+                var isDir: ObjCBool = false
+                return fileManager.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDir) && isDir.boolValue
+            }
+            guard let found, found.deletingLastPathComponent().standardizedFileURL == folder ?? found.deletingLastPathComponent().standardizedFileURL else {
+                logger.debug("\(pack.rawValue, privacy: .public)/\(path, privacy: .public): no such folder")
+                return nil
+            }
+            folder = folder ?? found.deletingLastPathComponent().standardizedFileURL
+        }
+        logger.debug("\(pack.rawValue, privacy: .public): files in \(folder?.path(percentEncoded: false) ?? "?", privacy: .public)")
+        return folder
     }
 
     private static func states(for location: DataLocation) -> [Pack: PackState] {

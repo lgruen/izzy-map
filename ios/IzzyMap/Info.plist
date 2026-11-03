@@ -12,5 +12,12 @@
 	<true/>
 	<key>BAUsesAppleHosting</key>
 	<true/>
+	<!-- Detailed-area downloads: user-started BGContinuedProcessingTask
+	     requests (iOS 26), wildcard form — each run submits
+	     org.gruenschloss.izzymap.areas.<n> (Areas/AreaBackgroundTask.swift). -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>org.gruenschloss.izzymap.areas.*</string>
+	</array>
 </dict>
 </plist>

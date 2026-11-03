@@ -14,7 +14,8 @@ nonisolated enum PackSizes {
         .vector: 368_297_665 + 5_702_849 + 24_146_929,
         .topo: 2_044_499_329,
         .relief: 1_287_558_760,
-        .plantid: 1_400_000_000,
+        // plant ID's files as staged by build_packs.py (w8 encoder + tables, 2026-11-04)
+        .plantid: 726_966_623,
         .aerial: 1_929_244_001,
         .tasmap: 3_242_875_247,
         .season2020: 282_812_458,

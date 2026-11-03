@@ -11,6 +11,8 @@ final class StorageModel {
     let packs: PackStore
     let extras: ExtrasDownloads
     private let trees: TreesData?
+    /// Detailed areas (their bytes in the gauge).
+    let areas: AreaStore?
 
     private(set) var volume = VolumeSpace()
     /// Each kind's files (empty until the bundled tables are loaded).
@@ -21,10 +23,11 @@ final class StorageModel {
     private(set) var packBytes: [Pack: Int] = [:]
     @ObservationIgnored private var volumeRead = ContinuousClock.now
 
-    init(packs: PackStore, extras: ExtrasDownloads = .shared, trees: TreesData?) {
+    init(packs: PackStore, extras: ExtrasDownloads = .shared, trees: TreesData?, areas: AreaStore? = nil) {
         self.packs = packs
         self.extras = extras
         self.trees = trees
+        self.areas = areas
     }
 
     /// Loads the extras' item lists (plant photos need the plant catalog).
@@ -76,6 +79,7 @@ final class StorageModel {
     var isBusy: Bool {
         Pack.allCases.contains { if case .downloading = packs.state($0) { true } else { false } }
             || !packs.updates.isEmpty || extras.jobs.values.contains { $0.isRunning }
+            || areas?.running != nil
     }
 
     func refreshPacks() {
@@ -117,6 +121,7 @@ final class StorageModel {
         }
         // what a running batch has stored so far counts as it arrives
         parts[.extras] = Int64(extrasStatus.values.reduce(0) { $0 + $1.bytesPresent })
+        parts[.areas] = areas?.bytes ?? 0
         return StorageGauge(parts: parts, capacity: volume.capacity, free: volume.free)
     }
 

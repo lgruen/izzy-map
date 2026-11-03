@@ -11,6 +11,8 @@ struct PlantSheet: View {
     let key: String
     let context: PlantContext
     let source: String
+    /// × closes this instead of the card (the sheet opened from Identify).
+    var onClose: (() -> Void)?
     @Environment(\.cardNamespace) private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var width: CGFloat = 0
@@ -45,7 +47,7 @@ struct PlantSheet: View {
         .scrollEdgeEffectStyle(.soft, for: .top)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .containerBackground(.clear, for: .navigation)
-        .toolbar { SheetCloseItem(model: model) }
+        .toolbar { SheetCloseItem(model: model, action: onClose) }
         .modifier(ZoomDestination(id: source, namespace: reduceMotion ? nil : namespace))
         .accessibilityIdentifier("plant-sheet")
         .task(id: plantID) {
@@ -354,8 +356,8 @@ struct GroupList: View {
             if let group {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 4) {
-                        if let common = group.common {
-                            Text(common.prefix(1).uppercased() + common.dropFirst())
+                        if let common = group.headlineCommon {
+                            Text(common)
                                 .font(.title2)
                                 .fontDesign(.serif)
                                 .foregroundStyle(DesignColor.ink)
@@ -415,10 +417,12 @@ struct GroupList: View {
 /// navigation bar (glass, placement and the scroll edge are the system's).
 struct SheetCloseItem: ToolbarContent {
     let model: AppModel
+    /// Instead of closing the card.
+    var action: (() -> Void)?
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Button(role: .close) { model.clearSelection() }
+            Button(role: .close) { if let action { action() } else { model.clearSelection() } }
                 .accessibilityIdentifier("sheet-close")
         }
     }

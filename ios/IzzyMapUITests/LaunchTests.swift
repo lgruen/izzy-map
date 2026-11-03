@@ -181,6 +181,20 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["TASVEG 5.0 from theLIST"].exists || app.links["TASVEG 5.0 from theLIST"].exists)
         XCTAssertTrue(app.buttons["Topographic Basemap from theLIST"].exists || app.links["Topographic Basemap from theLIST"].exists)
         attachScreenshot("credits")
+        // the licences of what ships inside the app
+        let acks = app.buttons["acknowledgements-link"]
+        XCTAssertTrue(acks.appears(within: patience(5)))
+        // the medium detent may hold it below the fold: a swipe raises the sheet
+        for _ in 0 ..< 3 where !acks.isHittable { app.swipeUp() }
+        acks.tap()
+        let maplibre = app.buttons["ack-maplibre"]
+        XCTAssertTrue(maplibre.appears(within: patience(5)), "acknowledgements list MapLibre")
+        XCTAssertTrue(app.buttons["ack-noto-sans"].exists)
+        maplibre.tap()
+        let text = app.textViews["ack-text"]
+        XCTAssertTrue(text.appears(within: patience(5)))
+        XCTAssertTrue(eventually(patience(5)) { (text.value as? String)?.contains("BSD 2-Clause License") == true }, "the licence text")
+        attachScreenshot("acknowledgements-maplibre")
     }
 
     @MainActor

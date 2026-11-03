@@ -40,7 +40,8 @@ nonisolated struct SelectionStyle: Equatable, Sendable {
 /// Stack, bottom to top (docs/NATIVE_PLAN.md §3, DESIGN.md §4):
 /// background → base rasters (topo underlay, Tasmap, aerial, seasons oldest →
 /// newest; each pack z ≤ 15 stretched natively above, plus its live LIST
-/// source z16+) → overlay fill → relief → overlay boundaries / edge band →
+/// source z16+, plus the detailed areas of that layer right above them) →
+/// overlay fill → relief → overlay boundaries / edge band →
 /// same-community dashes → TASVEG codes → Hobart trees → selection.
 nonisolated enum StyleBuilder {
     enum LayerID {
@@ -63,6 +64,7 @@ nonisolated enum StyleBuilder {
         static let sameCommunity = "same-community"
         static let outlineBandPrefix = "-band"
         static let tasvegLabel = "tasveg-label"
+        static let areaOutlines = "detail-outlines"
         static let treesAreaFill = "trees-area-fill"
         static let treesAreaLine = "trees-area-line"
         static let treesCluster = "trees-cluster"
@@ -117,6 +119,8 @@ nonisolated enum StyleBuilder {
         static let treePoints = "trees-points"
         static let treeAreas = "trees-areas"
         static let selection = "selected"
+        /// Where the detailed areas end: their frames, dashed (GeoJSON in the style).
+        static let areaOutlines = "detail-outlines"
         /// "Show on map"'s presence cells (runtime GeoJSON source).
         static let spotlight = "spotlight"
     }
@@ -237,9 +241,14 @@ nonisolated enum StyleBuilder {
     /// - Parameter online: the live LIST sources are in the style only while
     ///   the device has a network path (`Connectivity`): offline the packs
     ///   are the map (stretched above z15) and nothing is requested.
+    /// - Parameter areas: the finished detailed-area layers (AreaStore), oldest
+    ///   first. Each draws right above its statewide pack and that pack's live
+    ///   source, so an area beats both; deleting it falls back to the
+    ///   stretched z15 pack. A season's area sits between its own season and
+    ///   the next newer one: the newest flown photo still paints on top.
     static func style(
         state: LayerState, data: DataLocation, tables: MapTables, selection: SelectionStyle = .none,
-        online: Bool = true
+        online: Bool = true, areas: [AreaStyleSource] = []
     ) -> [String: Any] {
         var sources: [String: Any] = [:]
         var layers: [[String: Any]] = [
@@ -268,19 +277,55 @@ nonisolated enum StyleBuilder {
             ] as [String: Any]
             layers.append(["id": id, "type": "raster", "source": id, "paint": paint])
         }
+        /// The detailed areas of one layer: local PMTiles (zooms and bounds
+        /// from the archive's header, like a pack), right above the layer's
+        /// live source. With a live source in the style that goes deeper
+        /// than an area (`liveMaxZoom`), the area hands over where it would
+        /// only stretch: its layer stops at map zoom (its deepest tile level
+        /// − 0.5) — MapLibre draws 256 px raster tiles at round(map zoom +
+        /// 1), so from there the live source's next level is sharper. A
+        /// second copy of the area (same source) sits UNDER the live source
+        /// with no limit: while live tiles load or fail ("online" is a
+        /// network path, not theLIST answering) the area still stretches
+        /// over the statewide pack instead of the z15 mush.
+        func areaUnder(_ layer: AreaLayer, liveMaxZoom: Int, paint: [String: Any] = [:]) {
+            guard online else { return }
+            for a in areas where a.layer == layer && a.maxZoom < liveMaxZoom {
+                sources[a.id] = ["type": "raster", "url": pmtilesURL(a.url), "tileSize": 256] as [String: Any]
+                layers.append(["id": a.id + areaUnderSuffix, "type": "raster", "source": a.id, "paint": paint])
+            }
+        }
+        var drawnAreas: Set<String> = []
+        func area(_ layer: AreaLayer, liveMaxZoom: Int?, paint: [String: Any] = [:]) {
+            for a in areas where a.layer == layer {
+                drawnAreas.insert(a.areaID)
+                sources[a.id] = ["type": "raster", "url": pmtilesURL(a.url), "tileSize": 256] as [String: Any]
+                var l: [String: Any] = ["id": a.id, "type": "raster", "source": a.id, "paint": paint]
+                if online, let liveMaxZoom, a.maxZoom < liveMaxZoom { l["maxzoom"] = Double(a.maxZoom) - 0.5 }
+                layers.append(l)
+            }
+        }
 
         if showsTopo(state, data: data) {
             let local = pack(.topo, id: SourceID.topo)
+            areaUnder(.topo, liveMaxZoom: 18)
             live("Topographic", id: SourceID.topoLive, hasPack: local, maxzoom: 18)
+            area(.topo, liveMaxZoom: 18)
         }
         switch state.base {
         case .topo:
             break
         case .tasmap:
             // TasmapRaster stops at z16 (the 25K sheets)
-            live("TasmapRaster", id: SourceID.tasmapLive, hasPack: pack(.tasmap, id: SourceID.tasmap), maxzoom: 16)
+            let local = pack(.tasmap, id: SourceID.tasmap)
+            areaUnder(.tasmap, liveMaxZoom: 16)
+            live("TasmapRaster", id: SourceID.tasmapLive, hasPack: local, maxzoom: 16)
+            area(.tasmap, liveMaxZoom: 16)
         case .aerial:
-            live("Orthophoto", id: SourceID.aerialLive, hasPack: pack(.aerial, id: SourceID.aerial), maxzoom: 18)
+            let local = pack(.aerial, id: SourceID.aerial)
+            areaUnder(.aerial, liveMaxZoom: 18)
+            live("Orthophoto", id: SourceID.aerialLive, hasPack: local, maxzoom: 18)
+            area(.aerial, liveMaxZoom: 18)
         case .seasons:
             // Oldest → newest, so the newest flown photo paints on top and the
             // transparent gaps let older seasons, then topo, through. Fades
@@ -290,7 +335,7 @@ nonisolated enum StyleBuilder {
             var topLocal = false
             for (i, season) in Season.all.enumerated() where i <= cutoff {
                 let local = pack(season.archive, id: season.sourceID, paint: noFade)
-                if i == cutoff { topLocal = local }
+                if i == cutoff { topLocal = local } else { area(.season(season.year), liveMaxZoom: nil, paint: noFade) }
             }
             // Live above the packs only for the newest season shown. The
             // plan's rule — stream a season above z15 only where its z15 pack
@@ -303,8 +348,11 @@ nonisolated enum StyleBuilder {
             // be mostly 404s for photos too small to read). The caption
             // (SeasonCoverage) promises streaming on the same rule.
             let top = Season.all[cutoff]
+            areaUnder(.season(top.year), liveMaxZoom: 18, paint: noFade)
             live(top.service, id: SourceID.seasonLive, hasPack: topLocal, maxzoom: 18,
                  minzoomWithoutPack: SeasonCoverage.liveMinZoomWithoutPack, paint: noFade)
+            // the newest season's areas above its live source
+            area(.season(top.year), liveMaxZoom: 18, paint: noFade)
         }
 
         let strength = state.effectiveStrength
@@ -410,6 +458,28 @@ nonisolated enum StyleBuilder {
                                        outlines: strength == .outlines, from: 9))
         }
 
+        // Where detail ends: each finished area's frame, a fine dashed line
+        // from where the statewide packs stop (tile z15, map zoom 14.5) —
+        // the frame she drew, so it reads as "full detail inside".
+        let frames = Dictionary(areas.filter { drawnAreas.contains($0.areaID) }.map { ($0.areaID, $0.box) },
+                                uniquingKeysWith: { a, _ in a })
+            .sorted { $0.key < $1.key }.map(\.value)
+        if !frames.isEmpty {
+            let features: [Any] = frames.map { b in
+                ["type": "Feature", "properties": [:] as [String: Any],
+                 "geometry": ["type": "LineString", "coordinates": [[b.west, b.north], [b.east, b.north], [b.east, b.south],
+                                                                    [b.west, b.south], [b.west, b.north]]] as [String: Any]]
+                    as [String: Any]
+            }
+            sources[SourceID.areaOutlines] = ["type": "geojson", "data": ["type": "FeatureCollection", "features": features]
+                as [String: Any]] as [String: Any]
+            layers.append([
+                "id": LayerID.areaOutlines, "type": "line", "source": SourceID.areaOutlines, "minzoom": 14.5,
+                "paint": ["line-color": state.base.isPhoto ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.45)",
+                          "line-width": 1, "line-dasharray": [4, 3]] as [String: Any],
+            ])
+        }
+
         // Hobart significant trees: last before the selection (a test pins it).
         if state.trees, let trees = tables.trees {
             addTrees(trees, sources: &sources, layers: &layers)
@@ -453,9 +523,12 @@ nonisolated enum StyleBuilder {
         ]
     }
 
+    /// The id suffix of an area's copy under its live source.
+    static let areaUnderSuffix = "-under"
+
     static func json(state: LayerState, data: DataLocation, tables: MapTables, selection: SelectionStyle = .none,
-                     online: Bool = true) -> String {
-        let object = style(state: state, data: data, tables: tables, selection: selection, online: online)
+                     online: Bool = true, areas: [AreaStyleSource] = []) -> String {
+        let object = style(state: state, data: data, tables: tables, selection: selection, online: online, areas: areas)
         // A dictionary of JSON-safe literals can't fail to serialise.
         let bytes = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return String(decoding: bytes, as: UTF8.self)
