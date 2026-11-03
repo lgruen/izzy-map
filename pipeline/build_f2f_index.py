@@ -22,7 +22,8 @@ from pypdf import PdfReader
 
 HERE = Path(__file__).parent
 CACHE = HERE / "cache" / "f2f"
-OUT = HERE.parent / "app" / "src" / "generated" / "f2f_index.json"
+GEN = HERE.parent / "ios" / "IzzyMap" / "Resources" / "Data"
+OUT = GEN / "f2f_index.json"
 BASE_URL = "https://nre.tas.gov.au/Documents/"
 
 GROUP_CHAPTER = {
@@ -80,7 +81,7 @@ def heading_pages(pdf: Path) -> dict:
 
 def main():
     communities = json.loads(
-        (HERE.parent / "app" / "src" / "generated" / "tasveg_communities.json").read_text())
+        (GEN / "tasveg_communities.json").read_text())
 
     chapter_pages = {}
     for chapter in sorted(set(GROUP_CHAPTER.values())):

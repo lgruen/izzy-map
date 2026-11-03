@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build app/src/generated/plants.json — plant sheets from the Understorey
+"""Build ios/IzzyMap/Resources/Data/plants.json — plant sheets from the Understorey
 Network Tasmania plant database + per-community species lists from From
 Forest to Fjaeldmark (F2F).
 
@@ -28,7 +28,7 @@ plants.json; the device fetches the files from UN. Propagation prose (seed
 collection, germination, sowing, cuttings) is out of scope and never read
 into the output.
 
-F2F: for each VEGCODE in app/src/generated/f2f_index.json, the section text
+F2F: for each VEGCODE in ios/IzzyMap/Resources/Data/f2f_index.json, the section text
 (start page → next section start in the same chapter, ≤ 6 pages) is
 scanned for binomials ("Eucalyptus amygdalina", "E. amygdalina" expanded
 from the last full genus with that initial) that match a UN species key.
@@ -86,7 +86,7 @@ MIN_PLANTS, MIN_WITH_PHOTO, MIN_COMMON, MIN_F2F_CODES = 1800, 650, 1000, 140
 HERE = Path(__file__).parent
 CACHE = HERE / "cache" / "plants"
 F2F_CACHE = HERE / "cache" / "f2f"
-GEN = HERE.parent / "app" / "src" / "generated"
+GEN = HERE.parent / "ios" / "IzzyMap" / "Resources" / "Data"
 OUT = GEN / "plants.json"
 PDFTOTEXT = shutil.which("pdftotext") or "/opt/homebrew/bin/pdftotext"
 

@@ -10,7 +10,7 @@ decide on.
 ```bash
 pipeline/plantid/fetch_meta.sh                       # ~35 GB, ~35 min
 uv run --with duckdb --with pyarrow python3 pipeline/plantid/pick_sets.py \
-    --un-plants <plants.json from the Plants branch>
+    --un-plants ios/IzzyMap/Resources/Data/plants.json
 uv run --with duckdb python3 pipeline/plantid/fetch_photos.py --workers 48
 E="uv run --with torch --with torchvision --with open_clip_torch --with pyarrow --with pillow --with numpy"
 $E python3 pipeline/plantid/embed.py --model bioclip
@@ -20,8 +20,8 @@ uv run --with torch --with numpy --with scipy --with pyarrow \
 ```
 
 Every step is resumable (DuckDB stages are cached in `sets/work.duckdb`,
-photos and embedding shards are skipped when present). Get the UN list with
-`git show worktree-understorey:app/src/generated/plants.json > /tmp/plants.json`.
+photos and embedding shards are skipped when present). The UN list is the
+bundled `ios/IzzyMap/Resources/Data/plants.json` (`--un-plants`).
 
 Measured on the M4 laptop (2026-11-01): S3 download ~18 MB/s, photos
 ~127/s with 48 workers (~150 KB each); BioCLIP ~60–74 img/s (fp16, raw),
@@ -80,6 +80,10 @@ evaluate.py locally.
 
 ## Phone test (can Safari run it?)
 
+Retired: the page was deleted with the web app (last in commit 04ea5d9; the
+deployed copy at `/probe/plantid/` stays up with the Pages site until it is
+torn down). The native Core ML test is `native/plantid-test/`.
+
 `probe/plantid/` (deployed with the app at `/probe/plantid/`) downloads the
 image encoder into OPFS, runs it with onnxruntime-web (WebGPU) and compares
 its embeddings with the laptop's for three bundled CC0 test photos; the
@@ -103,7 +107,7 @@ pipeline/plantid/upload_test.sh                                   # → R2 plant
   stripped before decoding: Pillow ignores them, Safari would convert Display
   P3 (every iPhone photo) to sRGB — that alone cost 0.02 cosine on a P3 test
   photo and flipped a close call.
-- Local run: serve a folder holding `probe/` and `plantid-test/v1/{bioclip25,
+- Local run (`git worktree add /tmp/izzy-web 04ea5d9` for `probe/`): serve a folder holding `probe/` and `plantid-test/v1/{bioclip25,
   bioclip,ort}` on localhost and open `/probe/plantid/?data=/plantid-test/v1/
   &auto=1`. macOS Safari 27.2 on the M4 (2026-11-02): BioCLIP 2.5 loads in
   1.7 s, 0.45 s per photo, cosine to PyTorch ≥ 0.9992 end to end.

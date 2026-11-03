@@ -9,7 +9,7 @@ Inputs (in pipeline/work/, extracted by build_tasveg.sh):
   - communities.csv       DISTINCT VEGCODE, VEGCODE_D, VEG_GROUP from the data
 
 Output:
-  - app/src/generated/tasveg_communities.json
+  - ios/IzzyMap/Resources/Data/tasveg_communities.json
       { "<VEGCODE>": {"name": ..., "group": ..., "color": "#rrggbb",
                       "outline": "#rrggbb", "label": "(CODE) name"} }
 
@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 WORK = Path(__file__).parent / "work"
-OUT = Path(__file__).parent.parent / "app" / "src" / "generated"
+OUT = Path(__file__).parent.parent / "ios" / "IzzyMap" / "Resources" / "Data"
 
 # Codes present in the data but missing from the shipped QML (which instead
 # carries stale codes — e.g. QML has DWF, data has DFP). Colours taken from

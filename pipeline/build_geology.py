@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build data/geology.pmtiles + app/src/generated/geology_units.json from
+"""Build data/geology.pmtiles + ios/IzzyMap/Resources/Data/geology_units.json from
 MRT's statewide 1:500,000 geology units.
 
 Source (verified 2026-08-30, CC BY 3.0 AU): MRT's own ArcGIS server — NOT
@@ -25,7 +25,7 @@ PAGE = 2000  # server maxRecordCount
 HERE = Path(__file__).parent
 WORK = HERE / "work"
 DATA = HERE.parent / "data"
-GEN = HERE.parent / "app" / "src" / "generated"
+GEN = HERE.parent / "ios" / "IzzyMap" / "Resources" / "Data"
 ATTRIBUTION = "Geology: Mineral Resources Tasmania (CC BY 3.0 AU) © State of Tasmania"
 
 

@@ -9,8 +9,8 @@ P="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$P/../.." && pwd)"
 C="$REPO/pipeline/cache/plantid"
 mkdir -p "$C"
-PLANTS="$C/plants.json"
-[ -s "$PLANTS" ] || git -C "$REPO" show worktree-understorey:app/src/generated/plants.json > "$PLANTS"
+PLANTS="$REPO/ios/IzzyMap/Resources/Data/plants.json"   # the bundled UN plant list (pipeline/build_plants.py)
+[ -s "$PLANTS" ] || { echo "missing $PLANTS" >&2; exit 1; }
 t0=$(date +%s)
 stamp() { echo "== $(date +%H:%M:%S) (+$(( ($(date +%s) - t0) / 60 )) min) $*"; }
 E="uv run --with torch --with torchvision --with open_clip_torch --with pyarrow --with pillow --with numpy"

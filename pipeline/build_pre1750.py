@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build data/pre1750.pmtiles + app/src/generated/pre1750_units.json from
+"""Build data/pre1750.pmtiles + ios/IzzyMap/Resources/Data/pre1750_units.json from
 NVIS V7.0 "Estimated Pre-1750 Vegetation" (Major Vegetation Subgroups).
 
 Source (verified 2026-08-30, CC BY 4.0): DCCEEW's national NVIS raster
@@ -38,7 +38,7 @@ HERE = Path(__file__).parent
 CACHE = HERE / "cache"
 WORK = HERE / "work"
 DATA = HERE.parent / "data"
-GEN = HERE.parent / "app" / "src" / "generated"
+GEN = HERE.parent / "ios" / "IzzyMap" / "Resources" / "Data"
 
 ZIP_NAME = "NVIS_V7_0_AUST_RASTERS_PRE_ALL.zip"
 # ArcGIS Online item "Australia - Pre1750 Major Vegetation Groups and

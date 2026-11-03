@@ -2,7 +2,8 @@
 # Upload the plant-ID phone test's data to R2 under plantid-test/<version>/:
 #   bioclip25/  bioclip/   export_onnx.py output (model shards, labels, samples)
 #   ort/        onnxruntime-web runtime (WebGPU build) — pinned version
-# The page (probe/plantid/, deployed with the app) reads it from
+# The page (probe/plantid/, deployed with the app; deleted from the repo after
+# commit 04ea5d9, the deployed copy stays live) reads it from
 #   https://pub-…r2.dev/plantid-test/<version>/
 # Files are < 300 MiB each (model shards are 64 MiB), so plain
 # `wrangler r2 object put` works — no uploader Worker, and the archive

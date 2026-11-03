@@ -44,8 +44,8 @@ this document over-read it; verified 2026-09-10.
   Nomenclature (WFS `Public/OpenDataWFS`, type `LIST_Nomenclature`),
   Transport Segments (`Public/TopographyAndRelief/MapServer/8`), Named
   Feature Extents and Address Points (LISTdata zips), Locality and Postcode
-  Areas (WFS). Derived from them and COMMITTED to this public repo as app
-  shell: `app/public/search/gazetteer.json` and `addresses.json` — fact
+  Areas (WFS). Derived from them and COMMITTED to this public repo and
+  bundled in the app: `ios/IzzyMap/Resources/Data/search/gazetteer.json` and `addresses.json` — fact
   tables (names, feature types, localities, coordinates, house numbers; no
   tiles, no rasters, no prose), built by `pipeline/build_gazetteer.py`.
   Attribution: "Place and street names from theLIST © State of Tasmania" /
@@ -59,8 +59,8 @@ badge/link. The app shows this on the About screen and map attribution.
 ## 1b. CC BY 4.0 (Commonwealth) — free to use, redistribute, derive (with attribution)
 
 - **NVIS V7.0 Estimated Pre-1750 vegetation** rasters and everything
-  derived from them: the pre1750 PMTiles on R2 (incl. the committed test
-  fixture `app/tests/fixtures/pre1750_test.pmtiles`), `pre1750_units.json`
+  derived from them: the pre1750 PMTiles on R2 (and, natively, in the `vector` pack; the web
+  app's test fixture `pre1750_test.pmtiles` went with it), `pre1750_units.json`
   (class names/groups/colours/areas). Source: DCCEEW via Find Environmental
   Data / ArcGIS Online item d82f6eab808542ee9d9a0ea09ea36567; the item's
   licence field reads CC-BY-4.0 (verified 2026-08-30). Note this is a
@@ -79,7 +79,7 @@ badge/link. The app shows this on the About screen and map attribution.
   `licenseInfo` links creativecommons.org/licenses/by/4.0/ and its
   `accessInformation` reads "City of Hobart" (verified 2026-09-12; item
   last modified 2025-08-11). Derived and committed:
-  `app/src/generated/trees.json` (GeoJSON + per-reference facts), bundled
+  `ios/IzzyMap/Resources/Data/trees.json` (GeoJSON + per-reference facts), bundled
   into the app. Attribution goes to the council — neither State nor
   Commonwealth: "Significant trees: City of Hobart (CC BY 4.0)" on both
   tree sources and on the About screen. Guard: `pipeline/build_trees.py`
@@ -98,7 +98,7 @@ badge/link. The app shows this on the About screen and map attribution.
   CC BY 4.0 (157k), but also CC BY-NC 4.0 (106k), CC0, CC BY-SA, CC BY-NC-SA,
   CC BY-NC-ND 4.0 (1,452) and UNSPECIFIED (6,240) — so no record, point or
   per-record field is ever committed. What IS committed
-  (`app/src/generated/records.json` + `nearby.bin`) is aggregated FACTS
+  (`ios/IzzyMap/Resources/Data/records.json` + `nearby.bin`) is aggregated FACTS
   derived by us: which species were recorded in which TASVEG community /
   0.01° grid cell, and how many distinct ~100 m cells — counts, not
   copies, so the NC/ND/unspecified minority imposes nothing on them.
@@ -116,15 +116,21 @@ badge/link. The app shows this on the About screen and map attribution.
 - Handling: the phone fetches the PDFs from nre.tas.gov.au for ordinary
   private use. Because that server sends no CORS headers, the request passes
   through a **transparent, non-caching relay** (Cloudflare Worker
-  `pipeline/f2f-proxy/`): it forwards GET/HEAD for exactly the 11 known
+  `izzy-f2f`, source last in commit 04ea5d9 `pipeline/f2f-proxy/`; it
+  serves only the retired PWA — the native app fetches directly, no CORS
+  involved, and the relay is torn down once the PWA is retired): it forwards GET/HEAD for exactly the 11 known
   chapter files (plus, on a separate allow-list, Understorey Network photo
   files — below), only for this app's origins (403 otherwise), with
   `cache: "no-store"` upstream and `Cache-Control: no-store` downstream so
   nothing is ever stored at the edge. The relay must stay that way — never
   add caching, widen either allowlist, or open the Origin check.
+- **Apple-hosted Background Assets packs (native app) count as OUR
+  hosting**, exactly like Pages/R2: F2F PDFs, Understorey Network photos
+  and tree data sheets never go into a pack or the app bundle — the
+  device fetches each from its publisher.
 - This repo may only contain FACTS from F2F: `f2f_index.json` (VEGCODE →
   chapter file + page number) and the per-community species-name lists in
-  `app/src/generated/plants.json` `communities` (which binomials each
+  `ios/IzzyMap/Resources/Data/plants.json` `communities` (which binomials each
   community's account names, normalised to Understorey Network keys, in
   order of first mention — names, not text; no sentences, no
   descriptions). Do not commit PDFs, extracted text, or host either on
@@ -136,7 +142,7 @@ badge/link. The app shows this on the About screen and map attribution.
   Network. All rights reserved"; every photo credited "<name> – with
   permission", verified 2026-10-25). Decision (Leo, 2026-10-25): species
   names and short factual plant descriptors are facts and may be
-  committed, like trees.json — `app/src/generated/plants.json` carries,
+  committed, like trees.json — `ios/IzzyMap/Resources/Data/plants.json` carries,
   per profile, the name, common name, family, growth forms, height,
   status, flowering months, UN habitat classes and the short Form /
   Flowers / Fruit / Habitat Notes / General Notes descriptors, plus photo
@@ -211,7 +217,8 @@ How this project stays inside it:
   verified under.
 - **Detailed areas**: the app itself fetches high-zoom tiles for a
   user-framed area straight from the LIST service into the device's own
-  storage (`app/src/areas.ts`) — private, verbatim caching for the same
+  storage (web: `app/src/areas.ts` at 04ea5d9; native: per-area PMTiles
+  files) — private, verbatim caching for the same
   non-commercial use; nothing passes through our hosting. Requests stay
   modest (6 concurrent, one-off per area, seasons only where flown).
 

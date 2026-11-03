@@ -1,0 +1,129 @@
+# Native app tests (docs/NATIVE_PLAN.md §6): IzzyKit unit tests on the Mac,
+# then the app's unit + UI tests on an iOS simulator. No secrets, no signing:
+# simulator builds only. TestFlight workflows are separate (milestone 8).
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # GitHub's Xcode 27 image (actions/runner-images, "preview" in the README
+  # table as of 2026-11-03; macOS 27 base). Xcode 27.1 is its default; 27.2
+  # is installed as a Release Candidate with an Xcode_27.2.app symlink, and
+  # the image update to the final 27.2 (27B52) is pending — so try the
+  # stable symlink first, then the RC's own name.
+  XCODE_CANDIDATES: >-
+    /Applications/Xcode_27.2.app
+    /Applications/Xcode_27.2_Release_Candidate.app
+
+jobs:
+  izzykit:
+    name: IzzyKit (swift test)
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 27.2
+        run: |
+          for x in $XCODE_CANDIDATES; do
+            if [ -d "$x" ]; then sudo xcode-select -s "$x/Contents/Developer"; break; fi
+          done
+          xcodebuild -version
+          case "$(xcodebuild -version | head -1)" in
+            "Xcode 27.2"*) ;;
+            *) echo "::error::Xcode 27.2 not found (tried: $XCODE_CANDIDATES)"; exit 1 ;;
+          esac
+      - name: swift test
+        working-directory: ios/IzzyKit
+        # the tests read the real bundled tables in ios/IzzyMap/Resources/Data
+        run: swift test
+
+  app:
+    name: IzzyMap (xcodebuild test, simulator)
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 27.2
+        run: |
+          for x in $XCODE_CANDIDATES; do
+            if [ -d "$x" ]; then sudo xcode-select -s "$x/Contents/Developer"; break; fi
+          done
+          xcodebuild -version
+          case "$(xcodebuild -version | head -1)" in
+            "Xcode 27.2"*) ;;
+            *) echo "::error::Xcode 27.2 not found (tried: $XCODE_CANDIDATES)"; exit 1 ;;
+          esac
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Pick a simulator
+        id: sim
+        # Newest available iOS runtime; prefer an iPhone "e" model (the
+        # target is an iPhone 16e), else any iPhone. Never hard-coded: the
+        # image's device list changes with every update.
+        run: |
+          xcrun simctl list runtimes
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          cat > "$RUNNER_TEMP/pick.py" <<'PY'
+          import json, re, sys
+          devs = json.load(open(sys.argv[1]))["devices"]
+          def ver(rt):
+              m = re.search(r"iOS-(\d+)-(\d+)", rt)
+              return (int(m[1]), int(m[2])) if m else None
+          vers = [ver(rt) for rt in devs if ver(rt) and ver(rt) >= (26, 0) and devs[rt]]
+          if not vers:
+              sys.exit("no iOS 26+ simulator runtime with devices")
+          v = max(vers)
+          # a version can come as several runtimes (e.g. a device-specific
+          # "iOS-27-2-iPhone19-4" beside "iOS-27-2"): pool their devices
+          phones = [d for rt in devs if ver(rt) == v for d in devs[rt]
+                    if d["name"].startswith("iPhone")]
+          pick = (next((d for d in phones if "16e" in d["name"]), None)
+                  or next((d for d in phones if re.search(r"\d+e\b", d["name"])), None)
+                  or (phones[0] if phones else None))
+          if pick is None:
+              sys.exit("no iPhone simulator for iOS %d.%d" % v)
+          print(pick["name"], "on iOS %d.%d" % v, file=sys.stderr)
+          print(pick["udid"])
+          PY
+          udid=$(python3 "$RUNNER_TEMP/pick.py" "$RUNNER_TEMP/devices.json")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: xcodebuild test
+        working-directory: ios
+        # No -dataDir: the UI tests run without the developer's packs and
+        # skip the data-dependent case. Simulator builds need no signing.
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme IzzyMap \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/dd \
+            -resultBundlePath build/IzzyMap.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: IzzyMap-xcresult
+          path: ios/build/IzzyMap.xcresult
+          retention-days: 7

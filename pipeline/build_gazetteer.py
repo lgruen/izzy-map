@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the two offline search indexes committed under app/public/search/:
+"""Build the two offline search indexes committed under ios/IzzyMap/Resources/Data/search/:
 
   gazetteer.json  – ~45k named places (Nomenclature register rows + address-
                     derived streets + property names), each with a centre,
@@ -85,7 +85,7 @@ from shapely.geometry import shape
 HERE = Path(__file__).parent
 CACHE = HERE / "cache" / "gazetteer"
 SEG_CACHE = CACHE / "segments"
-OUT = HERE.parent / "app" / "public" / "search"
+OUT = HERE.parent / "ios" / "IzzyMap" / "Resources" / "Data" / "search"
 
 WFS = "https://services.thelist.tas.gov.au/arcgis/services/Public/OpenDataWFS/MapServer/WFSServer"
 SEG_LAYER = "https://services.thelist.tas.gov.au/arcgis/rest/services/Public/TopographyAndRelief/MapServer/8"

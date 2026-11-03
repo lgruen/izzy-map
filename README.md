@@ -1,5 +1,10 @@
 # IzzyMap
 
+> **Being rebuilt as a native SwiftUI app** in `ios/` (plan:
+> `docs/NATIVE_PLAN.md`). The PWA described below was removed from the repo
+> after commit `04ea5d9`; its deployed copy keeps running until the native
+> app is on every device.
+
 Offline Tasmania vegetation map for hiking — a home-screen PWA for iPhone
 and iPad.
 

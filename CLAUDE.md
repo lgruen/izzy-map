@@ -1,39 +1,49 @@
 # IzzyMap — maintainer guide (written by Claude, for future Claude)
 
-Offline Tasmania vegetation map PWA for one iPhone (Leo's partner) and the
-household iPad. All changes happen through Claude Code sessions with Leo. The approved plan that
-started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
-(research findings summarized there and in docs/).
+Offline Tasmania vegetation map for Leo's partner's iPhone, Leo's iPhone and
+the household iPad — since 2026-11-03 a **native SwiftUI app** in `ios/`
+(the PWA it replaces was deleted from the repo; see "Retired web app"). All
+changes happen through Claude Code sessions with Leo. The native design plan
+is `docs/NATIVE_PLAN.md` (decisions, data delivery, map, interface,
+milestones, map-proof results); the design brief and language is
+`docs/DESIGN.md`. The original PWA plan:
+`~/.claude/plans/this-is-a-completely-vectorized-bee.md`.
 
 ## Non-negotiables
 
 1. **docs/LICENSING.md first.** From Forest to Fjaeldmark content, the
    City of Hobart tree data sheets and Understorey Network plant photos
-   must never be committed or served from our hosting (public repo!). The LIST
-   aerial/Tasmap rasters are CC BY-NC-ND: tiles stay BYTE-FOR-BYTE as
-   served (no re-encoding, no merging across services), non-commercial,
-   attributed — the licence text governs, not the ArcGIS export flag.
-   CC BY / CC BY-NC-ND attribution stays in the app.
-2. **Fully offline is the product.** Any change must keep working in airplane
-   mode after setup: no CDN references, glyphs/sprites self-hosted, tiles
-   never routed through the service worker cache (they live in OPFS PMTiles;
-   the two search indexes under `app/public/search/` are the ONE JSON the
-   SW precaches — app shell, not map data; the plants grid `nearby.bin` is
-   the one binary, via its own `assets/*.bin` glob).
-3. **Target device is a small iPhone**, plus an iPad in landscape with a
-   keyboard/trackpad. Home-screen web app (iOS 17+ behaviours assumed:
-   60%-of-disk quota, ITP exemption, persist() heuristic). Surface storage
-   sizes in UI; keep archives lean. Layout is keyed on viewport width
-   (`min-width: 700px` → side cards), never on the device/UA (iPadOS reports
-   a Mac UA; Split View gives phone-width windows). Wi-Fi-only iPads have no
-   GPS: the geolocate error is announced, never silently spun.
-4. **Device access (updated 2026-11-01):** Leo now has his own **iPhone**
-   and a paid Apple Developer account (TestFlight/native builds possible),
-   so real-device iOS checks can happen on his phone; the Xcode Simulator
-   stays the quick test bed. Users: Leo, his partner (iPhone) and the
-   household iPad — nobody else known. Android is low priority now, but
-   portability is valued: keep the PWA working on other platforms rather
-   than leaning on iOS-only APIs without a reason.
+   must never be committed or served from our hosting (public repo!).
+   **Apple-hosted Background Assets packs ARE our hosting** — never put F2F
+   PDFs, UN photos or tree sheets into a pack or the app bundle; the device
+   fetches them itself from the publisher. The LIST aerial/Tasmap rasters
+   are CC BY-NC-ND: tiles stay BYTE-FOR-BYTE as served (no re-encoding, no
+   merging across services — packs hold our PMTiles verbatim),
+   non-commercial, attributed — the licence text governs, not the ArcGIS
+   export flag. CC BY / CC BY-NC-ND attribution stays in the app.
+2. **Fully offline is the product.** Everything must work in airplane mode
+   once the packs are on the device: bundled tables + glyphs (no CDN, no
+   remote style/sprite/glyph URL), local PMTiles packs, live LIST tiles only
+   as a bonus layer above them. A failed live tile must never hide the
+   local one underneath.
+3. **Targets: iPhone 16e (partner) and iPad Pro 12.9" 4th gen (2020,
+   Wi-Fi only — no GPS, iPadOS 27)**, plus Leo's iPhone. iOS 26 deployment
+   target, iOS 27 SDK (Xcode 27.2). Layout by **size class**, never by
+   device model (Split View / Slide Over give compact widths on the iPad).
+   Wi-Fi-only iPads have no GPS: say so once, never spin silently. Surface
+   storage sizes in the UI. Android is gone with the PWA (Leo, 2026-11).
+4. **Design quality matters.** The main user is a landscape architect who
+   reads cartography and printed map keys professionally — the bar is
+   "looks amazing", not "follows the HIG" (`docs/DESIGN.md`, milestone 7).
+   Map colours are data (official palettes, never restyled); chrome is
+   quiet. Botanical names are set correctly (italics, "×", subsp./var.).
+5. **Start from what a component is for, then use the supported native
+   way** — never port a web workaround (`docs/NATIVE_PLAN.md` §10 lists the
+   ones deliberately dropped).
+6. **Remote services stay up until the native app is on all three
+   devices:** the Pages site (last deploy = commit 04ea5d9), the R2 bucket
+   and the `izzy-f2f` Worker. Tear-down only after asking Leo (see
+   "Deployed endpoints").
 
 ## Key endpoints & data facts (verified 2026-08-29)
 
@@ -184,158 +194,172 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   4.0, plus CC BY-NC 106k, CC BY-NC-ND 1,452, unspecified 6.2k — hence
   aggregate counts only (LICENSING.md §1d).
 
+
 ## Architecture
 
-(see README for user-facing summary; plan file for rationale)
-
-- `app/` — Vite + TS + MapLibre GL JS. No framework. The overlay set is
-  hand-curated in code (see "Add an overlay map" below); archives + sizes
-  come from `data-manifest.json`, generated by `pipeline/upload_r2.sh` and
-  served from R2. Two datasets bypass R2 entirely: `app/public/search/
-  gazetteer.json` + `addresses.json` (committed, precached by the SW as
-  app shell via the explicit `search/*.json` glob in vite.config.ts —
-  stable unhashed URLs) and `app/src/generated/trees.json` (committed,
-  statically imported by style.ts as bundled GeoJSON). `app/src/search.ts`
-  = search panel, scoring, pin + pill; `app/src/sheets.ts` = tree
-  data-sheet fetch/store, shared by details.ts and ui.ts (neither may
-  import the other).
-- Plants (Plants section of a TASVEG card + plant sheet): `app/src/plants.ts`
-  = data load/index (B "named", C1 "often recorded", C2 "near here", NBY1
-  grid parse), photo URLs and the OPFS photo store/download — shared by
-  details.ts and ui.ts like sheets.ts; `app/src/plantcard.ts` = section,
-  group list and plant-sheet DOM (details.ts stacks them, `pushView`).
-  Committed facts in `app/src/generated/`: `plants.json` (1.45 MB raw /
-  303 KB gzip) + `records.json` (151 KB) are loaded by dynamic `import()` →
-  content-hashed lazy JS chunks precached by `**/*.js`; `nearby.bin`
-  (2.31 MB) is a hashed `?url` asset precached by the explicit
-  `assets/*.bin` glob (`assetsInlineLimit` refuses to inline it as a data:
-  URL; `check-dist.mjs` asserts the .bin parses and it plus both chunks
-  are in `sw.js`). Photos are never bundled (LICENSING.md §2).
-- `pipeline/` — data prep scripts (bash/python via uv; tippecanoe/gdal/
-  pmtiles from brew). Outputs to `data/` (gitignored), uploaded to R2 —
-  except `build_gazetteer.py`, `build_trees.py`, `build_plants.py` and
-  `build_records.py`, whose outputs are committed (see above); their
-  caches live under `pipeline/cache/`.
-  Raster packs are declared in `pipeline/packs.json` (key, service, file,
-  prune rule, attribution, optional season/note/licence_override) and built
-  by `build_raster.py`; `upload_r2.sh` derives manifest keys from it; the
-  app mirrors the key list by hand in `app/src/config.ts` (`RASTER_PACKS`).
-- `probe/` — standalone device capability probe page; `probe/plantid/` =
-  the plant-ID phone test (can Safari run BioCLIP 2.5 via onnxruntime-web
-  WebGPU? data on R2 under `plantid-test/v1/`; see pipeline/plantid/README).
-  The app's SW has `navigateFallbackDenylist: [/\/probe\//]` — without it a
-  Safari that ever ran the app gets the MAP for any probe URL.
-- Hosting: GitHub Pages (app), Cloudflare R2 (archives). CI via Actions.
+- `ios/project.yml` — XcodeGen spec (`IzzyMap.xcodeproj` is generated and
+  gitignored). Targets: **IzzyMap** (app, `org.gruenschloss.izzymap`,
+  iPhone + iPad, team T4HS4UL2LT), **IzzyMapTests**, **IzzyMapUITests**;
+  the Background Assets downloader extension **IzzyMapAssets** + App Group
+  come with milestone 5. Swift 6, MainActor-by-default, Approachable
+  Concurrency; `@Observable` models; heavy work `nonisolated`/`@concurrent`.
+- MapLibre Native **7.0.0 pinned `exactVersion`** (the distribution repo's
+  default branch is a globe pre-release) in one `UIViewRepresentable`
+  (`Sources/Map/`); the style JSON is built in Swift (`StyleBuilder.swift`)
+  from the bundled tables. Sources: `App/` (model, root view, commands),
+  `Map/`, `Controls/` (layers sheet, map buttons, grid pill), `Panel/`
+  (sheet/side card, feature card), `Data/` (archives, attribution,
+  communities, `DataLocator`), `Location/`.
+- `ios/IzzyKit/` — local Swift package for everything without UI: data-table
+  decoding (communities, geology, pre-1750, trees, plants, records, NBY1
+  grid, F2F index), plant-list ranking, MGA55 grid references; later
+  search, plant-ID scoring, download rules. `swift test` on the Mac, no
+  simulator. Its tests read the REAL bundled data in
+  `ios/IzzyMap/Resources/Data` (tripwires: 156 communities, ≥ 1,800 plants,
+  15 tallies, …) plus fixtures generated from the web app's own code
+  (`Tests/Fixtures/make_*.{mjs,ts}`, provenance — re-run from a worktree of
+  04ea5d9).
+- **Bundled data** — `ios/IzzyMap/Resources/Data/` (a folder reference, so
+  the bundle keeps `Data/…` and `Data/search/…`): `tasveg_communities.json`,
+  `geology_units.json`, `pre1750_units.json`, `trees.json`, `plants.json`
+  (1.45 MB), `records.json`, `nearby.bin` (NBY1 grid, 2.31 MB),
+  `f2f_index.json`, `search/gazetteer.json` + `search/addresses.json`
+  (~6 MB). `ios/IzzyMap/Resources/glyphs/` = `Noto Sans {Regular,Bold}/
+  0-255.pbf` (`asset://glyphs/{fontstack}/{range}.pbf`). All committed,
+  written by the pipeline (facts only — LICENSING.md §1).
+- **Packs (milestone 5, NATIVE_PLAN §2)** — Apple-hosted Background Assets:
+  `vector` (TASVEG, geology, pre-1750; essential), `topo` + `relief` +
+  `plantid` (prefetch), `aerial`, `tasmap`, `season-2020…2026` (on demand).
+  Built with `xcrun ba-package`, uploaded LOCALLY with `altool`
+  (`pipeline/upload_packs.sh`, to come), never from CI. Until then the app
+  reads the developer's `data/*.pmtiles` via `-dataDir` (DEBUG only);
+  `Sources/Data/Archive.swift` mirrors the pipeline's file names by hand.
+- Licensed extras (F2F chapters ~37 MB, plant photos ~152 MB, tree sheets
+  ~446 MB) — one-tap background `URLSession` downloads straight from the
+  publisher (no CORS natively → no relay), into Application Support
+  (excluded from backup).
+- `pipeline/` — data prep (bash/python via uv; tippecanoe/gdal/pmtiles
+  from brew). PMTiles to `data/` (gitignored; still uploaded to R2 for the
+  live PWA); the small tables straight into `ios/IzzyMap/Resources/Data/`.
+  Raster packs are declared in `pipeline/packs.json`, built by
+  `build_raster.py`. `build_style.py` is misnamed: it writes
+  `tasveg_communities.json` (QML colours), which the native app uses.
+- `native/plantid-test/` — standalone Core ML plant-ID memory test
+  (TestFlight, its own README); `pipeline/plantid/` — the evaluation
+  pipeline (BioCLIP 2.5, iNat sets, cloud runs).
+- CI: `.github/workflows/ci.yml` — `swift test` (IzzyKit) and
+  `xcodebuild test` on a simulator, runner label `xcode-27`. TestFlight
+  workflows (Trio-style, fastlane + match) come later (NATIVE_PLAN §6).
 
 ## Workflows
 
 - **Adversarial review is the default ship gate.** Before committing any
   substantive change, run adversarial review rounds (fresh-eyes hunt for
   real failure modes in the diff, not style nits) and address findings
-  autonomously until returns diminish. Don't wait to be asked. The first
-  two days' rounds caught ~40 real bugs (fake-ocean tile, SW precache
-  miss, CORS never applied, Victorian mangroves in a Tasmania crop, …).
-
+  autonomously until returns diminish. Don't wait to be asked. The web
+  app's first two days of rounds caught ~40 real bugs.
+- **Build and run on a simulator** (iPhone 16e (27.2) =
+  `4B72EE3A-9DEA-4136-A217-1B25A8082A43`; also "iPad Pro 12.9 4th gen
+  (27.2)"):
+  ```bash
+  export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"   # Apple's rsync first
+  cd ios && xcodegen generate
+  xcodebuild -scheme IzzyMap -destination 'id=<udid>' -derivedDataPath build/dd build
+  xcrun simctl install <udid> build/dd/Build/Products/Debug-iphonesimulator/IzzyMap.app
+  xcrun simctl launch <udid> org.gruenschloss.izzymap -dataDir /Users/leo/izzy-map/data
+  ```
+  `-dataDir` (DEBUG only) points the app at the main checkout's packs; the
+  scheme's Run action passes `$(SRCROOT)/../data`. Without it the app runs
+  with bundled data only (that is how CI's UI tests run; the data-dependent
+  UI test skips itself).
+- **Tests:** `cd ios/IzzyKit && swift test` (~2 s);
+  `xcodebuild test -scheme IzzyMap -destination 'id=<udid>' -derivedDataPath
+  build/dd` (~35 s incremental).
+- **Homebrew rsync gotcha:** Xcode runs `rsync` from PATH with flags only
+  Apple's openrsync accepts; Homebrew's rsync 3.x first in PATH fails
+  copy/export steps ("Copy failed", `rsync error: syntax or usage error`).
+  Put `/usr/bin` first for every xcodebuild.
+- **Xcode device components must be current** (2026-11-02: "CoreSimulator
+  is out of date" made `simctl`/`devicectl` hang) — open Xcode once or
+  `sudo xcodebuild -runFirstLaunch`.
 - **Refresh TASVEG (e.g. 6.0 release):** update URL/version in
-  `pipeline/build_tasveg.sh`, run pipeline, verify counts/colors, upload to
-  R2, bump layer manifest version.
-- **Add an overlay map (e.g. geology):** run a pipeline variant on the new
-  dataset → PMTiles + colour table; then extend `app/src/config.ts`
-  (ARCHIVES), `style.ts` (source + layers), `ui.ts` (download row), and
-  `upload_r2.sh` (manifest keys). Hand-curated by design — a handful of
-  files, one pattern to follow (TASVEG is the template).
-- **Add an overlay map — tiny dataset variant (trees is the template):**
-  when the whole dataset is a few hundred KB, skip PMTiles/R2/manifest/
-  download row: `pipeline/build_<x>.py` → `app/src/generated/<x>.json`
-  (GeoJSON carrying only ids + a facts table, licence guard in the script)
-  → static import in `style.ts`, geojson source(s) + layers appended at the
-  END of the layer list (before `selected-outline`/`selected-point`; the
-  trees test pins that order — extend it) → an independent `LayerState` boolean (default off,
-  restored in main.ts, `clearDetails()` when it flips) → checkbox row under
-  "Also show" in the Layers sheet (ui.ts; bump the `.lay-row` count in the
-  test) → tap handling in details.ts (a `TREE_LAYERS`-style list queried
-  with a padded box, topmost first) → `ATTRIBUTION_<X>` in config.ts on
-  every source + About. Map text must be Latin-1 (`0-255.pbf` glyphs).
+  `pipeline/build_tasveg.sh`, run pipeline (`build_style.py` rewrites
+  `ios/IzzyMap/Resources/Data/tasveg_communities.json`), verify
+  counts/colours (IzzyKit's `communities()` test pins 156), rebuild the
+  vector pack.
+- **Add an overlay map (e.g. geology):** pipeline variant → PMTiles +
+  colour table in `ios/IzzyMap/Resources/Data/`; decoder in IzzyKit,
+  source + layers in `StyleBuilder.swift`, a row in the Layers sheet, the
+  pack entry, attribution. Hand-curated by design — one pattern to follow
+  (TASVEG is the template). Tiny datasets (trees is the template) skip
+  PMTiles and ship as a bundled GeoJSON-ish table; their layers go at the
+  END of the style, before the selection highlight. Map text Latin-1 only.
 - **Extend topo coverage (e.g. z16):** bump `maxzoom` in `packs.json`,
-  re-run `build_raster.py --pack topo` (disk cache makes it incremental),
-  re-upload. Re-validate the ocean-prune threshold first (see the topo
-  `size<1000@13` rule in build_raster.py).
+  re-run `build_raster.py --pack topo` (disk cache makes it incremental).
+  Re-validate the ocean-prune threshold first (the topo `size<1000@13`
+  rule in build_raster.py).
 - **Add a raster pack (base map or season):** add an entry to
   `pipeline/packs.json` → `build_raster.py --measure 1500 --pack <key>` (time
   it first; ~70 tiles/s at 8 concurrent in 2026-09) → `--pack <key>` (the
-  licence guard reads the live copyrightText) → `upload_r2.sh data/<file>`
-  → mirror the key in `RASTER_PACKS` (config.ts) and, for a base, add it to
-  `BASES`/`BASE_ROWS`/`rasterVisibility`; a season only needs `SEASON_KEYS`
-  (chronological!). `pipeline/run_pulls.sh` chains build+upload for all.
+  licence guard reads the live copyrightText) → upload (R2 via
+  `upload_r2.sh data/<file>` while the PWA lives; a Background Assets pack
+  from milestone 5) → mirror the file name in `Archive.swift`. Seasons are
+  stacked chronologically. `pipeline/run_pulls.sh` chains build+upload.
 - **Refreshing a season (2025–26 is INCOMPLETE — still being flown and
   published as of 2026-09-10):** `python3 pipeline/build_raster.py --pack
   aerial2026 --fresh` (wipes that pack's tile cache incl. the cached
   "absent" markers, ~10–40k requests, minutes with keep-alive) →
-  `build_raster.py --check-footprints --pack aerial2026` → `pipeline/upload_r2.sh
-  data/aerial_2026.pmtiles`. The manifest's `bytes` changes, so installed
-  phones see an **Update** button in Offline maps; the pack's `note` in
-  packs.json is shown under the row. When LIST adds the CC badge to the
-  2026 service, delete its `licence_override` (the guard would otherwise
-  abort on the changed text). Check the season list yearly: a new
-  `AerialPhotoYYYY` service = one new packs.json entry + `SEASON_KEYS`.
-- **Detailed areas (in-app, per layer, user-framed):** Offline maps →
-  "Download this area…" → dashed frame follows the map → Next → layers
-  (aerial / seasons / paper map / topo) + detail (z16–18) + estimate →
-  Download. `app/src/areas.ts`: tiles fetched by the device from the LIST
-  service (6 concurrent, image-magic checked, 404 = absent), stored as
-  `areas/<id>/<layer>/part-NNNN.bin` + `.json` index (64 MB parts, written
-  together on close; an interrupted part is redone), registry
-  `areas/areas.json`. Seasons only fetch under z15 tiles the season's
-  archive has (`archiveTile`). The `raster://` protocol consults area stores
-  first. Estimates use `meanTileBytes` per pack; `MAX_AREA_TILES` (60k per
-  layer) caps a download — the framing bar and the setup sheet refuse
-  larger frames. Registry writes are serialised (`withRegistry`); an
-  interrupted part is closed and indexed, not discarded; Delete waits for
-  the layer's download to stop first (an open writable makes removeEntry
-  fail and would orphan gigabytes).
+  `build_raster.py --check-footprints --pack aerial2026` → re-upload.
+  Natively, a re-uploaded pack updates on devices in the background (no
+  Update button). When LIST adds the CC badge to the 2026 service, delete
+  its `licence_override` (the guard would otherwise abort on the changed
+  text). Check the season list yearly: a new `AerialPhotoYYYY` service =
+  one new packs.json entry + a season in the app.
 - **Relief shading pack:** `python3 pipeline/build_raster.py --pack
-  hillshade` (z0–15, prune blank@13; 2026-10-03: ~20 min at ~200 tiles/s)
-  → `pipeline/upload_r2.sh data/hillshade_tas.pmtiles`. Like topo, don't
-  re-upload unless LIST republished the tiles (a rebuild changes the byte
-  size → every phone is offered a re-download).
+  hillshade` (z0–15, prune blank@13; 2026-10-03: ~20 min at ~200 tiles/s).
+  Natively the pipeline will pre-render translucent-black tiles (alpha =
+  0.4 × (1 − g/247), the exact multiply look; CC BY allows it) — format
+  measurements in NATIVE_PLAN §3.
+- **Do not re-upload topo unless its tiles changed:** `build_raster.py`
+  writes extra metadata (`copyright_text`, `built`, …) into the archive, so
+  a rebuild of identical tiles has a different byte size — on R2 every
+  installed PWA would be offered a 2 GB "Update"; as a pack, every device
+  re-downloads it. `run_pulls.sh` deliberately excludes topo.
 - **Refresh place names / addresses (yearly; address points are
   republished quarterly):** `uv run --with shapely --with pyshp --with
-  pyproj python3 pipeline/build_gazetteer.py [--fresh]` (cache
+  pyproj python3 pipeline/build_gazetteer.py [--fresh]` → writes
+  `ios/IzzyMap/Resources/Data/search/{gazetteer,addresses}.json` (cache
   `pipeline/cache/gazetteer/`, ~80 s cold / 9 s warm on 2026-09-12; the
   segments pull is cached one file per page → resumable; the two LISTdata
   zips can be dropped into the cache by hand). Count tripwires (31–34k kept
   names, 13–15k streets, 250–275k house numbers) are pinned to the 2026-09
   pull and WILL drift with LIST republishes — eyeball the stage output
   (dropped counts, samples, FEAT_TYPE histogram → new admin types into
-  `DROP_TYPES`) and widen; they catch truncated pulls, not growth. Outputs
-  go into the public repo (facts only — LICENSING.md §1). The on-disk
-  format at `version: 1` must stay ADDITIVE: the URL is unhashed, so a
-  resident old app after a background SW update reads the NEW file; bump
-  `version` only for a breaking change (the panel then shows "Update the
-  app to search"; `loadIndexes()` treats a version mismatch as permanent
-  for that build). `npm run build` → `check-dist.mjs` asserts both files
-  exist, parse, are version 1, hold > 30k rows / > 13k streets and appear
-  in `dist/sw.js`.
+  `DROP_TYPES`) and widen; they catch truncated pulls, not growth. Facts
+  only (LICENSING.md §1). `version: 1`; the files now ship inside the app
+  binary with the code that reads them, so the web app's "additive only"
+  rule is gone — a breaking shape change bumps `version` and updates the
+  IzzyKit decoder in the same commit (the search port, milestone 4, should
+  carry the old build guard as a test: > 30k rows, > 13k streets).
 - **Refresh significant trees:** `python3 pipeline/build_trees.py
-  [--skip-enrich] [--fresh]` (stdlib only; cache `pipeline/cache/trees/`,
-  ~50 s cold / 2 s warm; `--fresh` drops cached JSON/text but keeps the
-  PDFs). Needs `pipeline/cache/trees/register.pdf` saved from a browser
-  (403 to scripts) and `pdftotext` (poppler). The licence guard aborts
-  unless the portal item names CC BY 4.0 AND "City of Hobart". Enrichment
-  reads the register first (214 of 277 refs; asserts ≥ 200) and downloads
-  data sheets ONLY for the remaining refs (63 on 2026-09-12; asserts
-  ≤ 100 — never all 282). Read the run report: register/service conflicts
-  (D7 Pinus vs Populus, H2 Ulmus vs Fraxinus) drop the common name and
-  fall back to the botanical one; A1's points carry A5's trees upstream.
-  Result 2026-09-12: 275/277 common names, 277/277 addresses,
-  `app/src/generated/trees.json` 233 KB. The Downloads row's total
-  (`SHEETS_TOTAL_BYTES`, ~446 MB) follows the `sheets` table. If the
-  council republishes sheets under new item ids, phones keep the old
-  `trees/<id>.pdf` files (the row's Delete only removes current ids).
+  [--skip-enrich] [--fresh]` → `ios/IzzyMap/Resources/Data/trees.json`
+  (stdlib only; cache `pipeline/cache/trees/`, ~50 s cold / 2 s warm;
+  `--fresh` drops cached JSON/text but keeps the PDFs). Needs
+  `pipeline/cache/trees/register.pdf` saved from a browser (403 to scripts)
+  and `pdftotext` (poppler). The licence guard aborts unless the portal
+  item names CC BY 4.0 AND "City of Hobart". Enrichment reads the register
+  first (214 of 277 refs; asserts ≥ 200) and downloads data sheets ONLY for
+  the remaining refs (63 on 2026-09-12; asserts ≤ 100 — never all 282).
+  Read the run report: register/service conflicts (D7 Pinus vs Populus, H2
+  Ulmus vs Fraxinus) drop the common name and fall back to the botanical
+  one; A1's points carry A5's trees upstream. Result 2026-09-12: 275/277
+  common names, 277/277 addresses, 233 KB. The tree-sheets download total
+  (~446 MB) follows the `sheets` table. If the council republishes sheets
+  under new item ids, devices keep the old files until Remove.
 - **Refresh plants & records** (rerun plants when UN adds/edits profiles;
   records yearly — ALA grows — or after UN's species list changed). ORDER
   MATTERS: build_plants first — build_records reads plants.json `groups`
-  to emit `members`.
+  to emit `members`. Both write into `ios/IzzyMap/Resources/Data/`.
   - `python3 pipeline/build_plants.py [--fresh] [--sample N]` (stdlib +
     `pdftotext`; cache `pipeline/cache/plants/`: REST pages, gzipped HTML
     one file per plant (resumable), `names/` ALA name matches, `f2f-text/`
@@ -370,128 +394,99 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
     and Nothofagus cunninghamii in RMT's top 5 (a lat/lon or CRS slip
     scrambles that first). Result 2026-10-25: 156 codes listed, 15 of them
     plain tallies; `members` for 123 codes; 33,819 grid cells, 510k pairs.
-  - Both files are `version: 1`; the app refuses any other version. The
-    chunks are content-hashed, so (unlike the search indexes) a resident
-    old build never reads a newer file — bump only for a breaking shape
-    change. Photos never pass through the pipeline; the "Plant photos"
-    row total (~152 MB for 997 large versions) is Σ `bytes`. Phones keep
-    photos UN has since dropped until the row's Delete (removes `plants/`).
-- **Deploy app:** push to main → Pages workflow.
-- **Do not re-upload topo unless its tiles changed:** `build_raster.py`
-  writes extra metadata (`copyright_text`, `built`, …) into the archive, so
-  a rebuild of identical tiles has a different byte size and every installed
-  phone would be offered a 2 GB "Update" (the app compares manifest bytes to
-  the installed file). `run_pulls.sh` deliberately excludes topo.
-- **iPad checks:** `node app/scripts/shot-ipad.mjs` (dev server on :5199)
-  for landscape/portrait screenshots; Xcode iPad simulators (Pro 11, mini)
-  for home-screen install + hardware-keyboard Escape; Playwright project
-  `webkit-ipad` runs the wide-layout tests in CI.
+  - Both files are `version: 1`; IzzyKit refuses any other version (and a
+    wrong NBY1 magic). Bump only for a breaking shape change, with the
+    decoder in the same commit. Then `swift test` — PlantDataTests pin the
+    tripwires again. Photos never pass through the pipeline; the plant
+    photos download total (~152 MB for 997 large versions) is Σ `bytes`.
+- **F2F page index:** `uv run --with pypdf python3 pipeline/build_f2f_index.py`
+  → `ios/IzzyMap/Resources/Data/f2f_index.json` (reads
+  `tasveg_communities.json` from the same folder; page numbers only — the
+  PDFs are never committed).
+- **Plant-ID evaluation:** `pipeline/plantid/README.md`; the UN species
+  list comes from the bundled `ios/IzzyMap/Resources/Data/plants.json`
+  (`--un-plants`).
 
-## Gotchas discovered so far
+## Native gotchas (map proof + milestone 1, 2026-11-03)
 
-- **MapLibre 6 is ESM-only and resolves its Web Worker from
-  `import.meta.url` at runtime** — inside a Vite bundle that URL points at a
-  file that doesn't exist, so vector tiles silently never render in the
-  BUILT app while every dev-server test passes. main.ts wires
-  `setWorkerUrl(import "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url")`
-  (the `?worker&url` form bundles the sibling `maplibre-gl-shared.mjs`;
-  plain `?url` does not). `npm run build` ends with `scripts/check-dist.mjs`
-  asserting both workers are emitted and precached; `scripts/smoke-dist.mjs`
-  drives the production bundle under `vite preview` for a manual check.
-  Default import (`import maplibregl from "maplibre-gl"`) is gone: use named
-  imports. Geolocate errors arrive as `GeolocateErrorEvent` (has `.code`).
-- Layer state lives in ONE localStorage key `layerState` (`{base, cutoff,
-  overlay, strength}`); the old `overlayMode`/`overlayOpacity` keys are
-  migrated once. The Layers sheet, legend and boot pill all read it via
-  `setLayerAccess` in ui.ts.
-- The season stack is plain layer visibility: season sources are stacked
-  chronologically, "up to season X" shows layers ≤ X, newest paints on top,
-  transparent edge tiles and absent tiles let older seasons through, and
-  the topo layer stays visible underneath so gaps read as "no photo by
-  then". The topo underlay ALSO stays on under an aerial/Tasmap base whose
-  archive is not local (offline = the map, never a flat ocean colour);
-  `applyLayerState(map, state, status.rasterLocal)` must be re-run after
-  downloads/deletes (`layers.reapply()`). `seasonAt()` in protocol.ts tells
-  the sheet which LOCAL season is on top at the map centre (remote archives
-  are never probed: a pmtiles getZxy re-downloads the tile), probing at
-  round(zoom + 1) — the level MapLibre renders 256 px tiles at.
-  `raster-fade-duration: 0` on seasons — stacked cross-fades flicker.
-- Geolocate `error`: only code 1 (denied) ends tracking; a transient
-  "position unavailable" keeps MapLibre's watch alive and recovers without
-  any event, so the wake lock must not be released on it. One pill per
-  tracking session.
-- Downloads "Update" keeps the installed archive serving until the
-  replacement is assembled (atomic swap) unless free space < 2× the
-  archive; outdated/partial rows keep a secondary Delete. "Download all
-  seasons" is one batch: first failure or Cancel ends it.
-- Wide viewports (≥ 700 px) have NO scrim: the map, toolbar and controls
-  stay live beside the card (pan while comparing seasons); close is × or
-  Escape. Phones keep the tap-outside scrim.
-- **Relief shading = multiply via alpha.** MapLibre has no blend modes and
-  an opacity-blended grey raster greys the map out. `shadeTile()` in
-  protocol.ts (pack `kind: "shade"`) decodes each grey tile and returns an
-  ImageBitmap of BLACK at alpha 0.4 × (1 − g/247): "over" blending black at
-  alpha a gives map × (1 − a), i.e. an exact multiply, flat ground
-  untouched. Packs/areas keep LIST's bytes; only the render path adapts.
-  The `hillshade` layer sits above the overlay fills (veg colours get
-  shaded) and below every outline/label; it is an "Also show" toggle
-  (`LayerState.relief`), independent of base and overlay.
-- `raster://<key>/{z}/{x}/{y}` resolution: downloaded detailed area →
-  local OPFS pack (z ≤ 15) → (seasons) R2 pack → LIST live → blank (z ≤ 15)
-  or **throw** (z > 15). Sources run to the service's native max zoom
-  (aerial/seasons/topo 18, Tasmap 16 — `packOf(key).maxzoom`), so online
-  the map streams full-resolution LIST tiles past the packs; offline a
-  miss above z15 must ERROR **with `status = 404`**: only a 404 makes
-  MapLibre fire the `data` event that re-runs its retain pass, which then
-  requests the parent (up to 10 levels, `maxUnderzooming`), i.e. the
-  stretched z15 pack tile. A blank there paints a hole over it; a non-404
-  error leaves the hole until the camera moves. MapLibre never requests a
-  parent for a tile still *loading*, so live fetches above z15 are bounded
-  (3 s timeout + a 20 s breaker after a failure) or a phantom connection
-  holds holes open. z18 cap = size choice (64× z15 per tile), not a
-  fallback constraint. Seasons go live only above z15 and only where
-  their z15 archive tile exists (`seasonHasParent`, cached), so seven
-  stacked sources don't fire 404 storms. For statewide packs a miss inside
-  a LOCAL archive's bounds/zooms is authoritative (pruned ocean → blank).
-- MapLibre hard-codes `image/png` as the blob type for every raster tile
-  and the browser sniffs the real format, so JPEG archives (and MIXED
-  PNG/JPEG season archives) decode fine — proven by the pixel-readback tests
-  (`?pixels=1` sets preserveDrawingBuffer; never on in normal use).
-- The Layers sheet's scrim covers the toolbar: tests must close the panel
-  before clicking another toolbar button (a scrim tap closes the panel).
-- Pixel tests must switch the overlay OFF first — a 50 % TASVEG fill tints
-  the readback.
-- Playwright routes match the MOST RECENTLY registered handler first:
-  `routeRasterFixtures` (Orthophoto/Tasmap live tiles from the synthetic
-  fixtures) must be registered after `blockTopoNetwork`.
-- Every `dev-data/*.pmtiles` URL and the manifest are routed in tests
-  (404 by default): a developer's `data/` holds the real multi-GB packs and
-  a real manifest, which would otherwise leak into "no archive" test paths.
+- **A character outside Latin-1 drops the whole label** in MapLibre Native
+  too (en dash seen) — glyphs ship as `0-255.pbf` only, so every
+  `text-field` uses the Latin-1 `label` fields (trees.json, the community
+  table), never the verbatim `name` (curly quotes, upstream typos; "×" is
+  U+00D7, inside the range). IzzyKit's `MapText.isLatin1` is the guard.
+  Verbatim names are for SwiftUI text.
+- **LIST topo water has alpha 207**: the base needs an opaque background
+  layer under topo, or water tints with whatever is below (magenta in the
+  proof). Per-base backgrounds: aerial `#1e525f`, Tasmap `#aae0fc`.
+- **256 px tiles**: MapLibre draws a 256 px source one level up, so a live
+  LIST z16 layer above a maxzoom-15 pack already draws from map zoom
+  15.5. Overzooming the packs to z18 leaves no holes; offline, failed live
+  tiles are transparent and the stretched pack shows. ≤ 4 tries per URL,
+  tied to camera moves (no retry storms), but each failure logs two lines
+  — filter the log (`MapLogging.swift`).
+- **MapLibre's offline packs are rejected for detailed areas**: they work,
+  but LIST sends `max-age=0` / `Expires: 1970`, so every stored tile counts
+  as stale and is re-requested on each view unless we rewrite response
+  headers (a workaround), and their zoom range is map zoom, not tile zoom.
+  Detailed areas = our own per-area PMTiles files (NATIVE_PLAN §3).
+- **MapLibre Native pinned to 7.0.0 exactly** (`exactVersion` in
+  project.yml) — the distribution package's default branch points at a
+  globe pre-release; never a branch or `from:`.
+- `visibleFeatures(at:)` returns VEGCODE and friends; `asset://` glyphs work
+  offline; local PMTiles (vector, PNG, JPEG, MIXED PNG-alpha/JPEG) make no
+  network requests.
+- Full stack (topo + aerial + 7 seasons + TASVEG) = 60 fps in the
+  simulator but texture memory 20 → ~145 MB: measure on the 16e; keep
+  hidden seasons out of the style rather than merely invisible if needed.
+- Offline-storage completions arrive on the main thread; never block it.
+- `.gitignore` anchors `/data/`: unanchored, it also matched
+  `ios/IzzyMap/Resources/Data/` (macOS filesystem is case-insensitive,
+  `core.ignorecase`).
+- UI tests: XCTestCase overrides are nonisolated → IzzyMapUITests builds
+  with `SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated`, tests opt in with
+  `@MainActor`. A camera can be injected with `-lastCamera <hex>`.
+
+## Product rules carried over from the web app
+
+(The behaviour is the spec; the web mechanics are not — NATIVE_PLAN §4/§10.)
+
+- Stacking: topo stays under the season stack, and under aerial/Tasmap
+  while that pack isn't installed (offline = the map, never a flat ocean
+  colour). Seasons oldest → newest, "up to season X" = layer visibility,
+  fades off for seasons; live seasons above z15 only where the season's
+  z15 tile exists. A miss inside a local pack is authoritative (pruned sea).
+- Paint order: overlay fills → relief → outlines/labels → trees layers →
+  selection highlight (red ring) last, so a selected tree area isn't
+  overpainted.
+- Location: only a permission denial ends following; a temporary "no fix"
+  never does. One honest message per session ("Wi-Fi-only iPads have no
+  GPS"). Idle timer disabled only while following in the foreground.
+- Cards stay compact so the map stays tappable — comparing communities is
+  the core gesture; the Plants section starts collapsed ("n named · n in
+  records · n nearby"). Rare communities (tallies, "few records") are
+  shown, not hidden (Leo).
+- Downloads of licensed extras: a 4xx (ArcGIS answers a REMOVED item with
+  HTTP 400 + HTML) = gone, filed and skipped; a non-PDF/non-image 200 =
+  captive portal (check `%PDF` / image magic before storing); n gone in a
+  row = broken path or portal, stop; resume skips files present; a tap on
+  one sheet/photo/chapter fetches just that one.
+- Plant photos are stored by path with the size suffix left OUT (`large`
+  is a suffix, never parsed: "-768x576", "" (original; 226 photos),
+  "-rotated" (9) or "-scaled") — pixel size unknown, so a fixed 4:3 box
+  with the photo fitted (thumbs 1:1, filled). Offline + not stored = a
+  leaf placeholder, never a broken image.
+- Cluster zoom for trees capped at 17 (a CBD cluster never jumps to street
+  level).
+
+## Pipeline and data gotchas
+
 - Pipeline fetches use one keep-alive HTTPS connection per worker
   (`http.client`): urllib's per-tile TLS handshake capped the pull at ~55
   tiles/s (0.8 MB/s); keep-alive gives ~190 tiles/s with the same 8 workers.
-
 - LIST ArcGIS tile path is `{z}/{y}/{x}` (row before column).
-- Author CSS `display:` on an element defeats the `hidden` attribute — the
-  app.css `[hidden]{display:none!important}` rule guards this.
 - `wrangler r2 bucket cors set` wants `{"rules":[{"allowed":{...}}]}`, NOT
   the S3-style `[{AllowedOrigins:...}]` — the wrong shape fails silently if
   you pipe the output away. Always verify with a curl -H "Origin:".
-- iOS Safari can paint inline SVGs at viewBox scale before author CSS
-  applies — give toolbar/inline SVGs explicit width/height attributes.
-- Playwright's WebKit build has NO OPFS write support (and desktop WebKit
-  quirks around it) — all OPFS-write tests run in the Chromium project;
-  real-iOS verification happens on a real iPhone (Leo's own since 2026-11).
-- OPFS `createWritable({keepExistingData:true})` copies the whole file into
-  its swap on every open — never use it for incremental appends to large
-  files (hence the chunked part-file download design in storage.ts).
-- WebKit scroll anchoring walks scrollTop as content renders above the
-  viewport; the PDF viewer computes scroll targets arithmetically and
-  re-asserts (see viewer.ts).
-- pmtiles `Protocol` self-registers a FetchSource for unknown keys against a
-  RELATIVE url — always keep the "tasveg" key registered.
-- MapLibre never retries an errored source — after archive changes call
-  `setUrl()` to re-kick (protocol.ts refreshArchives does this).
 - The ArcGIS `drawingInfo` colours are wrong for 67 hatch-patterned
   communities (they give the hatch-line colour, often black) — always use
   the QML.
@@ -505,126 +500,6 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   flips the axis order to [lat, lon] (omit it → [lon, lat]); `resultType=
   hits` with GEOJSON output returns an empty body. Page until a short page
   and sanity-check coordinates against Tasmania's bounds.
-- The SW precache holds `search/*.json` as an EXPLICIT glob — the only JSON
-  it may hold. Never widen it to `**/*.json`: map data (manifest, unit
-  tables are bundled anyway) must never go through the SW. Likewise
-  `assets/*.bin` exists for the plants grid `nearby.bin` alone (app data,
-  not tiles); plants.json/records.json need no rule — they are JS chunks.
-- `openSearch()` must run synchronously inside the tap's own task: iOS
-  raises the keyboard only for a `focus()` in the gesture's task — never
-  `await` before it. The panel is `openPanel(html, "search")`: a
-  full-height, top-anchored takeover on phones so the keyboard never shifts
-  the page; the usual 400 px side card ≥ 700 px.
-- Safari clears a `type=search` input on Escape AND fires a late `input`
-  event after the Escape handler has already closed the panel — search.ts
-  ignores input events once the panel is closed (`closed` flag), or the
-  late empty value would wipe the remembered query that reopening restores.
-- Escape chain (hardware keyboards): areabar → PDF viewer → panel → plant
-  sheet → group list → details card → search pin (`detailsBack()` pops one
-  stacked view; only an empty stack closes the sheet). `clearSearchPin()`/`isSearchPinShown()` live in
-  search.ts; the pin is a DOM `Marker` (no sprite, no glyph range needed
-  offline) with `#search-pill` (name = re-fly, × = clear).
-- Search indexes are prefetched on the first map `idle` (main.ts) ONLY when
-  a service worker controls the page (`navigator.serviceWorker?.controller`
-  — an uncontrolled first load is precaching them already); otherwise they
-  load on the first search. The panel retries if that failed. `loadIndexes()`
-  resets its promise on network failure but NOT on a version mismatch — that
-  would re-fetch ~6 MB per keystroke for a build that can never succeed.
-- arcgis.com item downloads: only `www.arcgis.com/sharing/rest/content/
-  items/<id>/data` sends CORS headers on the 302 to signed S3 — the
-  `hobartcc.maps.arcgis.com` URL in the service data does NOT. The preflight
-  allow-list lacks `Range`, so a sheet is a plain `fetch(url)` with no
-  custom headers (never `storage.download()`, which sends Range). A captive
-  portal answers 200 with HTML — check the `%PDF` magic before storing.
-  pdf.js is only ever handed the OPFS `File`, never the remote URL.
-- The six `trees-*` layers MUST stay last in the style, followed only by
-  `selected-outline` and `selected-point` (a test asserts
-  `layers.slice(-8)`): they sit on top of every overlay and its labels, and
-  both highlights sit above THEM (below the tree layers a selected tree
-  area's red ring was tinted/overpainted by `trees-area-fill`).
-  `selected-point` rings a tapped tree; `selected-outline` covers polygons.
-- Tree data sheets: ArcGIS answers a REMOVED item with HTTP 400 + HTML (not
-  404). The bulk download files any 4xx / non-PDF sheet under localStorage
-  `treeSheetsGone` ({id: isoDate}), skips it and finishes as "✓ downloaded ·
-  n sheets no longer published"; five such in a row are read as a captive
-  portal instead (marks undone, batch stops). A tap always tries a gone id
-  once (republished items) and a success forgets the mark; Delete clears
-  the set. `fetchSheet` dedupes per id (tap + batch on the same sheet) and
-  throws `SheetError` with a `kind` the callers word differently.
-- `GeoJSONSource.getClusterExpansionZoom()` returns a Promise in MapLibre 6
-  (the callback form is gone); details.ts caps the resulting zoom at 17 so
-  a CBD cluster never jumps to street level.
-- Glyphs ship as `0-255.pbf` only. Botanical `name` in trees.json is
-  verbatim from the register (curly quotes, "×" hybrids, upstream typos);
-  map text uses `label`, asserted Latin-1 by the build and a test. A
-  character outside 0–255 makes MapLibre request a glyph range that does
-  not exist → the label silently fails offline. Use `label`, not `name`,
-  for any `text-field`.
-- The tree card's "Open the data sheet" button is looked up asynchronously
-  (OPFS answers later): guard on `btn.isConnected` — `renderSheet()`
-  replaces innerHTML, so a second tap on another tree detaches the first
-  button while its probe is still in flight.
-- Multi-file downloads (F2F chapters, tree sheets) share one job registry
-  in ui.ts (`runJob`/`activeJob`, module-level like storage.ts's inflight
-  map): a reopened panel finds the running job, shows Cancel, and resumes
-  per file (files already on disk are skipped, not re-fetched). Plant
-  photos use it too (`plantPhotos`).
-- The Plants section starts COLLAPSED as one summary row ("n named · n in
-  records · n nearby"): the card must stay a compact label so the map
-  beside/above it stays tappable — comparing communities is the core
-  gesture. Once expanded, later cards this session open expanded
-  (module-level flag, not persisted). `section.dataset.state` =
-  loading → empty | ready | error (tests key on it). Named + recorded
-  lists render as soon as the chunks are in; the nearby list (2 MB grid)
-  is appended when it resolves — only a code with neither waits for the
-  grid to decide whether a section appears at all; none at all (water,
-  urban) = hidden, state "empty". `fillPlants` re-checks
-  `section.isConnected` after every await (the card may be replaced).
-- Views stacked on a card (group list, plant sheet) are PARKED, not
-  re-rendered: `pushView` moves the card's nodes into a hidden
-  `.sheet-stash`, so in-flight lookups and handlers survive and Back
-  restores scroll and focus exactly; `renderSheet`/`clearSelection` drop
-  the stack. Double tap: the second click is hit-tested AFTER the first
-  pushed the new view, landing on a member row or the UN link — a capture
-  listener swallows clicks on `.pl-row, .pl-more, a` for 400 ms after each
-  push (Back resets it), and `openEntry` ignores parked rows and a top view
-  already showing that entry (`data-entry`). `#sheet.tall` stops ≥ 72 px +
-  safe area below the top so `#search-pill` (re-fly, ×) stays reachable.
-- Plant data is a DYNAMIC import, unlike the viewer (static in details.ts
-  for exactly this reason): a background skipWaiting update can purge the
-  old build's hashed chunks while the app is resident. Hence main.ts
-  prefetches `loadPlantData()` on the first map idle when a SW controls
-  the page (like the search indexes) — held in memory before any update.
-  Failures are never cached (the next card retries); the card says "close
-  IzzyMap completely and open it again". The grid loads on its own memo
-  (reset on failure, 20 s abort): a failed grid leaves B/C1 intact and
-  shows "Couldn't load the nearby records — tap the map again". The
-  Downloads panel renders first and appends the Plant photos row when the
-  data arrives (absent if it can't load).
-- Plant photos: online a plain `<img>` straight from UN (displaying needs
-  no CORS); the relay's `/un/` route exists only to READ bytes into OPFS.
-  Stored as `plants/<path with / → ->.<ext>` — the size suffix is left
-  OUT, so a re-sized large version is still the same photo and one
-  `listDir` answers "what's on the device". `large` is a suffix, never
-  parsed: "-768x576", "" (original; 226 photos), "-rotated" (9) or
-  "-scaled" (none yet) — pixel size unknown, hence a fixed 4:3 box with
-  the photo `contain`ed (thumbs: 1:1, `cover`). Offline + not stored, or a
-  failed load, keeps the leaf placeholder — never a broken-image icon.
-- Relay refusals (403 wrong Origin, 404 off-allow-list) carry NO CORS
-  headers → the browser surfaces a TypeError and the batch stops as
-  "offline"; only an UPSTREAM 404/410 comes back readable, is filed in
-  localStorage `plantPhotosGone` ({file: isoDate}) and counts as done. Ten
-  gone in a row = broken relay/path scheme, not deletions (marks undone,
-  batch stops); a non-image 200 (captive portal) stops it too. A readable
-  server error (relay 502: upstream error, redirect or non-image type)
-  skips just that file for the session and the batch finishes as "n
-  failed, will retry next time the app opens". Both relay routes use
-  `redirect: "manual"`, any 3xx → 502: the allow-list must bound what is
-  fetched, not just what is asked for. `RELAYABLE`
-  in plants.ts mirrors the worker's `UN_PHOTO` regex — change both, or one
-  odd file name stalls Resume at the same photo for ever.
-- Plant names (`name`, verbatim UN titles: "×", curly quotes) are DOM-only,
-  like trees' `name` — never a MapLibre `text-field`.
 - F2F text must be pdftotext READING order, never `-layout`: the pages are
   two-column and `-layout` interleaves columns line by line, so a binomial
   wrapped across a line ("Acacia" / other column / "dealbata") vanished —
@@ -673,6 +548,21 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   dumped whole floras into whichever polygon the minute point hit).
   Counting distinct cells, not records, damps repeat surveys; C2 sums the
   tapped 0.01° cell + 8 neighbours (≈ 1–1.5 km).
+
+## Retired web app (history: commit 04ea5d9)
+
+The PWA (`app/`: Vite + TS + MapLibre GL JS 6, service worker, OPFS
+PMTiles, pdf.js viewer, Playwright tests; `probe/` device + plant-ID Safari
+test pages; `pipeline/f2f-proxy/` = the `izzy-f2f` CORS relay Worker;
+`.github/workflows/pages-deploy.yml`) was deleted on 2026-11-03. Its
+hard-won web-only gotchas (SW precache globs, MapLibre GL's worker URL,
+`raster://` resolver + 404-to-retain, OPFS part files, Safari keyboard /
+Escape / late `input` quirks, pdf.js scroll anchoring, arcgis.com CORS +
+no-Range preflight, relay refusals without CORS, Playwright route order)
+live in that commit's CLAUDE.md and code: `git show 04ea5d9:CLAUDE.md`,
+`git show 04ea5d9:app/src/<file>`, or `git worktree add /tmp/izzy-web
+04ea5d9`. Later milestones port behaviour from there (search scoring,
+plants UI, areas), never the workarounds.
 
 ## Future ideas (discussed, not planned)
 
@@ -726,22 +616,29 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
   z9/z8/z7/z0-6), tippecanoe per band, tile-join. Tiles carry MVS+color
   only; names/groups/areas live in pre1750_units.json (geology pattern).
 
-## Deployed endpoints (2026-08-29)
 
-- App: https://lgruen.github.io/izzy-map/ (Pages, deployed by CI on green tests)
-- Device probe: https://lgruen.github.io/izzy-map/probe/
+## Deployed endpoints (2026-08-29; still live — the PWA keeps running until the native app is on all devices)
+
+- App: https://lgruen.github.io/izzy-map/ (Pages; last deployed from commit
+  04ea5d9 — the deploy workflow is deleted, so nothing redeploys it). To
+  retire (ask Leo first): unpublish Pages in the repo settings.
+- Device probe: https://lgruen.github.io/izzy-map/probe/ (same deploy)
 - Data archives: https://pub-0ef9b8ef1e7541f8814d3e4374485b76.r2.dev
   (R2 bucket `izzy-map`, CORS for lgruen.github.io + localhost; upload via
   `pipeline/upload_r2.sh` — LOCAL wrangler OAuth only, >300 MiB files go
-  through a deploy-use-delete multipart uploader Worker)
+  through a deploy-use-delete multipart uploader Worker, `pipeline/r2-uploader/`).
+  Also `plantid-test/v1/` for the retired Safari plant-ID page. Stays
+  while the PWA lives; the packs replace it (milestone 5).
 - F2F CORS proxy: https://izzy-f2f.fountouki.workers.dev (Worker `izzy-f2f`,
   allowlisted f2f_*.pdf pass-through; needed because nre.tas.gov.au sends no
   CORS headers). Since 2026-10-25 also `/un/YYYY/MM/<file>.<img-ext>` →
   UN `wp-content/uploads/` (separate allow-list, image content-types only,
   no-store both ways, same Origin check). Both routes `redirect: "manual"`
-  (3xx → 502). Redeployed and verified live 2026-10-25: photo 200
-  image/jpeg with CORS, missing photo 404, 403 without Origin, 404 for
-  non-photo paths, F2F HEAD 200, F2F Range 206.
+  (3xx → 502). Redeployed and verified live 2026-10-25. Its source was
+  deleted from the repo (`git show 04ea5d9:pipeline/f2f-proxy/worker.js`);
+  the native app needs no relay. **Tear-down, only after asking Leo and
+  once the native app is on all three devices:** `npx wrangler delete
+  izzy-f2f` (local wrangler OAuth).
 
 ## Decisions revised during build (vs original plan)
 
@@ -751,10 +648,28 @@ started this project: `~/.claude/plans/this-is-a-completely-vectorized-bee.md`
 - No Cloudflare secrets in GitHub CI — tests + Pages deploy only; data
   uploads always local (user decision).
 - F2F PDFs render in an in-app pdf.js viewer with per-community page deep
-  links (Safari ignores #page= on blob: URLs).
+  links (Safari ignores #page= on blob: URLs) — web only; natively PDFKit.
+- Native app replaces the PWA (Leo, 2026-11-03): Apple-hosted Background
+  Assets packs instead of R2 downloads, no relay, CI on GitHub Actions
+  (simulator tests now; TestFlight later, local pack uploads only).
 
 ## Status log
 
+- 2026-11-03: Native start (milestone 1, `docs/NATIVE_PLAN.md`). Map
+  proof with MapLibre Native 7.0.0 (local vector/PNG/JPEG/MIXED PMTiles,
+  overzoom, live LIST above packs, Latin-1 labels, water alpha 207,
+  offline packs rejected); XcodeGen project `ios/` with IzzyKit (data
+  tables, plant lists, MGA55 — 19 tests over the real bundled data) and an
+  app shell (map, sheet/side card, glass controls, layers sheet, grid
+  pill, location notice). Repo restructure: the bundled data moved with
+  history (`git mv`) from `app/src/generated/` and `app/public/search/`
+  into `ios/IzzyMap/Resources/Data/`; glyphs into `Resources/glyphs/`;
+  pipeline outputs repointed; `app/`, `probe/`, `pipeline/f2f-proxy/`,
+  `make_raster_fixtures.py` and the Pages workflow deleted (Pages, R2 and
+  the Worker stay live); new `ci.yml` (IzzyKit `swift test` + simulator
+  `xcodebuild test` on the `xcode-27` runner). Plant ID: BioCLIP 2.5 at
+  94.7 % top-1; the Safari test was memory-killed on the 16e → native Core
+  ML test app (`native/plantid-test`, TestFlight).
 - 2026-10-25: Plants section on TASVEG cards — three lists, each entry
   opening a plant sheet built from the Understorey Network Tasmania
   database (1,884 profiles: photos, common name, family, form, height,

@@ -4,7 +4,7 @@ location-prior records, from the iNaturalist Open Dataset metadata.
 
 Inputs (pipeline/cache/plantid/meta/, see fetch_meta.sh): taxa, observations,
 photos as iNat ships them (tab-separated .csv.gz; plain .csv also accepted).
-Optional: --un-plants = the Plants branch's app/src/generated/plants.json, so
+Optional: --un-plants = ios/IzzyMap/Resources/Data/plants.json (the bundled UN list), so
 every Understorey Network species is a label even without a Tasmanian iNat
 record.
 
@@ -149,7 +149,7 @@ def main():
                     help="train photos per (species, observer) before others fill in")
     ap.add_argument("--val-share", type=int, default=2, help="observer hash %% 20 < this → val")
     ap.add_argument("--test-share", type=int, default=4, help="… next this many → test")
-    ap.add_argument("--un-plants", help="plants.json from the Plants branch")
+    ap.add_argument("--un-plants", help="the bundled UN plant list, ios/IzzyMap/Resources/Data/plants.json")
     ap.add_argument("--seed", default="izzy")
     ap.add_argument("--fresh", action="store_true", help="redo the cached big scans too")
     a = ap.parse_args()

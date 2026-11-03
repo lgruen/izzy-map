@@ -62,8 +62,8 @@ case "${1:-}" in
       "$VM:izzy/pipeline/cache/plantid/sets/"
     start_remote "$MODEL" ;;
   up)
-    [ -n "$PLANTS_JSON" ] || PLANTS_JSON=$(mktemp)
-    [ -s "$PLANTS_JSON" ] || git -C "$REPO" show worktree-understorey:app/src/generated/plants.json > "$PLANTS_JSON"
+    [ -n "$PLANTS_JSON" ] || PLANTS_JSON="$REPO/ios/IzzyMap/Resources/Data/plants.json"
+    [ -s "$PLANTS_JSON" ] || { echo "missing $PLANTS_JSON" >&2; exit 1; }
     create_vm
     $G compute scp --zone "$ZONE" "$PLANTS_JSON" "$VM:izzy/plants.json"
     start_remote ;;

@@ -1,0 +1,41 @@
+import MapLibre
+import SwiftUI
+
+/// Where the chrome sits over the map, so MapLibre can keep its centre,
+/// user puck and ornaments in the uncovered area.
+nonisolated struct MapChrome: Equatable, Sendable {
+    /// The map's content inset (includes the safe area).
+    var contentInset: UIEdgeInsets = .zero
+    /// Extra lift of the bottom ornaments while the sheet is raised.
+    var ornamentLift: CGFloat = 0
+    /// Room the grid pill takes under the scale bar.
+    var pillHeight: CGFloat = 0
+    /// Top of MapLibre's compass, below the floating controls.
+    var compassTop: CGFloat = 0
+    /// Trailing inset that centres the compass under the controls.
+    var controlsCentreFromTrailing: CGFloat = 40
+}
+
+/// The one MapLibre map view. SwiftUI owns the state (`AppModel`); the
+/// coordinator turns map events into model changes and back.
+struct MapView: UIViewRepresentable {
+    let model: AppModel
+    var chrome: MapChrome
+    var trackingMode: TrackingMode
+    var hasSelection: Bool
+
+    func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
+
+    func makeUIView(context: Context) -> MLNMapView {
+        let map = MLNMapView(frame: .zero, styleJSON: model.styleJSON)
+        context.coordinator.attach(to: map)
+        return map
+    }
+
+    func updateUIView(_ map: MLNMapView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.apply(chrome: chrome, to: map)
+        coordinator.apply(tracking: trackingMode, to: map)
+        if !hasSelection { coordinator.clearSelectionShape() }
+    }
+}

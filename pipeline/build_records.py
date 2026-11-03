@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build app/src/generated/records.json + nearby.bin — Atlas of Living
+"""Build ios/IzzyMap/Resources/Data/records.json + nearby.bin — Atlas of Living
 Australia (ALA) plant occurrence records in Tasmania, reduced to
 
   C1 "often recorded in this community": per TASVEG 5.0 VEGCODE, the
@@ -127,7 +127,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 ROOT = HERE.parent
 CACHE = HERE / "cache" / "records"
-GEN = ROOT / "app" / "src" / "generated"
+GEN = ROOT / "ios" / "IzzyMap" / "Resources" / "Data"
 
 UN_API = "https://database.understorey-network.org.au/wp-json/wp/v2/plant"
 ALA_SEARCH = "https://biocache-ws.ala.org.au/ws/occurrences/search"

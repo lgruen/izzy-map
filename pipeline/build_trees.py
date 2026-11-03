@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build app/src/generated/trees.json — City of Hobart's Significant Tree
+"""Build ios/IzzyMap/Resources/Data/trees.json — City of Hobart's Significant Tree
 Register (points + areas, per-reference facts, data-sheet index).
 
 Source (verified 2026-09-12, CC BY 4.0, attribution "City of Hobart"):
@@ -95,7 +95,7 @@ TIMEOUT = 60
 
 HERE = Path(__file__).parent
 CACHE = HERE / "cache" / "trees"
-GEN = HERE.parent / "app" / "src" / "generated"
+GEN = HERE.parent / "ios" / "IzzyMap" / "Resources" / "Data"
 PDFTOTEXT = shutil.which("pdftotext") or "/opt/homebrew/bin/pdftotext"
 
 REF_RE = re.compile(r"^(?:[A-Z]\d{1,2}|\d{1,3})$")

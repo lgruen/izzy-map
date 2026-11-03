@@ -1,0 +1,119 @@
+# XcodeGen spec for the native IzzyMap app (docs/NATIVE_PLAN.md).
+#   cd ios && xcodegen generate        # IzzyMap.xcodeproj is generated, never committed
+# Simulator run with the developer's local packs (DEBUG builds only):
+#   xcrun simctl launch <udid> org.gruenschloss.izzymap -dataDir /Users/leo/izzy-map/data
+name: IzzyMap
+options:
+  bundleIdPrefix: org.gruenschloss
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+packages:
+  # The distribution repo's default branch points at a globe pre-release:
+  # always an exact version, never a branch or `from:`.
+  MapLibre:
+    url: https://github.com/maplibre/maplibre-gl-native-distribution
+    exactVersion: 7.0.0
+  IzzyKit:
+    path: IzzyKit
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: T4HS4UL2LT
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+targets:
+  IzzyMap:
+    type: application
+    platform: iOS
+    sources:
+      - path: IzzyMap/Sources
+      - path: IzzyMap/Resources/Assets.xcassets
+      # folder references: the bundle keeps the directory layout, so the
+      # style can say asset://glyphs/{fontstack}/{range}.pbf
+      - path: IzzyMap/Resources/Data
+        type: folder
+        buildPhase: resources
+      - path: IzzyMap/Resources/glyphs
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: MapLibre
+        product: MapLibre
+      - package: IzzyKit
+        product: IzzyKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.gruenschloss.izzymap
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: IzzyMap
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.navigation
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: >-
+          IzzyMap shows where you are on the map and can follow you as you
+          walk. Your location stays on this device.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: >-
+          UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft
+          UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: >-
+          UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
+          UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        # devices only: the simulator signs ad hoc and can't carry it
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": IzzyMap/IzzyMap.entitlements
+
+  IzzyMapTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: IzzyMapTests
+    dependencies:
+      - target: IzzyMap
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: org.gruenschloss.izzymap.tests
+
+  IzzyMapUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: IzzyMapUITests
+    dependencies:
+      - target: IzzyMap
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: org.gruenschloss.izzymap.uitests
+        # XCTestCase's overrides are nonisolated; tests opt in with @MainActor
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+
+schemes:
+  IzzyMap:
+    build:
+      targets:
+        IzzyMap: all
+        IzzyMapTests: [test]
+        IzzyMapUITests: [test]
+    run:
+      config: Debug
+      commandLineArguments:
+        # DEBUG-only data override: the main checkout's packs (simulator)
+        "-dataDir $(SRCROOT)/../data": true
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - IzzyMapTests
+        - IzzyMapUITests

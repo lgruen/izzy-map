@@ -1,4 +1,6 @@
 """Check probe/plantid/pilresize.js against Pillow + torchvision, bit for bit.
+(The Safari test page was deleted with the web app; the module is read from
+commit 04ea5d9 via `git show`.)
 
 Decodes test images with Pillow, runs the open_clip resize + centre crop in
 Python and (via node) in the JS module, and compares the uint8 outputs. Real
@@ -15,7 +17,7 @@ from PIL import Image
 from torchvision import transforms as T
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-JS = os.path.join(HERE, "..", "..", "probe", "plantid", "pilresize.js")
+WEB_COMMIT = "04ea5d9"  # last commit with probe/ (the retired Safari test page)
 SAMPLES = os.path.join(HERE, "..", "cache", "plantid", "onnx", "bioclip25", "samples")
 
 
@@ -29,6 +31,9 @@ def main():
     imgs += [smooth(w, h) for w, h in [(500, 375), (375, 500), (501, 333), (224, 224), (224, 300),
                                       (300, 224), (225, 227), (100, 80), (4032, 3024), (3000, 4000), (1000, 999)]]
     with tempfile.TemporaryDirectory() as d:
+        JS = os.path.join(d, "pilresize.js")
+        with open(JS, "wb") as f:
+            f.write(subprocess.check_output(["git", "-C", HERE, "show", f"{WEB_COMMIT}:probe/plantid/pilresize.js"]))
         cases = []
         for i, im in enumerate(imgs):
             a = np.asarray(im, dtype=np.uint8)
