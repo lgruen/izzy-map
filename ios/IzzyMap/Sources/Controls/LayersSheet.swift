@@ -8,6 +8,25 @@ import UIKit
 struct LayersSheet: View {
     @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    /// A tile's one-tap pack fetch that won't fit (the space alert).
+    @State private var spaceRequest: PackSpaceRequest?
+    #if DEBUG
+    /// DEBUG `-openStorage YES` (with `-openLayers YES`): Storage pushed at once.
+    @State private var showsStorage = UserDefaults.standard.bool(forKey: "openStorage")
+    #endif
+    /// The sheet's detent (iPhone): Storage raises it to large, where the
+    /// system sheet turns opaque — a dense list of figures can't stay
+    /// legible on glass over a saturated map (DESIGN.md §2).
+    @State private var detent: PresentationDetent = .medium
+    /// iPad: Storage as its own system sheet over the popover (below).
+    @State private var storageSheet = false
+
+    /// The iPad popover: system glass that never turns opaque. Storage (a
+    /// dense list of figures) opens from it as a form sheet — the system's
+    /// opaque sheet, as at the iPhone's large detent — instead of being
+    /// pushed onto the glass, where no label colour holds 4.5:1 over every
+    /// map (measured 2026-11-03: white on dark glass over aerial ~3.6:1).
+    private var inPopover: Bool { model.isPresenting(.layers, in: .card) }
 
     var body: some View {
         NavigationStack {
@@ -22,10 +41,16 @@ struct LayersSheet: View {
                         Label("Key", systemImage: "list.bullet.rectangle")
                     }
                     .accessibilityIdentifier("legend-link")
+                    storageLink
+                        .accessibilityIdentifier("storage-link")
                 }
                 .panelRows()
             }
             .panelListSurface()
+            #if DEBUG
+            .navigationDestination(isPresented: Binding(get: { showsStorage && !inPopover },
+                                                        set: { showsStorage = $0 })) { storage }
+            #endif
             .navigationTitle("Layers")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -34,7 +59,85 @@ struct LayersSheet: View {
                 }
             }
         }
+        .presentationDetents([.medium, .large], selection: $detent)
+        .sheet(isPresented: storageSheetShown) {
+            NavigationStack {
+                StorageView(model: model) { storageSheet = false }
+            }
+            .presentationSizing(.form)
+        }
         .sensoryFeedback(.selection, trigger: model.layers)
+        .packSpaceAlert($spaceRequest, store: model.shared.packs)
+    }
+
+    /// Pushed in the iPhone sheet (raising it to large), a sheet of its own
+    /// from the iPad popover.
+    @ViewBuilder private var storageLink: some View {
+        let label = Label("Offline maps & storage", systemImage: "internaldrive")
+        if inPopover {
+            Button { storageSheet = true } label: {
+                HStack {
+                    label.foregroundStyle(DesignColor.ink)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.forward")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(DesignColor.inkSecondary)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink { storage } label: { label }
+        }
+    }
+
+    private var storage: some View {
+        StorageView(model: model)
+            .onAppear { detent = .large }
+    }
+
+    private var storageSheetShown: Binding<Bool> {
+        #if DEBUG
+        Binding(get: { storageSheet || (showsStorage && inPopover) },
+                set: { if !$0 { storageSheet = false; showsStorage = false } })
+        #else
+        $storageSheet
+        #endif
+    }
+
+    /// The download badge for a tile whose packs aren't all on the device
+    /// (nil when they are, or when nothing can fetch them here).
+    private func download(_ list: [Pack], title: String) -> TileDownload? {
+        let store = model.shared.packs
+        let missing = list.filter { !store.state($0).isInstalled }
+        guard store.canFetch, store.isResolved, !missing.isEmpty else { return nil }
+        let states = missing.map {
+            PackRowStatus.of(store.state($0), pack: $0, canFetch: true, online: Connectivity.shared.online)
+        }
+        let busy = states.filter(\.isBusy)
+        let moving = busy.filter { !$0.isPaused }
+        let status: PackRowStatus = if busy.isEmpty { .get }
+            else if moving.isEmpty { busy[0] }
+            else { .downloading(moving.map(\.fill).reduce(0, +) / Double(moving.count)) }
+        // the seasons tile: while some seasons come, the idle ones are still
+        // one tap away (the badge keeps its arrow)
+        let idle = zip(missing, states).filter { !$0.1.isBusy }.map(\.0)
+        let bytes = idle.reduce(0) { $0 + (PackSizes.nominal[$1] ?? 0) }
+        let more = idle.isEmpty ? "" : " · \(StorageText.size(bytes)) more"
+        let text: String = switch status {
+        case let .downloading(f): idle.isEmpty ? "Downloading \(StorageText.percent(f ?? 0))" : "\(StorageText.percent(f ?? 0))\(more)"
+        case .paused(.offline): idle.isEmpty ? "Waiting for a connection" : "Waiting\(more)"
+        case .paused: idle.isEmpty ? "Paused" : "Paused\(more)"
+        default: StorageText.size(bytes)
+        }
+        return TileDownload(status: status, text: text, canGet: !idle.isEmpty) {
+            spaceRequest = store.get(idle, title: title)
+        }
+    }
+
+    private func download(_ base: BaseMap) -> TileDownload? {
+        if let archive = base.archive { return download([archive.pack], title: base.shortTitle) }
+        return download(Season.all.map(\.archive.pack), title: "Photos by season")
     }
 
     // MARK: Base
@@ -44,7 +147,7 @@ struct LayersSheet: View {
             TileGrid {
                 ForEach(BaseMap.allCases) { base in
                     LayerTile(model: model, subject: .base(base), title: base.shortTitle, status: status(base),
-                              symbol: base.symbol, isOn: model.layers.base == base) {
+                              symbol: base.symbol, isOn: model.layers.base == base, download: download(base)) {
                         model.layers.base = base
                     }
                     .accessibilityHint(base.hint)
@@ -111,7 +214,8 @@ struct LayersSheet: View {
             TileGrid {
                 LayerTile(model: model, subject: .relief, title: "Relief",
                           status: model.data.url(for: .relief) != nil ? nil : "Not downloaded",
-                          symbol: "mountain.2", isOn: model.layers.relief) {
+                          symbol: "mountain.2", isOn: model.layers.relief,
+                          download: download([.relief], title: "Relief shading")) {
                     model.layers.relief.toggle()
                 }
                 .accessibilityHint("Shades ridges and valleys over any map")
@@ -155,6 +259,8 @@ struct LayerTile: View {
     let status: String?
     let symbol: String
     let isOn: Bool
+    /// The pack isn't on the device: a badge on the thumbnail gets it.
+    var download: TileDownload?
     let action: () -> Void
     @Environment(LayerThumbnails.self) private var thumbnails
     @Environment(\.displayScale) private var scale
@@ -196,7 +302,7 @@ struct LayerTile: View {
                     .foregroundStyle(DesignColor.ink)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                if let status {
+                if let status = download?.text ?? status {
                     Text(status)
                         .font(.caption2)
                         .foregroundStyle(DesignColor.inkSecondary)
@@ -208,8 +314,20 @@ struct LayerTile: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(status.map { "\(title), \($0)" } ?? title))
+        .accessibilityLabel(Text((download?.text ?? status).map { "\(title), \($0)" } ?? title))
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+        .accessibilityActions {
+            if let download, download.canGet { Button("Download \(title)", action: download.get) }
+        }
+        .overlay(alignment: .topLeading) {
+            // bottom-trailing corner of the 4:3 thumbnail
+            if let download {
+                GeometryReader { proxy in
+                    TileDownloadBadge(status: download.status, canGet: download.canGet, action: download.get)
+                        .position(x: proxy.size.width - 20, y: proxy.size.width * 3 / 4 - 20)
+                }
+            }
+        }
         .task(id: TileKey(state: model.layers, subject: subject)) {
             await thumbnails.load(subject, current: model.layers, data: model.data, tables: model.tables, scale: scale)
         }
@@ -465,4 +583,14 @@ extension View {
         case .plate: listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
         }
     }
+}
+
+/// A Layers tile's pack fetch: its state, the tile's status line, and the
+/// one-tap action (Storage's rules: `PackRowStatus`, space preflight).
+struct TileDownload {
+    let status: PackRowStatus
+    let text: String
+    /// Some of the tile's packs are idle: a tap gets them.
+    let canGet: Bool
+    let get: () -> Void
 }

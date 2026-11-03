@@ -20,13 +20,26 @@ struct RootView: View {
     @State private var restingLift: CGFloat = 0
     @State private var controlsHeight: CGFloat = 0
     @State private var pillHeight: CGFloat = 0
+    /// Where each floating piece of chrome sits over the map (global), for
+    /// framing extents clear of them (`MapFraming`).
+    @State private var chromeFrames: [ChromePiece: CGRect] = [:]
 
     /// Bottom sheet vs floating card.
     private var usesSheet: Bool { widthClass != .regular && heightClass != .compact }
     private var layout: PanelLayout { usesSheet ? .sheet : .card }
     private static let margin: CGFloat = 16
-    /// The floating card's width (card layout).
-    private var cardWidth: CGFloat { min(380, max(300, screen.size.width * 0.42)) }
+    /// The floating card's width (card layout): 300–380 pt for a
+    /// community card; on a regular-size iPad window a pushed plant sheet
+    /// or group list reads as a larger card, 380–500 pt — its photo plate
+    /// and elevation drawing are made for more than a key's width.
+    private var cardWidth: CGFloat {
+        let roomy = widthClass == .regular && heightClass == .regular && !model.cardPath.isEmpty
+        return roomy ? min(500, max(380, screen.size.width * 0.4)) : min(380, max(300, screen.size.width * 0.42))
+    }
+
+    /// The iPad Layers popover: 400–500 pt, 40 % of the window — the roomy
+    /// card's rule (DESIGN.md §3), never narrower than its old 400.
+    private var layersPopoverWidth: CGFloat { min(500, max(400, screen.size.width * 0.4)) }
 
     var body: some View {
         #if DEBUG
@@ -46,12 +59,15 @@ struct RootView: View {
             if !usesSheet {
                 FloatingPanel(model: model, maxHeight: max(120, screen.size.height - pillHeight - 4 * Self.margin))
                     .frame(width: cardWidth)
+                    .animation(.snappy, value: cardWidth)
+                    .reportFrame(.card, into: $chromeFrames)
                     .padding([.leading, .top], Self.margin)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
 
-            MapControls(model: model, layersAsPopover: !usesSheet)
+            MapControls(model: model, layersAsPopover: !usesSheet, popoverWidth: layersPopoverWidth)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
+                .reportFrame(.controls, into: $chromeFrames)
                 .padding([.trailing, .top], Self.margin)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
@@ -61,11 +77,13 @@ struct RootView: View {
             // the card's and the controls' margins.
             GridPill(map: model.map)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pillHeight = $0 }
+                .reportFrame(.gridPill, into: $chromeFrames)
                 .padding(.leading, ornamentInsets.leading)
                 .padding(.bottom, bottomOrnamentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 
             AttributionButton { model.present(.attribution) }
+                .reportFrame(.attribution, into: $chromeFrames)
                 .padding(.trailing, ornamentInsets.trailing)
                 .padding(.bottom, bottomOrnamentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -73,6 +91,7 @@ struct RootView: View {
             // "Show on map": what is soloed, previous / next, ×
             if let spotlight = model.spotlight {
                 SpotlightPill(model: model, spotlight: spotlight)
+                    .reportFrame(.spotlightPill, into: $chromeFrames)
                     .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
                     .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
                     .padding(.top, Self.margin)
@@ -83,6 +102,7 @@ struct RootView: View {
             if let notice = model.notice {
                 NoticeBanner(notice: notice) { model.dismissNotice() }
                     .frame(maxWidth: 440)
+                    .reportFrame(.notice, into: $chromeFrames)
                     // phone sheet: leading, clear of the controls; card layout:
                     // centred in the map area between the card and the controls
                     .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
@@ -177,12 +197,46 @@ struct RootView: View {
             pillHeight: pillHeight,
             compassTop: Self.margin + controlsHeight + 12,
             controlsCentreFromTrailing: Self.margin + MapControls.buttonSize / 2,
-            framingInsets: UIEdgeInsets(
-                top: Self.margin + 52,
-                left: usesSheet || model.selection == nil ? 0 : cardWidth + Self.margin,
-                bottom: ornamentLift + pillHeight,
-                right: Self.margin + MapControls.buttonSize)
+            framingInsets: framingInsets
         )
+    }
+
+    /// The map area no chrome covers, from the measured frames: the map is
+    /// full-window, so its bounds are the safe-area frame grown by the
+    /// safe insets.
+    private var framingInsets: UIEdgeInsets {
+        let safe = UIEdgeInsets(top: screen.safe.top, left: screen.safe.leading,
+                                bottom: screen.safe.bottom, right: screen.safe.trailing)
+        let window = screen.frame.inset(by: UIEdgeInsets(top: -safe.top, left: -safe.left,
+                                                         bottom: -safe.bottom, right: -safe.right))
+        guard window.width > 0, window.height > 0 else { return safe }
+        var pieces = Array(chromeFrames.values)
+        if usesSheet, let sheetFrame, sheetFrame.height > 0 {
+            // the floating sheet and everything below its top edge
+            pieces.append(CGRect(x: sheetFrame.minX, y: sheetFrame.minY,
+                                 width: sheetFrame.width, height: max(0, window.maxY - sheetFrame.minY)))
+        }
+        let local = pieces.map { $0.offsetBy(dx: -window.minX, dy: -window.minY) }
+        return MapFraming.insets(bounds: CGRect(origin: .zero, size: window.size), safe: safe, obstructions: local)
+    }
+}
+
+/// Floating chrome whose frame the framing keeps clear of.
+nonisolated enum ChromePiece: Hashable, Sendable {
+    case card, controls, gridPill, attribution, spotlightPill, notice
+}
+
+extension View {
+    /// Reports this view's global frame (whole points) under `piece`, and
+    /// removes it when the view goes.
+    func reportFrame(_ piece: ChromePiece, into frames: Binding<[ChromePiece: CGRect]>) -> some View {
+        onGeometryChange(for: CGRect.self) { proxy in
+            let f = proxy.frame(in: .global)
+            return CGRect(x: f.minX.rounded(), y: f.minY.rounded(), width: f.width.rounded(), height: f.height.rounded())
+        } action: { frame in
+            if frames.wrappedValue[piece] != frame { frames.wrappedValue[piece] = frame }
+        }
+        .onDisappear { frames.wrappedValue[piece] = nil }
     }
 }
 
@@ -214,7 +268,7 @@ private struct MapLayer: View {
 
     var body: some View {
         MapView(model: model, chrome: chrome, trackingMode: trackingMode, hasSelection: hasSelection,
-                layers: layers, keyHighlight: keyHighlight, spotlight: spotlight)
+                layers: layers, keyHighlight: keyHighlight, spotlight: spotlight, searchPin: model.search.pin)
             .ignoresSafeArea()
             .accessibilityLabel("Map")
             // UI tests wait for "idle" (camera settled, tiles loaded) before tapping

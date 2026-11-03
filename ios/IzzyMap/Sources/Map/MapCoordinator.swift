@@ -32,11 +32,12 @@ final class MapCoordinator: NSObject {
     /// zoomed in).
     private var anchor: OverlayAnchor?
     private var connectivity: Connectivity.Subscription?
-    /// "Show on map": what the style shows, the camera to fly back to, and
-    /// the paint values the fade replaced (restored when it ends).
-    private var appliedSpotlight: Spotlight?
-    private var cameraBeforeSpotlight: MLNMapCamera?
-    private var fadedPaint: [(layer: String, restore: (MLNStyleLayer) -> Void)] = []
+    /// Every programmatic camera move, its padding and delayed flights.
+    let camera = MapCamera()
+    /// "Show on map": fade, presence cells, framing, the stepped-to patch.
+    private let spotlights: SpotlightPresenter
+    /// The search pin and its flights (Search/SearchPinPresenter.swift).
+    let searchPins: SearchPinPresenter
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Map")
 
     private struct OverlayAnchor {
@@ -61,6 +62,8 @@ final class MapCoordinator: NSObject {
 
     init(model: AppModel) {
         self.model = model
+        spotlights = SpotlightPresenter(camera: camera)
+        searchPins = SearchPinPresenter(camera: camera)
     }
 
     /// The style the map view is created with (scene-restored layers are
@@ -126,7 +129,12 @@ final class MapCoordinator: NSObject {
     func apply(chrome: MapChrome, to map: MLNMapView) {
         guard chrome != appliedChrome else { return }
         if appliedChrome?.contentInset != chrome.contentInset {
+            // the inset change re-centres the map, cancelling a flight in
+            // progress: fly it again from where it stopped
+            let interrupted = camera.flightUnderWay
             map.setContentInset(chrome.contentInset, animated: appliedChrome != nil, completionHandler: nil)
+            camera.contentInsetChanged()
+            camera.resume(interrupted, on: map)
         }
         appliedChrome = chrome
         let compassWidth = map.compassView.bounds.width > 0 ? map.compassView.bounds.width : 40
@@ -139,6 +147,7 @@ final class MapCoordinator: NSObject {
     func apply(tracking: TrackingMode, to map: MLNMapView) {
         let wanted = Self.mapMode(tracking)
         guard map.userTrackingMode != wanted else { return }
+        if wanted != .none { camera.trackingStarted() }
         map.setUserTrackingMode(wanted, animated: true, completionHandler: nil)
     }
 
@@ -202,97 +211,9 @@ final class MapCoordinator: NSObject {
 
     // MARK: Show on map
 
-    /// Solo the spotlight's community (others faded) and frame what it
-    /// shows; when it goes, unfade and — on an exit — fly back.
+    /// Solo the spotlight's community and frame it (SpotlightPresenter).
     func apply(spotlight: Spotlight?, to map: MLNMapView) {
-        guard spotlight != appliedSpotlight else { return }
-        let old = appliedSpotlight
-        appliedSpotlight = spotlight
-        if let spotlight {
-            if old?.code != spotlight.code { applyFade() }
-            if old == nil {
-                cameraBeforeSpotlight = map.camera
-                // the phone's sheet drops to its glance first: frame once
-                // the chrome has settled
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self, weak map] in
-                    guard let self, let map, let current = self.appliedSpotlight, current.code == spotlight.code else { return }
-                    self.frame(current.bounds, in: map)
-                }
-            } else {
-                frame(spotlight.bounds, in: map)
-            }
-        } else {
-            clearFade()
-            if model.spotlightRestoresCamera, let camera = cameraBeforeSpotlight {
-                move(map, to: camera)
-            }
-            cameraBeforeSpotlight = nil
-        }
-    }
-
-    /// Fade every other community (style-level `case` expressions on the
-    /// fill, band and code labels — data-driven paint, supported by
-    /// MapLibre for these properties); the soloed one near opaque in every
-    /// strength, Outlines included, so it reads.
-    private func applyFade() {
-        clearFade()
-        guard let style = map?.style, let code = appliedSpotlight?.code, MapText.isLatin1(code) else { return }
-        typealias L = StyleBuilder.LayerID
-        let state = model.layers
-        // the soloed community well above Full strength: at a statewide
-        // zoom its patches are specks and must still read
-        let solo = max(0.85, state.fillOpacity)
-        let others = min(0.1, state.fillOpacity)
-        func pick(_ on: Double, _ off: Double) -> NSExpression {
-            NSExpression(mglJSONObject: ["case", ["==", ["get", "VEGCODE"], code], on, off] as [Any])
-        }
-        if let fill = style.layer(withIdentifier: L.tasvegFill) as? MLNFillStyleLayer {
-            let original = fill.fillOpacity
-            fill.fillOpacity = pick(solo, others)
-            fadedPaint.append((L.tasvegFill, { ($0 as? MLNFillStyleLayer)?.fillOpacity = original }))
-        }
-        if let band = style.layer(withIdentifier: L.tasvegBand) as? MLNLineStyleLayer {
-            let original = band.lineOpacity
-            band.lineOpacity = pick(1, 0.15)
-            fadedPaint.append((L.tasvegBand, { ($0 as? MLNLineStyleLayer)?.lineOpacity = original }))
-        }
-        for layer in style.layers where layer.identifier.hasPrefix(L.tasvegLabel) {
-            guard let label = layer as? MLNSymbolStyleLayer else { continue }
-            let original = label.textOpacity
-            label.textOpacity = pick(1, 0.3)
-            fadedPaint.append((label.identifier, { ($0 as? MLNSymbolStyleLayer)?.textOpacity = original }))
-        }
-    }
-
-    private func clearFade() {
-        guard let style = map?.style else { fadedPaint = []; return }
-        for (id, restore) in fadedPaint {
-            if let layer = style.layer(withIdentifier: id) { restore(layer) }
-        }
-        fadedPaint = []
-    }
-
-    /// Frame [west, south, east, north] clear of the chrome (a tiny patch
-    /// is padded so the camera stops short of street level).
-    private func frame(_ box: [Double], in map: MLNMapView) {
-        let b = Spotlight.padded(box)
-        let bounds = MLNCoordinateBounds(sw: CLLocationCoordinate2D(latitude: b[1], longitude: b[0]),
-                                         ne: CLLocationCoordinate2D(latitude: b[3], longitude: b[2]))
-        let extra = appliedChrome?.framingInsets ?? .zero
-        let padding = UIEdgeInsets(top: 20 + extra.top, left: 20 + extra.left,
-                                   bottom: 20 + extra.bottom, right: 20 + extra.right)
-        let camera = map.cameraThatFitsCoordinateBounds(bounds, edgePadding: padding)
-        camera.heading = 0
-        move(map, to: camera)
-    }
-
-    /// A flight (Reduce Motion: a cut).
-    private func move(_ map: MLNMapView, to camera: MLNMapCamera) {
-        if UIAccessibility.isReduceMotionEnabled {
-            map.setCamera(camera, animated: false)
-        } else {
-            map.fly(to: camera, withDuration: 1.2, completionHandler: nil)
-        }
+        spotlights.apply(spotlight, framing: appliedChrome?.framingInsets ?? .zero, model: model, to: map)
     }
 
     // MARK: Taps
@@ -442,7 +363,7 @@ final class MapCoordinator: NSObject {
         guard let source = map.style?.source(withIdentifier: StyleBuilder.SourceID.treePoints) as? MLNShapeSource else { return }
         let expansion = source.zoomLevel(forExpanding: cluster)
         let zoom = expansion.isFinite && expansion > map.zoomLevel ? min(expansion, 17) : min(map.zoomLevel + 2, 17)
-        map.setCenter(cluster.coordinate, zoomLevel: zoom, animated: !UIAccessibility.isReduceMotionEnabled)
+        camera.setCenter(map, cluster.coordinate, zoom: zoom, animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
     /// A tree point or area by its index into the bundled data (the tile's
@@ -521,7 +442,11 @@ extension MapCoordinator: MLNMapViewDelegate {
         let gestures: MLNCameraChangeReason = [
             .gesturePan, .gesturePinch, .gestureRotate, .gestureZoomIn, .gestureZoomOut, .gestureOneFingerZoom,
         ]
-        if !reason.intersection(gestures).isEmpty { userMovedCamera = true }
+        if !reason.intersection(gestures).isEmpty {
+            userMovedCamera = true
+            // a flight still waiting for the chrome to settle is hers no more
+            camera.gestureBegan()
+        }
         if model.map.isIdle { model.map.isIdle = false }
     }
 
@@ -538,6 +463,7 @@ extension MapCoordinator: MLNMapViewDelegate {
     func mapViewDidBecomeIdle(_ mapView: MLNMapView) {
         if !model.map.isIdle { model.map.isIdle = true }
         refreshAnchoredSelection(mapView)
+        spotlights.idle(mapView, model: model)
         #if DEBUG
         // `-openLayers YES`: the Layers sheet once the map settles (thumbnail screenshots)
         if UserDefaults.standard.bool(forKey: "openLayers"), !openedLayers {
@@ -555,9 +481,9 @@ extension MapCoordinator: MLNMapViewDelegate {
         // a reloaded style starts with an empty selection source
         selectionSource?.shape = selectionShape
         applySelectionFilters()
-        // … and with its own paint: fade again for a soloed community
-        fadedPaint = []
-        if appliedSpotlight != nil { applyFade() }
+        // … and with its own paint and none of the runtime layers: a soloed
+        // community's fade and presence cells again
+        spotlights.styleLoaded(mapView, model: model)
         refreshVisibleSources(mapView)
         model.map.zoom = mapView.zoomLevel
     }
@@ -589,7 +515,7 @@ extension MapCoordinator: MLNMapViewDelegate {
         guard !userMovedCamera, Date.now < launchFixDeadline, mapView.userTrackingMode == .none,
               CameraPolicy.contains(latitude: coordinate.latitude, longitude: coordinate.longitude)
         else { return }
-        mapView.setCenter(coordinate, zoomLevel: max(mapView.zoomLevel, CameraPolicy.fixZoom), animated: true)
+        camera.setCenter(mapView, coordinate, zoom: max(mapView.zoomLevel, CameraPolicy.fixZoom), animated: true)
     }
 
     /// MapLibre Native 7.0.0 calls this only for `kCLErrorDenied` (other

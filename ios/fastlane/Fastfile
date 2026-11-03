@@ -302,8 +302,14 @@ platform :ios do
     UI.message("Build number #{build_number}")
     # what testers have until this upload lands (if this run fails, that
     # is the date that matters)
+    # (get_builds' default `include=buildBetaDetail,betaBuildMetrics` names
+    # a relationship App Store Connect no longer accepts: ask for the plain
+    # build resource — GET /v1/builds?filter[app]=…&sort=-uploadedDate&limit=1
+    # — whose attributes carry version, expirationDate and expired)
     begin
-      newest = Spaceship::ConnectAPI.get_builds(filter: { app: app.id }, sort: "-uploadedDate", limit: 1).to_models.first
+      newest = Spaceship::ConnectAPI.get_builds(
+        filter: { app: app.id }, includes: nil, sort: "-uploadedDate", limit: 1
+      ).to_models.first
       if newest && newest.expiration_date
         UI.message("Newest build on TestFlight: #{newest.version}, expires #{newest.expiration_date}#{newest.expired ? ' (already expired)' : ''}")
       end

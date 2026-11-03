@@ -24,6 +24,13 @@ final class PackStore {
         case assetPacks
         case debugDirectory(URL)
         case fixed
+        #if DEBUG
+        /// `-fakePacks <spec>` (UI tests, screenshots; `FakePacks`): pack
+        /// states from the spec, fetch and remove simulated. With `-dataDir`
+        /// an installed pack's archives come from that directory, so the map
+        /// really restyles as fake packs arrive and leave.
+        case fake
+        #endif
     }
 
     let mode: Mode
@@ -40,11 +47,27 @@ final class PackStore {
     /// Assets mode: ~0.2–0.3 s after launch, see `launch`). Until then an
     /// empty `location` means "not known yet", not "nothing on the device".
     private(set) var isResolved = true
+    /// Installed packs the system is updating in the background (a new
+    /// version on the server): the fraction so far (0 until the first
+    /// report). The pack stays `.installed` — its old version keeps serving
+    /// the map until the new one is in place — so nothing shows it as a
+    /// fresh download (no Stop, no Layers badge, the gauge keeps its bytes).
+    private(set) var updates: [Pack: Double] = [:]
 
     @ObservationIgnored private var handlers: [UUID: @MainActor () -> Void] = [:]
     @ObservationIgnored private var fetches: [Pack: Task<Void, Never>] = [:]
+    /// Which fetch task is the live one per pack: a task whose token was
+    /// replaced (Resume) or dropped (Stop/Remove) leaves `states` alone.
+    @ObservationIgnored private var fetchTokens: [Pack: UUID] = [:]
+    /// Packs stopped from Storage: status events still in flight for them
+    /// (`downloading`, `paused`, `failed`) are ignored until a new fetch,
+    /// so a stopped row can't flip back to "Downloading".
+    @ObservationIgnored private var stopped: Set<Pack> = []
     @ObservationIgnored private var statusTask: Task<Void, Never>?
     @ObservationIgnored private var manifest: [Pack: AssetPack] = [:]
+    #if DEBUG
+    @ObservationIgnored private var fake: FakePacks?
+    #endif
     nonisolated private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Packs")
 
     private init(mode: Mode, location: DataLocation, states: [Pack: PackState]) {
@@ -68,6 +91,12 @@ final class PackStore {
     /// manifest are followed from then on.
     static func launch(defaults: UserDefaults = .standard) -> PackStore {
         #if DEBUG
+        if let spec = defaults.string(forKey: FakePacks.key), !spec.isEmpty {
+            let dir = defaults.string(forKey: DataLocator.dataDirectoryKey).flatMap { $0.isEmpty ? nil : $0 }
+                .map { URL(filePath: $0, directoryHint: .isDirectory) }
+            let seconds = defaults.double(forKey: "fakePackSeconds")
+            return PackStore(fake: FakePacks(spec: spec, directory: dir, seconds: seconds > 0 ? seconds : 4))
+        }
         if let path = defaults.string(forKey: DataLocator.dataDirectoryKey), !path.isEmpty {
             let location = DataLocator.locate(debugDirectory: path)
             let dir = URL(filePath: path, directoryHint: .isDirectory)
@@ -105,6 +134,15 @@ final class PackStore {
 
     func state(_ pack: Pack) -> PackState { states[pack] ?? .notInstalled }
 
+    /// Whether `fetch`/`remove` do anything here (Background Assets, or the
+    /// DEBUG fake). A developer's `-dataDir` folder is read as it is.
+    var canFetch: Bool {
+        #if DEBUG
+        if mode == .fake { return true }
+        #endif
+        return mode == .assetPacks
+    }
+
     // MARK: Observation for non-SwiftUI code
 
     /// Calls `handler` after every change of `location` (main actor). Keep
@@ -128,32 +166,78 @@ final class PackStore {
     /// Downloads an on-demand pack (or retries a core pack): the system
     /// schedules it and it keeps going in the background; `states` follows.
     func fetch(_ pack: Pack) {
+        #if DEBUG
+        if mode == .fake { return fakeFetch(pack) }
+        #endif
         guard mode == .assetPacks, fetches[pack] == nil, !state(pack).isInstalled else { return }
-        states[pack] = .downloading(nil)
+        start(pack)
+    }
+
+    /// A paused download, asked for again (the row's Resume): a fresh
+    /// `ensureLocalAvailability` — the system's own download carries on
+    /// where it was; the old request's outcome is ignored.
+    func resume(_ pack: Pack) {
+        #if DEBUG
+        if mode == .fake {
+            fetches[pack]?.cancel()
+            fetches[pack] = nil
+            return fakeFetch(pack)
+        }
+        #endif
+        guard mode == .assetPacks, !state(pack).isInstalled else { return }
+        fetches[pack]?.cancel()
+        start(pack)
+    }
+
+    private func start(_ pack: Pack) {
+        let token = UUID()
+        fetchTokens[pack] = token
+        stopped.remove(pack)
+        if case .downloading = states[pack] {} else { states[pack] = .downloading(nil) }
         fetches[pack] = Task { [weak self] in
             // a tap in the first moments after launch: let the lookup finish
             // (it initialises the manager off the main thread)
             while self?.isResolved == false { try? await Task.sleep(for: .milliseconds(50)) }
             do {
-                let assetPack = try await self?.assetPack(pack)
-                guard let assetPack else { return }
+                guard let assetPack = try await self?.assetPack(pack) else { return }
                 try await Self.ensureLocalAvailability(of: assetPack)
                 Self.logger.info("\(pack.rawValue, privacy: .public): available locally")
-                await self?.refresh()
+                guard !Task.isCancelled, let self, self.fetchTokens[pack] == token else { return }
+                await self.refresh()
+                // available, yet its archives aren't readable: say so (with a
+                // Retry) rather than leave the row waiting for ever
+                if self.fetchTokens[pack] == token, !self.state(pack).isInstalled {
+                    Self.logger.error("\(pack.rawValue, privacy: .public): available but its archives aren't readable")
+                    self.states[pack] = .failed(Self.unreadable)
+                }
             } catch {
+                // stopped or superseded: whoever did that owns the state now
+                guard !Task.isCancelled, let self, self.fetchTokens[pack] == token else { return }
                 Self.logger.error("\(pack.rawValue, privacy: .public): fetch failed: \(String(describing: error), privacy: .public)")
-                self?.states[pack] = .failed(error.localizedDescription)
+                self.states[pack] = .failed(error.localizedDescription)
             }
-            self?.fetches[pack] = nil
+            guard let self, self.fetchTokens[pack] == token else { return }
+            self.fetches[pack] = nil
+            self.fetchTokens[pack] = nil
         }
     }
+
+    nonisolated static let unreadable = "The download finished, but its files couldn't be opened."
 
     /// Removes an on-demand pack. Its archives leave the style FIRST, so
     /// MapLibre and the season probes let go of the files, then the system
     /// deletes them.
     func remove(_ pack: Pack) async {
+        #if DEBUG
+        if mode == .fake { return await fakeRemove(pack) }
+        #endif
         guard mode == .assetPacks, pack.isRemovable else { return }
+        // Stop as much as Remove: late events of this download are ignored
+        stopped.insert(pack)
         fetches[pack]?.cancel()
+        fetches[pack] = nil
+        fetchTokens[pack] = nil
+        updates[pack] = nil
         var shown = location.archives
         for archive in pack.archives { shown[archive] = nil }
         publish(DataLocation(origin: location.origin, archives: shown))
@@ -166,6 +250,9 @@ final class PackStore {
             Self.logger.error("\(pack.rawValue, privacy: .public): remove failed: \(String(describing: error), privacy: .public)")
         }
         await refresh()
+        // a download stopped from Storage: `refresh` only clears installed
+        // packs, and a stopped one's late events are ignored
+        if !state(pack).isInstalled, fetchTokens[pack] == nil { states[pack] = .notInstalled }
     }
 
     // MARK: Background Assets
@@ -210,7 +297,15 @@ final class PackStore {
             set(assetPack, .downloading(progress.fractionCompleted))
         case let .finished(assetPack):
             Self.logger.info("\(assetPack.id, privacy: .public): download finished")
+            if let pack = Pack(rawValue: assetPack.id) { updates[pack] = nil }
             await refresh()
+            // a system download (core pack, update) whose files can't be
+            // read: a Retry, never a row stuck "Waiting" (a fetch of ours
+            // reports this itself when `ensureLocalAvailability` returns)
+            if let pack = Pack(rawValue: assetPack.id), !state(pack).isInstalled,
+               fetchTokens[pack] == nil, !stopped.contains(pack) {
+                states[pack] = .failed(Self.unreadable)
+            }
         case let .failed(assetPack, error):
             Self.logger.error("\(assetPack.id, privacy: .public): download failed: \(String(describing: error), privacy: .public)")
             set(assetPack, .failed(error.localizedDescription))
@@ -220,7 +315,23 @@ final class PackStore {
     }
 
     private func set(_ assetPack: AssetPack, _ state: PackState) {
-        guard let pack = Pack(rawValue: assetPack.id), states[pack] != state else { return }
+        guard let pack = Pack(rawValue: assetPack.id), !stopped.contains(pack) else { return }
+        if self.state(pack).isInstalled {
+            // an installed pack downloading again = a new version arriving
+            // in the background; the installed one keeps serving
+            switch state {
+            case let .downloading(f):
+                let new = f ?? 0
+                if let old = updates[pack], Int(new * 100) == Int(old * 100) { return }
+                updates[pack] = new
+            case .failed:
+                updates[pack] = nil
+            default:
+                if updates[pack] == nil { updates[pack] = 0 }
+            }
+            return
+        }
+        guard states[pack] != state else { return }
         // progress is reported often: the row only shows whole percents
         if case let .downloading(new?) = state, case let .downloading(old?) = states[pack],
            Int(new * 100) == Int(old * 100) { return }
@@ -235,6 +346,7 @@ final class PackStore {
                 states[pack] = .installed
             } else if states[pack] == .installed {
                 states[pack] = .notInstalled
+                updates[pack] = nil
             }
         }
         publish(location)
@@ -329,3 +441,101 @@ final class PackStore {
         })
     }
 }
+
+#if DEBUG
+// MARK: - DEBUG fake store
+
+/// The DEBUG stand-in for Background Assets (the real `AssetPackManager`
+/// has no packs in tests or a plain simulator run). Launch argument
+/// `-fakePacks <spec>`: comma-separated `pack[=state]`, state one of
+/// `installed` (the default), `downloading:<0…1>`, `paused`, `failed`,
+/// `updating:<0…1>` (installed, a new version arriving); every other pack
+/// is not installed. `mixed` is a preset for screenshots.
+/// A fetch "downloads" over `-fakePackSeconds` (default 4 s).
+nonisolated struct FakePacks: Sendable {
+    static let key = "fakePacks"
+    static let mixed = "vector,topo=updating:0.4,relief,aerial,season-2023,season-2024,season-2025=downloading:0.62,season-2026=paused"
+
+    var states: [Pack: PackState]
+    var updates: [Pack: Double] = [:]
+    var directory: URL?
+    var seconds: Double
+
+    init(spec: String, directory: URL? = nil, seconds: Double = 4) {
+        let spec = spec == "mixed" ? Self.mixed : spec
+        var states = Dictionary(uniqueKeysWithValues: Pack.allCases.map { ($0, PackState.notInstalled) })
+        var updates: [Pack: Double] = [:]
+        for part in spec.split(separator: ",") {
+            let pair = part.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard let first = pair.first, let pack = Pack(rawValue: first) else { continue }
+            let value = pair.count > 1 ? pair[1] : "installed"
+            switch value {
+            case "paused": states[pack] = .paused
+            case "failed": states[pack] = .failed("The download didn't finish.")
+            case let v where v.hasPrefix("updating"):
+                states[pack] = .installed
+                updates[pack] = Double(v.split(separator: ":").last ?? "").map { min(max($0, 0), 1) } ?? 0
+            case let v where v.hasPrefix("downloading"):
+                states[pack] = .downloading(Double(v.split(separator: ":").last ?? "").map { min(max($0, 0), 1) })
+            default: states[pack] = .installed
+            }
+        }
+        self.states = states
+        self.updates = updates
+        self.directory = directory
+        self.seconds = seconds
+    }
+
+    /// The archives of the installed packs (from `directory` when given).
+    func location() -> DataLocation {
+        guard let directory else { return DataLocation(origin: .assetPacks, archives: [:]) }
+        let scanned = DataLocator.scan(directory: directory)
+        var archives: [Archive: URL] = [:]
+        for (pack, state) in states where state == .installed {
+            for archive in pack.archives { archives[archive] = scanned.url(for: archive) }
+        }
+        return DataLocation(origin: .assetPacks, archives: archives)
+    }
+}
+
+extension PackStore {
+    convenience init(fake: FakePacks) {
+        self.init(mode: .fake, location: fake.location(), states: fake.states)
+        self.fake = fake
+        updates = fake.updates
+        downloadSizes = PackSizes.nominal
+    }
+
+    fileprivate func fakeFetch(_ pack: Pack) {
+        guard fetches[pack] == nil, !state(pack).isInstalled, let seconds = fake?.seconds else { return }
+        let start: Double = if case let .downloading(f?) = state(pack) { f } else { 0 }
+        states[pack] = .downloading(start)
+        fetches[pack] = Task { [weak self] in
+            let steps = 20
+            for i in 1 ... steps {
+                try? await Task.sleep(for: .seconds(seconds / Double(steps)))
+                guard let self, !Task.isCancelled else { return }
+                self.states[pack] = .downloading(start + (1 - start) * Double(i) / Double(steps))
+            }
+            guard let self, !Task.isCancelled, var updated = self.fake else { return }
+            updated.states[pack] = .installed
+            self.fake = updated
+            self.states[pack] = .installed
+            self.fetches[pack] = nil
+            self.publish(updated.location())
+        }
+    }
+
+    fileprivate func fakeRemove(_ pack: Pack) async {
+        guard pack.isRemovable, var fake else { return }
+        fetches[pack]?.cancel()
+        fetches[pack] = nil
+        fake.states[pack] = .notInstalled
+        fake.updates[pack] = nil
+        self.fake = fake
+        states[pack] = .notInstalled
+        updates[pack] = nil
+        publish(fake.location())
+    }
+}
+#endif

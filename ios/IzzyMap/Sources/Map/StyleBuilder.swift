@@ -81,6 +81,19 @@ nonisolated enum StyleBuilder {
         /// The selection layers, last in the style. (The halo ids are no
         /// longer drawn: the selection is red — decided 2026-11-03.)
         static let selection = [selectedFeature, selectionOutline, selectionPoint]
+
+        /// "Show on map" (SpotlightPresenter): runtime layers, never in the
+        /// style JSON. Presence cells below z11 (halo, fill, ink, dots, the
+        /// stepped-to patch's ring) and the patch's red line from z11.
+        static let spotlightHalo = "spotlight-halo"
+        static let spotlightCells = "spotlight-cells"
+        static let spotlightInk = "spotlight-ink"
+        static let spotlightDots = "spotlight-dots"
+        static let spotlightSpots = "spotlight-spots"
+        static let spotlightPatchRing = "spotlight-patch-ring"
+        static let spotlightPatch = "spotlight-patch"
+        static let spotlight = [spotlightHalo, spotlightCells, spotlightInk, spotlightDots, spotlightSpots,
+                                       spotlightPatchRing, spotlightPatch]
     }
 
     enum SourceID {
@@ -104,6 +117,8 @@ nonisolated enum StyleBuilder {
         static let treePoints = "trees-points"
         static let treeAreas = "trees-areas"
         static let selection = "selected"
+        /// "Show on map"'s presence cells (runtime GeoJSON source).
+        static let spotlight = "spotlight"
     }
 
     // MARK: Colours (DESIGN.md §2 roles, §4 cartography)
@@ -128,6 +143,11 @@ nonisolated enum StyleBuilder {
     static let tasmapBackground = "#aae0fc"
     /// Where a community code is missing from the table.
     static let fallbackFill = "#c8c8c8"
+    /// Geology / pre-1750's per-feature colour, typed: `to-color` tries its
+    /// arguments in turn, so a feature without a parsable `color` draws the
+    /// fallback grey rather than failing its evaluation (MapLibre's implicit
+    /// coercion of a bare `["get", "color"]` has no fallback).
+    static var featureColor: [Any] { ["to-color", ["get", "color"], fallbackFill] }
     static let mapInk = "#000000"
     static let mapHalo = "rgba(255,255,255,0.85)"
     /// The tapped feature's line and rings: system red, 3 pt — decided by
@@ -303,7 +323,7 @@ nonisolated enum StyleBuilder {
             if let url = data.url(for: .geology) {
                 sources[SourceID.geology] = ["type": "vector", "url": pmtilesURL(url)] as [String: Any]
                 // the official MRT unit colour ships per feature in the tiles
-                layers.append(fill(LayerID.geologyFill, source: SourceID.geology, color: ["get", "color"], opacity: opacity))
+                layers.append(fill(LayerID.geologyFill, source: SourceID.geology, color: featureColor, opacity: opacity))
             }
         case .pre1750:
             if let url = data.url(for: .pre1750) {
@@ -315,8 +335,8 @@ nonisolated enum StyleBuilder {
                 // grid over the whole layer (the M2 "pixels, not patches"
                 // speckle). Off, adjacent cells abut exactly (measured
                 // 2026-11-03 at the Great Lake, z9.5).
-                var preFill = fill(LayerID.pre1750Fill, source: SourceID.pre1750, color: ["get", "color"], opacity: opacity)
-                preFill["paint"] = ["fill-color": ["get", "color"], "fill-opacity": opacity, "fill-antialias": false] as [String: Any]
+                var preFill = fill(LayerID.pre1750Fill, source: SourceID.pre1750, color: featureColor, opacity: opacity)
+                preFill["paint"] = ["fill-color": featureColor, "fill-opacity": opacity, "fill-antialias": false] as [String: Any]
                 layers.append(preFill)
             }
         case .none:
@@ -520,14 +540,14 @@ nonisolated enum StyleBuilder {
             let band = bandColor(String(unit.color.prefix(7)))
             return band.lowercased() == String(unit.color.prefix(7)).lowercased() ? nil : (symb, band)
         }
-        guard !darkened.isEmpty else { return ["get", "color"] }
+        guard !darkened.isEmpty else { return featureColor }
         var expression: [Any] = ["match", ["get", "SYMB"]]
         for (symb, band) in darkened where MapText.isLatin1(symb) {
             expression.append(symb)
             expression.append(band)
         }
-        expression.append(["get", "color"])
-        return expression.count > 3 ? expression : ["get", "color"] as [Any]
+        expression.append(featureColor)
+        return expression.count > 3 ? expression : featureColor
     }
 
     private static func addTrees(_ trees: TreesData, sources: inout [String: Any], layers: inout [[String: Any]]) {
@@ -641,6 +661,24 @@ nonisolated enum StyleBuilder {
     static func featureFilter(_ id: UInt64?) -> [Any] {
         guard let id else { return ["==", ["id"], -1] }
         return ["==", ["id"], id]
+    }
+
+    /// "Show on map"'s fade: `solo` for the community, `others` for the
+    /// rest — from `zoom` on; below it everything at `others` (the presence
+    /// cells stand in for the community there).
+    static func spotlightOpacity(code: String, solo: Double, others: Double, from zoom: Int) -> [Any] {
+        let pick: [Any] = ["case", ["==", ["get", "VEGCODE"], code], solo, others]
+        return zoom <= 0 ? pick : ["step", ["zoom"], others, zoom, pick]
+    }
+
+    /// The whole fade, per overlay layer: the tile fill, the Outlines band
+    /// and the codes (SpotlightPresenter sets them at runtime; the
+    /// style-variant tests bake the same values into the JSON).
+    static func spotlightFade(code: String, fillOpacity: Double) -> (fill: [Any], band: [Any], label: [Any]) {
+        let from = Spotlight.polygonsFrom
+        return (spotlightOpacity(code: code, solo: max(0.85, fillOpacity), others: min(0.1, fillOpacity), from: from),
+                spotlightOpacity(code: code, solo: 1, others: 0.15, from: from),
+                spotlightOpacity(code: code, solo: 1, others: 0.3, from: 0))
     }
 
     /// Polygons of one community; matches nothing for nil.

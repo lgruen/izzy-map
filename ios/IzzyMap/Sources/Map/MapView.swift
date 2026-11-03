@@ -14,9 +14,10 @@ nonisolated struct MapChrome: Equatable, Sendable {
     var compassTop: CGFloat = 0
     /// Trailing inset that centres the compass under the controls.
     var controlsCentreFromTrailing: CGFloat = 40
-    /// Map area covered by chrome beyond the content inset (the iPad card,
-    /// a raised sheet, the controls, the spotlight pill): a camera that
-    /// frames an extent keeps clear of it.
+    /// The map area no chrome covers (safe area, the iPad card, the phone's
+    /// sheet, the controls, the pills, a notice), as insets from the map's
+    /// bounds — measured frames (`MapFraming`). A camera that frames an
+    /// extent keeps it inside.
     var framingInsets: UIEdgeInsets = .zero
 }
 
@@ -30,6 +31,8 @@ struct MapView: UIViewRepresentable {
     var layers: LayerState
     var keyHighlight: String?
     var spotlight: Spotlight?
+    /// The picked search place (Search/SearchPinPresenter.swift).
+    var searchPin: SearchModel.Pin?
 
     func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
 
@@ -47,5 +50,6 @@ struct MapView: UIViewRepresentable {
         if !hasSelection { coordinator.clearSelectionShape() }
         coordinator.apply(keyHighlight: keyHighlight)
         coordinator.apply(spotlight: spotlight, to: map)
+        coordinator.searchPins.apply(searchPin, framing: chrome.framingInsets, to: map)
     }
 }

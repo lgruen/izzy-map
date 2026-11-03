@@ -159,6 +159,10 @@ nonisolated enum EscapeStep: Equatable, Sendable {
     case back
     case closeCard
     case clearHighlight
+    /// Search: the field's focus, then the result list, then the pin.
+    case leaveSearchField
+    case closeSearch
+    case clearSearchPin
 
     var title: String {
         switch self {
@@ -167,6 +171,9 @@ nonisolated enum EscapeStep: Equatable, Sendable {
         case .back: "Back"
         case .closeCard: "Close Card"
         case .clearHighlight: "Clear Highlight"
+        case .leaveSearchField: "Leave Search Field"
+        case .closeSearch: "Close Search"
+        case .clearSearchPin: "Clear Search Pin"
         }
     }
 }
@@ -269,7 +276,8 @@ final class AppModel {
 
     // MARK: Panel and modals
 
-    var searchText = ""
+    /// Place search: query, results, the picked place's pin (Search/).
+    let search = SearchModel()
     /// The modal on screen (at most one).
     var modal: ModalRequest?
     /// Set by RootView from the size classes.
@@ -296,6 +304,12 @@ final class AppModel {
         self.shared = shared
         self.layers = layers
         self.clock = clock
+        search.near = { [map] in map.centre.map { GeoPoint(longitude: $0.longitude, latitude: $0.latitude) } }
+        // a picked place is a new view: the card and a soloed community go
+        search.onPick = { [weak self] in
+            self?.endSpotlight()
+            self?.clearSelection()
+        }
     }
 
     convenience init(data: DataLocation, tables: MapTables, layers: LayerState = .default, clock: LocationClock = .live) {
@@ -306,6 +320,9 @@ final class AppModel {
 
     func select(_ feature: SelectedFeature) {
         endSpotlight()
+        // a map tap while the results are up (iPad, the phone's medium
+        // detent) shows its card
+        if search.isActive { search.end() }
         keyHighlight = nil
         selection = FeatureSelection(feature: feature)
     }
@@ -360,9 +377,12 @@ final class AppModel {
     var escapeStep: EscapeStep? {
         if documents.isReading { return .closeDocument }
         if let modal { return .dismiss(modal.presentation) }
+        if search.fieldFocused { return .leaveSearchField }
+        if search.isActive { return .closeSearch }
         if selection != nil, !cardPath.isEmpty { return .back }
         if selection != nil { return .closeCard }
         if keyHighlight != nil { return .clearHighlight }
+        if search.pin != nil { return .clearSearchPin }
         return nil
     }
 
@@ -374,6 +394,9 @@ final class AppModel {
         case .back: cardPath.removeLast()
         case .closeCard: clearSelection()
         case .clearHighlight: keyHighlight = nil
+        case .leaveSearchField: search.fieldFocused = false
+        case .closeSearch: search.end()
+        case .clearSearchPin: search.clearPin()
         case nil: break
         }
     }

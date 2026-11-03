@@ -50,17 +50,27 @@ question or the walk to it.
 Chrome uses system materials and system label colours throughout; Liquid
 Glass, Increase Contrast and Reduce Transparency are the system's.
 
-**Panel material = system glass** (Leo, 2026-11-03). The bottom sheet is
-the system's default Liquid Glass sheet — no `presentationBackground`
+**System glass everywhere** (Leo, 2026-11-03). The bottom sheet is the
+system's default Liquid Glass sheet — no `presentationBackground`
 override — and the iPad floating card is one `.glassEffect(.regular)` slab,
-its equivalent. Content sits directly on the glass in explicit,
+its equivalent. The modal sheets over the panel (Layers, attribution,
+plant ID) and the iPad Layers popover are the system's own sheet and
+popover glass too. Content sits directly on the glass in explicit,
 non-vibrant label colours (`label`, `secondaryLabel`; the hierarchical
 `.primary`/`.secondary` styles turn vibrant on glass and pick up the map's
-hue); no inner glass or material groups — never glass on glass. A solid
-near-opaque plate (`systemBackground` @ 94 % over thick material) remains
-only as a DEBUG fallback (`-sheetStyle plate`) for comparison. The modal
-sheets over the panel (Layers, attribution, plant ID) and the iPad Layers
-popover still sit on that plate (grouped lists of keys and thumbnails).
+hue); no inner glass or material groups — never glass on glass.
+
+**Storage is the one dense list of figures**, and no label colour holds
+4.5:1 on glass over every map (white on dark glass over aerial measured
+~3.6:1, 2026-11-03). So it opens where the system's sheet is opaque: on
+iPhone it is pushed in the Layers sheet and raises it to the **large
+detent**; on iPad it opens from the popover as its own **system form
+sheet** (`presentationSizing(.form)`), never pushed onto the popover's
+glass.
+
+**No solid plate** anywhere in the shipping app. The near-opaque plate
+(`systemBackground` @ 94 % over thick material) survives only as a DEBUG
+fallback for comparison (`-sheetStyle plate`).
 
 The custom roles are few:
 
@@ -299,9 +309,26 @@ cells in four steps — a 100 km tick, a ringed "you are here", and the
 credit line under each. List bars always show the measure the list is
 ranked by ("Characteristic" for the indicator ranking, "Sites" with the
 count elsewhere), under a column heading. **Show on map** solos the
-community (others' fill at 10 %, the soloed one at 85 %), flies to its
-statewide extent and steps through its ten largest patches from a glass
-pill ("DCO everywhere ‹ › ✕"); × or Escape flies back.
+community (others' fill at 10 %, the soloed one at 85 % from z9) and
+steps through its ten largest patches from a glass pill ("DCO everywhere
+‹ › ✕"); × or Escape flies back, a map tap ends it in place.
+- *Overview = the core distribution:* the smallest box holding 90 % of
+  the community's area (outliers framed out — DAM no longer frames nearly
+  the whole state), unless showing every cell costs ≤ 0.4 of a zoom level
+  (DOB keeps Bruny and the Huon); never closer than z12; framed whole
+  inside the map area no chrome covers (measured card, sheet, pills,
+  controls, ornaments), per the view's aspect.
+- *Below z9* the community is drawn from `where.bin`, not the
+  dominant-class tiles (which drop small stands): presence cells with
+  ≥ 5 % of their area dissolved into regions — one white-haloed graphite
+  casing per region, never a keyline per cell — and traces as a pale tint
+  without a line. From z9 its own TASVEG polygons take over.
+- *Rare communities* (≤ 40 cells): their patches are ringed dots (a 3.5 ha
+  patch drawn as a 1.7 km square would be a 30× exaggeration), on each
+  patch's label point when all patches are known, at every zoom up to z14.
+- *Patch steps* frame the patch whole (no closer than z15, no lower bound:
+  a huge patch is framed whole even below z11); below z11 a red ring marks
+  it, from z11 the selection's red line by polygon id.
 
 ```
 iPhone landscape (compact height)       iPad landscape (regular width)
@@ -316,8 +343,14 @@ iPhone landscape (compact height)       iPad landscape (regular width)
 └───────────────────────────────────┘   │╰────────────╯ ▮▯▮▯ 1 km  E 526… N 5 252… │
  card 320 pt, full height − margins     └──────────────────────────────────────────┘
                                          card 380 pt; content-sized, max full height
-iPad portrait: same card, 360 pt; Layers is a popover from the button.
+iPad portrait: same card; Layers is a popover from the button.
 ```
+
+Card widths (RootView): a community card 300–380 pt (42 % of the
+window); a pushed plant sheet or group list on a regular-size iPad
+window 380–500 pt (40 %). The Layers popover follows the roomy rule,
+400–500 pt (40 % of the window: 410 on a 12.9" in portrait, 500 in
+landscape), so its thumbnails and key rows aren't a phone column.
 
 Search results (sheet at medium/large, card on iPad):
 

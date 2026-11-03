@@ -117,7 +117,7 @@ final class LayerThumbnails {
     /// Renders that needed the network while offline: retried when it returns.
     @ObservationIgnored private var deferred: [String: Request] = [:]
     @ObservationIgnored private var worker: Task<Void, Never>?
-    @ObservationIgnored private var running: (key: String, snapshotter: MLNMapSnapshotter)?
+    @ObservationIgnored private var running: RenderJob?
     @ObservationIgnored private var identity: (data: DataLocation, text: String)?
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private var connectivity: Connectivity.Subscription?
@@ -125,7 +125,41 @@ final class LayerThumbnails {
     #if DEBUG
     @ObservationIgnored private var dumpedExtras = false
     #endif
-    private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Thumbnails")
+    nonisolated private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Thumbnails")
+
+    /// The snapshot being rendered. `MLNMapSnapshotter.cancel()` never
+    /// calls the completion handler (MapLibre Native 7.0.0 just resets the
+    /// core snapshotter), so the job holds the continuation's resume: the
+    /// completion and a withdrawal both go through `complete`, which resumes
+    /// exactly once — a cancelled render no longer leaks its continuation and
+    /// stalls the worker for good.
+    private final class RenderJob {
+        let key: String
+        let snapshotter: MLNMapSnapshotter
+        private var finish: ((UIImage?) -> Void)?
+        /// Withdrawn while rendering (the worker re-queues the key if a new
+        /// waiter arrived meanwhile).
+        private(set) var cancelled = false
+
+        init(key: String, snapshotter: MLNMapSnapshotter) {
+            self.key = key
+            self.snapshotter = snapshotter
+        }
+
+        func onFinish(_ body: @escaping (UIImage?) -> Void) { finish = body }
+
+        func complete(_ image: UIImage?) {
+            guard let body = finish else { return }
+            finish = nil
+            body(image)
+        }
+
+        func cancel() {
+            cancelled = true
+            snapshotter.cancel()
+            complete(nil)
+        }
+    }
 
     private struct Request {
         let subject: ThumbnailSubject
@@ -136,6 +170,10 @@ final class LayerThumbnails {
         /// Live LIST sources in the style (the tile's own pack is missing).
         let streams: Bool
         let file: URL
+        /// Tests: render this style instead of the layer state's.
+        var styleJSON: String?
+        /// Tests: never written to disk.
+        var transient = false
     }
 
     init() {
@@ -224,8 +262,8 @@ final class LayerThumbnails {
         waiters[key]?.removeValue(forKey: waiter)?.resume()
         guard waiters[key]?.isEmpty ?? true else { return }
         waiters[key] = nil
-        if running?.key == key {
-            running?.snapshotter.cancel()
+        if let job = running, job.key == key {
+            job.cancel()
         } else if deferred[key] == nil {
             requests[key] = nil
             queue.removeAll { $0 == key }
@@ -237,11 +275,17 @@ final class LayerThumbnails {
         worker = Task { [weak self] in
             while let self, let key = self.nextKey() {
                 guard let request = self.requests[key] else { continue }
-                let image = await self.render(request, key: key)
+                let (image, cancelled) = await self.render(request, key: key)
+                if image == nil, cancelled, !(self.waiters[key]?.isEmpty ?? true) {
+                    // withdrawn mid-render, then asked for again before the
+                    // cancel landed: render it afresh (the request stays)
+                    self.queue.insert(key, at: 0)
+                    continue
+                }
                 self.requests[key] = nil
                 if let image {
                     self.store(image, key: key, subject: request.subject)
-                    if !request.streams { await Self.write(image, to: request.file) }
+                    if !request.streams, !request.transient { await Self.write(image, to: request.file) }
                 }
                 for continuation in (self.waiters.removeValue(forKey: key) ?? [:]).values { continuation.resume() }
             }
@@ -300,12 +344,13 @@ final class LayerThumbnails {
 
     // MARK: Rendering
 
-    private func render(_ r: Request, key: String) async -> UIImage? {
+    /// The image (nil on failure or cancel) and whether it was withdrawn.
+    private func render(_ r: Request, key: String) async -> (UIImage?, cancelled: Bool) {
         // packs only, unless the tile's own pack is missing (then live, and
         // only while online — checked when the request was made)
-        let json = StyleBuilder.json(state: r.state, data: r.data, tables: r.tables, online: r.streams)
+        let json = r.styleJSON ?? StyleBuilder.json(state: r.state, data: r.data, tables: r.tables, online: r.streams)
         let styleFile = directory.appending(path: "style-\(Self.hash(json)).json")
-        do { try Data(json.utf8).write(to: styleFile) } catch { return nil }
+        do { try Data(json.utf8).write(to: styleFile) } catch { return (nil, false) }
         defer { try? FileManager.default.removeItem(at: styleFile) }
 
         let camera = r.subject.camera
@@ -319,18 +364,46 @@ final class LayerThumbnails {
         options.showsLogo = false
         options.showsAttribution = false
         let snapshotter = MLNMapSnapshotter(options: options)
-        running = (key, snapshotter)
+        let job = RenderJob(key: key, snapshotter: snapshotter)
+        running = job
         defer { running = nil }
-        return await withCheckedContinuation { continuation in
+        // The completion handler is imported @Sendable (MapLibre's headers
+        // carry no concurrency annotations, and Swift treats an ObjC
+        // completion block as Sendable): it captures only Sendable values —
+        // the main-actor job, a Logger, a String. `start` calls it on the
+        // main queue (MLNMapSnapshotter.mm), hence `assumeIsolated`. The
+        // snapshotter stays alive through the job.
+        let subject = String(describing: r.subject)
+        let logger = Self.logger
+        let image = await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
+            job.onFinish { continuation.resume(returning: $0) }
             snapshotter.start { snapshot, error in
                 if let error {
-                    Self.logger.debug("thumbnail \(String(describing: r.subject), privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    logger.debug("thumbnail \(subject, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
-                continuation.resume(returning: snapshot?.image)
-                _ = snapshotter  // keep it alive until done
+                let image = snapshot?.image
+                MainActor.assumeIsolated { job.complete(image) }
             }
         }
+        return (image, job.cancelled)
     }
+
+    #if DEBUG
+    /// Tests: the key being rendered now.
+    var renderingKey: String? { running?.key }
+    /// Tests: whether `key` has an image in memory.
+    func hasImage(_ key: String) -> Bool { images[key] != nil }
+
+    /// Tests: render `styleJSON` at the default place through the queue
+    /// under `key` (memory only), as a tile's `.task` would.
+    func loadForTesting(key: String, styleJSON: String) async {
+        guard images[key] == nil else { return }
+        let request = Request(subject: .trees, state: .default, data: .none, tables: .empty, scale: 1,
+                              streams: false, file: directory.appending(path: "test-\(Self.hash(key)).png"),
+                              styleJSON: styleJSON, transient: true)
+        await wait(for: key, request: request)
+    }
+    #endif
 
     /// Whether the tile's style streams a live LIST source at the zoom the
     /// snapshot draws its raster tiles at: 256 px tiles at map zoom z come

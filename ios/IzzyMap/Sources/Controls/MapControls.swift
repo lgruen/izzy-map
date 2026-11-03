@@ -8,6 +8,9 @@ struct MapControls: View {
     /// Regular width presents Layers as a popover from its button; compact
     /// width presents it from the bottom sheet (which is already presented).
     var layersAsPopover: Bool
+    /// The popover's width: as wide as the roomy card (RootView), so the
+    /// thumbnails and key rows aren't a phone column on a 12.9" iPad.
+    var popoverWidth: CGFloat = 400
 
     static let buttonSize: CGFloat = 48
     /// The system appearance, for the popover (the buttons themselves are
@@ -22,7 +25,7 @@ struct MapControls: View {
             .accessibilityIdentifier("layers-button")
             .popover(isPresented: layersPopoverBinding) {
                 LayersSheet(model: model)
-                    .frame(idealWidth: 400, idealHeight: 860)
+                    .frame(idealWidth: popoverWidth, idealHeight: 860)
                     // the popover follows the system appearance, not the
                     // buttons' forced-light one
                     .environment(\.colorScheme, systemScheme)

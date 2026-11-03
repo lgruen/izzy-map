@@ -12,12 +12,17 @@ struct PanelContent: View {
 
     /// Whether there is anything under the header.
     static func hasBody(_ model: AppModel) -> Bool {
-        model.selection != nil || (model.data.isEmpty && model.shared.packs.isResolved)
+        model.search.isActive || model.selection != nil || (model.data.isEmpty && model.shared.packs.isResolved)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let selection = model.selection {
+            if model.search.isActive {
+                // while searching the results stand in for the card (it
+                // comes back when search closes)
+                SearchResultsView(search: model.search)
+                    .transition(.opacity)
+            } else if let selection = model.selection {
                 FeatureCard(model: model, selection: selection) { model.clearSelection() }
                     .id(selection.id)
                     .transition(.opacity)
@@ -27,62 +32,61 @@ struct PanelContent: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.snappy, value: model.selection?.id)
+        .animation(.snappy, value: model.search.isActive)
         .coordinateSpace(.named(Self.space))
     }
 }
 
-/// Search field and the "Identify a plant" button.
+/// Search field and the "Identify a plant" button (Cancel while searching).
 struct PanelHeader: View {
     @Bindable var model: AppModel
     var onSearchFocus: () -> Void = {}
-    @FocusState private var searchFocused: Bool
     @ScaledMetric(relativeTo: .body) private var fieldHeight = 48
     @ScaledMetric(relativeTo: .title3) private var glyphSize = 22
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(DesignColor.inkSecondary)
-                    .accessibilityHidden(true)
-                // TODO(M4): place and address search (IzzyKit index)
-                // The prompt in secondaryLabel (≈ 3.4:1 on the field), not the
-                // system placeholder grey (≈ 1.8:1): "Search places" is the
-                // panel's resting label and must read over any map.
-                TextField(text: $model.searchText,
-                          prompt: Text("Search places").foregroundStyle(DesignColor.inkSecondary)) {
-                    Text("Search places")
-                }
-                    .focused($searchFocused)
-                    .submitLabel(.search)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .accessibilityIdentifier("search-field")
+        VStack(alignment: .leading, spacing: 10) {
+            row
+            // the picked place: tap to fly there again, × to clear
+            if let pin = model.search.pin, !model.search.isActive {
+                SearchPlaceChip(result: pin.result) { model.search.refly() } onClear: { model.search.clearPin() }
+                    .transition(.opacity)
             }
-            .padding(.horizontal, 14)
-            .frame(minHeight: fieldHeight)
-            .background(.fill.tertiary, in: .capsule)
-            .contentShape(.capsule)
-            .onTapGesture { searchFocused = true }
+        }
+        .animation(.snappy, value: model.search.pin?.result.id)
+    }
 
-            Button {
-                model.present(.plantID)
-            } label: {
-                // ink, like every chrome glyph: no accent hue (DESIGN.md §2)
-                LeafViewfinder(pointSize: glyphSize)
+    private var row: some View {
+        HStack(spacing: 10) {
+            SearchField(search: model.search, onFocus: onSearchFocus)
+
+            if model.search.isActive {
+                Button("Cancel") { model.search.end() }
+                    .font(.body)
                     .foregroundStyle(DesignColor.ink)
-                    .frame(width: fieldHeight, height: fieldHeight)
-                    .background(.fill.tertiary, in: .circle)
-                    .contentShape(.circle)
+                    .frame(minHeight: fieldHeight)
+                    .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
+                    .accessibilityIdentifier("search-cancel")
+                    .transition(.opacity)
+            } else {
+                Button {
+                    model.present(.plantID)
+                } label: {
+                    // ink, like every chrome glyph: no accent hue (DESIGN.md §2)
+                    LeafViewfinder(pointSize: glyphSize)
+                        .foregroundStyle(DesignColor.ink)
+                        .frame(width: fieldHeight, height: fieldHeight)
+                        .background(.fill.tertiary, in: .circle)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .accessibilityLabel("Identify a plant")
+                .accessibilityIdentifier("plant-id-button")
             }
-            .buttonStyle(.plain)
-            .hoverEffect(.highlight)
-            .accessibilityLabel("Identify a plant")
-            .accessibilityIdentifier("plant-id-button")
         }
-        .onChange(of: searchFocused) { _, focused in
-            if focused { onSearchFocus() }
-        }
+        .animation(.snappy, value: model.search.isActive)
     }
 }
 

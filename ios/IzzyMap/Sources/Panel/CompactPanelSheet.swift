@@ -43,6 +43,15 @@ struct CompactPanelSheet: View {
                         }))
             }
         }
+        // search: results at the large detent (⌘F too); a pick or Cancel
+        // drops the sheet to its glance, the place's chip in the field
+        .onChange(of: model.search.isActive) { _, active in
+            detent = active ? .large : fitDetent
+        }
+        // dragged down to the glance mid-search: the results can't show there
+        .onChange(of: detent) { _, new in
+            if new == fitDetent, model.search.isActive { model.search.end() }
+        }
         // a pushed plant sheet or group list reads at the large detent
         .onChange(of: model.cardPath.count) { old, new in
             if new > old { detent = .large }
@@ -104,6 +113,8 @@ struct CompactPanelSheet: View {
                 }
         }
         .scrollBounceBehavior(.basedOnSize)
+        // scrolling the results puts the keyboard away (they stay)
+        .scrollDismissesKeyboard(.immediately)
         // the search header stays put; the card scrolls under it behind the
         // system's soft edge (never bare under the grabber)
         .safeAreaBar(edge: .top) {

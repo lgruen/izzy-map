@@ -11,6 +11,21 @@ struct IzzyMapApp: App {
     /// follows by itself: it reads the observable `PackStore.location`).
     @State private var packsSubscription: Connectivity.Subscription
 
+    /// The unit tests run inside the app (IzzyMapTests' test host), which
+    /// the scheme launches with the Run action's `-dataDir`: a full map
+    /// parsing real tiles. XCTest ends the host with `exit()`, whose static
+    /// destructors free MapLibre's expression registry while its tile
+    /// workers still evaluate fill colours with it — the EXC_BAD_ACCESS in
+    /// `CompoundExpression::evaluate` / `__cxa_pure_virtual` in
+    /// `Coercion::evaluate` of 2026-11-03 (every report: main thread in
+    /// `exit` ← `_XCTestMain`). So the host window has no map. UI tests
+    /// launch the app as its own process, without this variable.
+    #if DEBUG
+    static let isUnitTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    #else
+    static let isUnitTestHost = false
+    #endif
+
     init() {
         MapLogging.install()
         let shared = AppData.launch()
@@ -27,10 +42,15 @@ struct IzzyMapApp: App {
 
     var body: some Scene {
         WindowGroup {
-            WindowRoot(shared: shared, idleTimer: idleTimer)
-                // no accent hue: the app tint is ink (docs/DESIGN.md §2)
-                .tint(.primary)
-                .environment(thumbnails)
+            if Self.isUnitTestHost {
+                // IzzyMapTests make their own maps; the host shows none
+                Color.clear
+            } else {
+                WindowRoot(shared: shared, idleTimer: idleTimer)
+                    // no accent hue: the app tint is ink (docs/DESIGN.md §2)
+                    .tint(.primary)
+                    .environment(thumbnails)
+            }
         }
         // Commands are app-wide; they act on the focused window's model.
         .commands { MapCommands() }
@@ -97,6 +117,11 @@ private struct WindowContent: View {
                 sceneLayers = try? JSONEncoder().encode(state)
             }
             .focusedSceneValue(\.appModel, model)
+            // the Escape command's title and enabled state: a value, so the
+            // menu re-evaluates when it changes (Commands don't observe the
+            // model's own properties — a pin dropped after the menu last
+            // rendered left Escape disabled)
+            .focusedSceneValue(\.escapeStep, model.escapeStep)
             // Keep the screen on only while this window follows and is in
             // the foreground; the coordinator ORs all windows.
             .onChange(of: keepsAwake, initial: true) { _, on in
@@ -113,4 +138,6 @@ private struct WindowContent: View {
 extension FocusedValues {
     /// The focused window's model, for the menu-bar commands.
     @Entry var appModel: AppModel?
+    /// What Escape closes next in the focused window (nil: nothing).
+    @Entry var escapeStep: EscapeStep?
 }
