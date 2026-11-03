@@ -11,7 +11,7 @@ struct NoticeBanner: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: notice.symbol)
                 .font(.body.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesignColor.inkSecondary)
                 .padding(.top, 2)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
@@ -29,7 +29,7 @@ struct NoticeBanner: View {
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.footnote.weight(.bold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignColor.inkSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(.circle)
             }
@@ -41,6 +41,7 @@ struct NoticeBanner: View {
         .padding(.trailing, 4)
         .padding(.vertical, 12)
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .mapChrome()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("location-notice")
     }

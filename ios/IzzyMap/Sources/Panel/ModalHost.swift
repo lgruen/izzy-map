@@ -40,12 +40,18 @@ struct ModalContent: View {
         case .layers:
             LayersSheet(model: model)
                 .presentationDetents([.medium, .large])
+                .presentationBackground { PanelPlate(grouped: true) }
+                // no dimming scrim at medium: she judges the overlay's colours
+                // and strength on the live map above the sheet (and can pan it)
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         case .plantID:
             PlantIDPlaceholder()
                 .presentationDetents([.medium])
+                .presentationBackground { PanelPlate() }
         case .attribution:
             AttributionSheet(map: model.map)
                 .presentationDetents([.medium, .large])
+                .presentationBackground { PanelPlate(grouped: true) }
         }
     }
 }

@@ -11,7 +11,7 @@ struct PanelContent: View {
         VStack(alignment: .leading, spacing: 14) {
             PanelHeader(model: model, onSearchFocus: onSearchFocus)
             if let selection = model.selection {
-                FeatureCard(selection: selection) { model.clearSelection() }
+                FeatureCard(model: model, selection: selection) { model.clearSelection() }
                     .id(selection.id)
                     .transition(.opacity)
             } else if model.data.isEmpty {
@@ -28,15 +28,22 @@ struct PanelHeader: View {
     var onSearchFocus: () -> Void
     @FocusState private var searchFocused: Bool
     @ScaledMetric(relativeTo: .body) private var fieldHeight = 48
+    @ScaledMetric(relativeTo: .title3) private var glyphSize = 22
 
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignColor.inkSecondary)
                     .accessibilityHidden(true)
                 // TODO(M4): place and address search (IzzyKit index)
-                TextField("Search places", text: $model.searchText)
+                // The prompt in secondaryLabel (≈ 3.4:1 on the field), not the
+                // system placeholder grey (≈ 1.8:1): "Search places" is the
+                // panel's resting label and must read over any map.
+                TextField(text: $model.searchText,
+                          prompt: Text("Search places").foregroundStyle(DesignColor.inkSecondary)) {
+                    Text("Search places")
+                }
                     .focused($searchFocused)
                     .submitLabel(.search)
                     .autocorrectionDisabled()
@@ -52,9 +59,9 @@ struct PanelHeader: View {
             Button {
                 model.present(.plantID)
             } label: {
-                Image(systemName: "camera.macro")
-                    .font(.title3.weight(.medium))
-                    .foregroundStyle(.green)
+                // ink, like every chrome glyph: no accent hue (DESIGN.md §2)
+                LeafViewfinder(pointSize: glyphSize)
+                    .foregroundStyle(DesignColor.ink)
                     .frame(width: fieldHeight, height: fieldHeight)
                     .background(.fill.tertiary, in: .circle)
                     .contentShape(.circle)
@@ -70,6 +77,26 @@ struct PanelHeader: View {
     }
 }
 
+/// The "Identify a plant" glyph: a leaf framed by viewfinder corners
+/// (docs/DESIGN.md "Iconography"). SF Symbols has no such symbol, so it is
+/// two system symbols: `viewfinder` at `pointSize`, `leaf` at
+/// half that, set at its own point size and a heavier weight so its strokes
+/// match the corners' (a scaled-down copy would thin them). Callers pass a
+/// `@ScaledMetric`, so the pair follows Dynamic Type.
+struct LeafViewfinder: View {
+    var pointSize: CGFloat
+
+    var body: some View {
+        Image(systemName: "viewfinder")
+            .font(.system(size: pointSize, weight: .medium))
+            .overlay {
+                Image(systemName: "leaf")
+                    .font(.system(size: pointSize * 0.5, weight: .semibold))
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 /// Shown when no map archive is on the device.
 struct NoDataNotice: View {
     var body: some View {
@@ -79,11 +106,11 @@ struct NoDataNotice: View {
                     .font(.subheadline.weight(.semibold))
                 Text("Online, the detailed topographic map still loads when you zoom in close.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignColor.inkSecondary)
             }
         } icon: {
             Image(systemName: "map")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesignColor.inkSecondary)
         }
         .accessibilityElement(children: .combine)
     }

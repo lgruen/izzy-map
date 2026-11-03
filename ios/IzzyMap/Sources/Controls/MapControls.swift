@@ -10,6 +10,9 @@ struct MapControls: View {
     var layersAsPopover: Bool
 
     static let buttonSize: CGFloat = 48
+    /// The system appearance, for the popover (the buttons themselves are
+    /// always light: they float over the always-light map).
+    @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +22,14 @@ struct MapControls: View {
             .accessibilityIdentifier("layers-button")
             .popover(isPresented: layersPopoverBinding) {
                 LayersSheet(model: model)
-                    .frame(idealWidth: 360, idealHeight: 420)
+                    .frame(idealWidth: 400, idealHeight: 860)
+                    // the popover follows the system appearance, not the
+                    // buttons' forced-light one
+                    .environment(\.colorScheme, systemScheme)
+                    // a popover's default glass takes on the saturated map
+                    // beneath (yellow geology under white dark-mode text):
+                    // the panel plate keeps the key legible, like the sheets
+                    .presentationBackground { PanelPlate(grouped: true).environment(\.colorScheme, systemScheme) }
                     .presentationCompactAdaptation(.popover)
             }
 
@@ -33,6 +43,7 @@ struct MapControls: View {
             .accessibilityIdentifier("location-button")
         }
         .glassEffect(.regular.interactive(), in: .capsule)
+        .mapChrome()
     }
 
     /// The card layout's Layers popover; the sheet layout's Layers sheet is
@@ -63,8 +74,19 @@ struct MapControlButton: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+        .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(DesignColor.ink))
         .hoverEffect(.highlight)
         .accessibilityLabel(Text(label))
+    }
+}
+
+extension View {
+    /// Chrome floating over the map runs in light appearance always: the
+    /// map never goes dark, and dark glass over light paper turned the
+    /// controls, readout and scale into khaki smudges. Sheets, cards and
+    /// popovers keep following the system (scoped environment, supported
+    /// API: `\.colorScheme` for this subtree only).
+    func mapChrome() -> some View {
+        environment(\.colorScheme, .light)
     }
 }

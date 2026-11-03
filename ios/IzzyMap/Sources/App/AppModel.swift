@@ -1,44 +1,96 @@
 import CoreLocation
 import Foundation
+import IzzyKit
 import Observation
 import os
 
-/// What the tapped map feature is, for the panel's card.
-nonisolated struct FeatureSelection: Equatable, Identifiable, Sendable {
-    let id = UUID()
+/// A tapped TASVEG polygon, with the facts its tile carries.
+nonisolated struct CommunitySelection: Equatable, Sendable {
     /// TASVEG community code, e.g. "DOB".
     let code: String
     /// Name without the "(DOB) " prefix.
     let name: String
     /// Official fill colour, "#rrggbb", when the code is in the table.
     let colorHex: String?
+    var group: String?
+    var structure: String?
+    var notableTrees: String?
+    var weeds: String?
 }
 
-/// Immutable launch data shared by every window: located archives, bundled
-/// tables and the style built from them. Loaded once per process.
+/// A tapped significant tree (a point) or a tree group (an area).
+nonisolated struct TreeSelection: Equatable, Sendable {
+    /// Register reference, e.g. "D5".
+    let ref: String
+    /// Position-accuracy code.
+    let accuracy: String
+    let isArea: Bool
+    /// Index into `TreesData.points` / `.areas`.
+    let index: Int
+}
+
+/// What the tapped map feature is, for the panel's card.
+nonisolated enum SelectedFeature: Equatable, Sendable {
+    case community(CommunitySelection)
+    /// A geology unit, by SYMB.
+    case geology(String)
+    /// A pre-1750 class, by MVS number.
+    case pre1750(String)
+    case tree(TreeSelection)
+}
+
+nonisolated struct FeatureSelection: Equatable, Identifiable, Sendable {
+    let id = UUID()
+    let feature: SelectedFeature
+
+    /// A tree card belongs to the trees layer, every other card to the overlay.
+    var isTree: Bool {
+        if case .tree = feature { return true }
+        return false
+    }
+
+    /// The TASVEG code, for a community card.
+    var communityCode: String? {
+        if case let .community(c) = feature { return c.code }
+        return nil
+    }
+}
+
+/// Immutable launch data shared by every window: located archives and the
+/// bundled tables. Loaded once per process.
 nonisolated struct AppData: Sendable {
     let location: DataLocation
-    let communities: CommunityTable
-    let styleJSON: String
+    let tables: MapTables
+    /// Readers of the local season packs (for the coverage caption).
+    let seasonProbes: SeasonProbes
 
-    init(location: DataLocation, communities: CommunityTable) {
+    init(location: DataLocation, tables: MapTables) {
         self.location = location
-        self.communities = communities
-        self.styleJSON = StyleBuilder.json(data: location, communities: communities)
+        self.tables = tables
+        self.seasonProbes = SeasonProbes(location: location)
     }
 
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "App")
 
-    /// Archives located, tables loaded.
+    /// Archives located, tables loaded (each table on its own: one missing
+    /// file must not take the others down).
     static func launch() -> AppData {
-        let communities: CommunityTable
-        do {
-            communities = try CommunityTable.load()
-        } catch {
-            logger.fault("community table missing from the bundle: \(error.localizedDescription, privacy: .public)")
-            communities = .empty
+        var tables = MapTables()
+        if let data = BundledData.inBundle() {
+            func load<T>(_ name: String, _ body: () throws -> T) -> T? {
+                do { return try body() } catch {
+                    logger.fault("\(name, privacy: .public) unreadable: \(String(describing: error), privacy: .public)")
+                    return nil
+                }
+            }
+            tables.communities = load("communities") { try data.communities() } ?? [:]
+            tables.geology = load("geology") { try data.geologyUnits() } ?? [:]
+            tables.pre1750 = load("pre1750") { try data.pre1750Units() } ?? [:]
+            tables.trees = load("trees") { try data.trees() }
+        } else {
+            logger.fault("bundled data folder missing")
         }
-        return AppData(location: DataLocator.locate(), communities: communities)
+        return AppData(location: DataLocator.locate(), tables: tables)
     }
 }
 
@@ -54,6 +106,8 @@ final class MapLiveState {
     var isIdle = false
     /// Style sources with a visible layer at the current zoom (credits sheet).
     var visibleSources: Set<String> = []
+    /// Map zoom, written when the camera settles (season caption).
+    var zoom: Double = 0
 }
 
 /// Which container holds the panel: the compact bottom sheet or the
@@ -85,15 +139,18 @@ nonisolated enum Presentation: String, Identifiable, Sendable {
     }
 }
 
-/// What Escape closes next (M1 scope: a modal, then the card, then nothing).
+/// What Escape closes next: a modal, then the card, then a key row's
+/// highlight, then nothing.
 nonisolated enum EscapeStep: Equatable, Sendable {
     case dismiss(Presentation)
     case closeCard
+    case clearHighlight
 
     var title: String {
         switch self {
         case let .dismiss(presentation): "Close \(presentation.title)"
         case .closeCard: "Close Card"
+        case .clearHighlight: "Clear Highlight"
         }
     }
 }
@@ -115,8 +172,51 @@ final class AppModel {
     private let clock: LocationClock
 
     var data: DataLocation { shared.location }
-    var communities: CommunityTable { shared.communities }
-    var styleJSON: String { shared.styleJSON }
+    var tables: MapTables { shared.tables }
+    var communities: CommunityTable { shared.tables.communities }
+
+    // MARK: Layers
+
+    /// What the map shows. Changing the overlay dismisses an overlay card (a
+    /// vegetation answer over a geology map would lie) but never a tree
+    /// card; toggling trees dismisses only a tree card.
+    var layers: LayerState {
+        didSet {
+            guard layers != oldValue else { return }
+            if layers.overlay != oldValue.overlay {
+                keyHighlight = nil
+                if let selection, !selection.isTree { clearSelection() }
+            }
+            if layers.trees != oldValue.trees, selection?.isTree == true { clearSelection() }
+        }
+    }
+
+    /// A key row tapped in the legend: its community's polygons get the
+    /// dashed "same community" line. Cleared by a selection, an overlay
+    /// change, a tap on an empty spot of the map, Escape, or a second tap on
+    /// the same row (`toggleKeyHighlight`).
+    var keyHighlight: String?
+
+    /// A key row's tap: highlight that community, or clear it when it is
+    /// already the highlighted one. Returns whether it is now highlighted.
+    @discardableResult
+    func toggleKeyHighlight(_ code: String) -> Bool {
+        keyHighlight = keyHighlight == code ? nil : code
+        return keyHighlight != nil
+    }
+
+    /// The style for the current layers, as the map should load it (live
+    /// LIST sources only while there is a network path).
+    func styleJSON(selection style: SelectionStyle) -> String {
+        StyleBuilder.json(state: layers, data: data, tables: tables, selection: style,
+                          online: Connectivity.shared.online)
+    }
+
+    /// The selection as the style draws it (feature id from the map tap).
+    func selectionStyle(featureID: UInt64?) -> SelectionStyle {
+        SelectionStyle(featureID: selection == nil ? nil : featureID,
+                       community: selection?.communityCode ?? keyHighlight)
+    }
 
     // MARK: Map
 
@@ -150,25 +250,41 @@ final class AppModel {
     /// How long a location message stays up.
     static let noticeDuration: Duration = .seconds(10)
 
-    init(shared: AppData, clock: LocationClock = .live) {
+    init(shared: AppData, layers: LayerState = .default, clock: LocationClock = .live) {
         self.shared = shared
+        self.layers = layers
         self.clock = clock
     }
 
-    convenience init(data: DataLocation, communities: CommunityTable, clock: LocationClock = .live) {
-        self.init(shared: AppData(location: data, communities: communities), clock: clock)
+    convenience init(data: DataLocation, tables: MapTables, layers: LayerState = .default, clock: LocationClock = .live) {
+        self.init(shared: AppData(location: data, tables: tables), layers: layers, clock: clock)
     }
 
     // MARK: Selection
 
-    func selectCommunity(code: String, sourceName: String?) {
+    func select(_ feature: SelectedFeature) {
+        keyHighlight = nil
+        selection = FeatureSelection(feature: feature)
+    }
+
+    /// A TASVEG polygon: names from the table (the tile's VEGCODE_D is the
+    /// fallback for a code the table lacks), facts from the tile.
+    func selectCommunity(code: String, sourceName: String?, attributes: [String: String] = [:]) {
         let community = communities[code]
         let name = community?.name ?? sourceName ?? code
-        selection = FeatureSelection(
+        func fact(_ key: String) -> String? {
+            guard let v = attributes[key]?.trimmingCharacters(in: .whitespaces), !v.isEmpty, v != "null" else { return nil }
+            return v
+        }
+        select(.community(CommunitySelection(
             code: code,
-            name: CommunityTable.plainName(name, code: code),
-            colorHex: community?.color
-        )
+            name: Community.stripCodePrefix(name),
+            colorHex: community?.color,
+            group: community?.group ?? fact("VEG_GROUP"),
+            structure: fact("FOREST_STR"),
+            notableTrees: fact("NOTABLE_TD"),
+            weeds: fact("WEED_TYP_D")
+        )))
     }
 
     func clearSelection() { selection = nil }
@@ -198,6 +314,7 @@ final class AppModel {
     var escapeStep: EscapeStep? {
         if let modal { return .dismiss(modal.presentation) }
         if selection != nil { return .closeCard }
+        if keyHighlight != nil { return .clearHighlight }
         return nil
     }
 
@@ -206,6 +323,7 @@ final class AppModel {
         switch escapeStep {
         case .dismiss: modal = nil
         case .closeCard: clearSelection()
+        case .clearHighlight: keyHighlight = nil
         case nil: break
         }
     }

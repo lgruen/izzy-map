@@ -48,8 +48,12 @@ nonisolated enum Attribution {
                                licence: .ccByNcNd3AU, source: theLIST, terms: unalteredTerms)
     static let tasmap = Credit(id: "tasmap", title: "Tasmap from theLIST", holder: state,
                                licence: .ccByNcNd3AU, source: theLIST, terms: unalteredTerms)
-    static let hillshade = Credit(id: "hillshade", title: "Hillshade from theLIST", holder: state,
-                                  licence: .ccBy3AU, source: theLIST)
+    static let seasons = Credit(id: "seasons", title: "Aerial photos by season from theLIST", holder: state,
+                                licence: .ccByNcNd3AU, source: theLIST, terms: unalteredTerms)
+    /// CC BY lets us adapt it; the licence asks us to say how.
+    static let hillshade = Credit(id: "hillshade", title: "Relief shading from Hillshade Grey", holder: state,
+                                  licence: .ccBy3AU, source: theLIST,
+                                  terms: "theLIST hillshade, drawn as translucent relief shading.")
     static let geology = Credit(id: "geology", title: "Geology from Mineral Resources Tasmania", holder: state,
                                 licence: .ccBy3AU, source: URL(string: "https://www.mrt.tas.gov.au"))
     static let pre1750 = Credit(id: "pre1750", title: "Pre-1750 vegetation: NVIS V7.0",
@@ -62,14 +66,25 @@ nonisolated enum Attribution {
     /// Style source id → credit. Every source in the style must be here or
     /// in `uncreditedSources` (a unit test enforces it). Pack and live
     /// sources of one dataset share its credit.
-    static let bySource: [String: Credit] = [
-        StyleBuilder.SourceID.topo: topo,
-        StyleBuilder.SourceID.topoLive: topo,
-        StyleBuilder.SourceID.tasveg: tasveg,
-    ]
+    static let bySource: [String: Credit] = {
+        typealias S = StyleBuilder.SourceID
+        var table: [String: Credit] = [
+            S.topo: topo, S.topoLive: topo,
+            S.aerial: aerial, S.aerialLive: aerial,
+            S.tasmap: tasmap, S.tasmapLive: tasmap,
+            S.seasonLive: seasons,
+            S.tasveg: tasveg, S.geology: geology, S.pre1750: pre1750,
+            S.relief: hillshade,
+            S.treePoints: trees, S.treeAreas: trees,
+        ]
+        for season in Season.all { table[season.sourceID] = seasons }
+        return table
+    }()
 
     /// Sources that carry no third-party data (the app's own drawing).
-    static let uncreditedSources: Set<String> = [StyleBuilder.SourceID.selection]
+    /// The selection shapes, and the highlight source (the visible overlay's
+    /// own archive again, credited under the overlay's source).
+    static let uncreditedSources: Set<String> = [StyleBuilder.SourceID.selection, StyleBuilder.SourceID.highlight]
 
     /// The credits for these sources, deduplicated, in a stable order.
     static func credits(forSources sources: Set<String>) -> [Credit] {

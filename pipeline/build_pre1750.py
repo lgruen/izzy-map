@@ -17,6 +17,13 @@ Official class colours come from the NVIS_pre_mvs MapServer legend swatches
 renderer served as PNGs).
 
 Run: python3 pipeline/build_pre1750.py
+     python3 pipeline/build_pre1750.py --tiles-only   (re-tile the cached
+     work/pre1750_<cell>.geojsonl bands; no GDAL needed, units JSON untouched)
+
+Feature ids: each band polygon gets id = band_no * 10,000,000 + its 1-based
+line number in that band's GeoJSONSeq (band_no 1 = 100 m … 5 = 1600 m), so
+ids are unique across bands and tippecanoe copies one id onto every piece a
+tile edge cuts — the app outlines a tapped polygon by filtering on its id.
 (osgeo + numpy come from the brew gdal formula's python bindings — the one
 dependency uv cannot provide; the pillow-needing legend-swatch decode shells
 out to `uv run --with pillow` per the no-pip rule. Also needs tippecanoe /
@@ -25,14 +32,17 @@ tile-join / pmtiles CLIs from brew. Downloads the 112 MB source once.)
 import json
 import sqlite3
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
 
-import numpy as np
-from osgeo import gdal
-
-gdal.UseExceptions()
+try:  # only the raster stages need these; --tiles-only runs without them
+    import numpy as np
+    from osgeo import gdal
+    gdal.UseExceptions()
+except ImportError:
+    np = gdal = None
 
 HERE = Path(__file__).parent
 CACHE = HERE / "cache"
@@ -204,9 +214,29 @@ def legend_colors() -> dict[str, str]:
     return json.loads(out.stdout)
 
 
+BANDS = [  # (cell metres, minzoom, maxzoom) — see "zoom-banded tiling"
+    (100, 10, 11),
+    (200, 9, 9),
+    (400, 8, 8),
+    (800, 7, 7),
+    (1600, 0, 6),
+]
+ID_STRIDE = 10_000_000  # > polygons in any band (100 m: ~463k)
+
+
+def band_id(cell: int, n: int) -> int:
+    """Stable feature id: band number (1-based, BANDS order) * stride + n."""
+    assert 0 < n < ID_STRIDE, n
+    return (1 + [b[0] for b in BANDS].index(cell)) * ID_STRIDE + n
+
+
 def main():
     for d in (CACHE, WORK, DATA, GEN):
         d.mkdir(parents=True, exist_ok=True)
+    if "--tiles-only" in sys.argv[1:]:
+        return build_tiles()
+    if gdal is None:
+        raise SystemExit("needs numpy + GDAL python bindings (or pass --tiles-only)")
     fetch(ZIP_URL, CACHE / ZIP_NAME, "NVIS V7.0 pre-1750 rasters (112 MB)")
     if not GDB.exists():
         subprocess.run(["unzip", "-oq", str(CACHE / ZIP_NAME), "-d", str(WORK)], check=True)
@@ -310,13 +340,7 @@ def main():
     # band with majority (mode) resampling — the categorically correct
     # generalisation — polygonize each band, and tile-join. Cell size stays
     # ~1 px at each band's minzoom (57 m/px at z11 at 42°S; overzoom beyond).
-    BANDS = [  # (cell metres, minzoom, maxzoom)
-        (100, 10, 11),
-        (200, 9, 9),
-        (400, 8, 8),
-        (800, 7, 7),
-        (1600, 0, 6),
-    ]
+    # (BANDS: module level)
     # 0/1 land raster for the coastline mask below (no nodata set, so the
     # "average" resample counts sea cells as 0 and yields the land fraction)
     land_tif = WORK / "pre1750_land01.tif"
@@ -331,7 +355,6 @@ def main():
     land_ds = None
     ref = None
 
-    band_tiles: list[Path] = []
     for cell, z0, z1 in BANDS:
         tif = render_tif if cell == 100 else WORK / f"pre1750_mvs_tas_{cell}.tif"
         if cell != 100:
@@ -378,13 +401,44 @@ def main():
                     continue
                 # tiles carry only what rendering needs (geology pattern)
                 f["properties"] = {"MVS": str(dn), "color": units[str(dn)]["color"]}
-                out.write(json.dumps(f, ensure_ascii=False) + "\n")
                 n += 1
+                f["id"] = band_id(cell, n)
+                out.write(json.dumps(f, ensure_ascii=False) + "\n")
         print(f"band {cell} m (z{z0}-z{z1}): {n} polygons")
+    build_tiles()
+
+
+def ensure_ids(cell: int, ndjson: Path) -> int:
+    """Give every polygon its band_id (bands cached before ids existed are
+    rewritten in place); returns the polygon count."""
+    with open(ndjson, encoding="utf-8") as src:
+        first = json.loads(src.readline())
+    if "id" in first:
+        with open(ndjson, encoding="utf-8") as src:
+            return sum(1 for _ in src)
+    tmp = ndjson.with_suffix(".tmp")
+    n = 0
+    with open(ndjson, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as out:
+        for line in src:
+            n += 1
+            f = json.loads(line)
+            f["id"] = band_id(cell, n)
+            out.write(json.dumps(f, ensure_ascii=False) + "\n")
+    tmp.rename(ndjson)
+    print(f"band {cell} m: added ids to {n} cached polygons")
+    return n
+
+
+def build_tiles():
+    band_tiles: list[Path] = []
+    for cell, z0, z1 in BANDS:
+        ndjson = WORK / f"pre1750_{cell}.geojsonl"
+        n = ensure_ids(cell, ndjson)
         if cell == 100:
             assert n > 50_000, f"suspiciously few polygons: {n}"
         # --coalesce merges only SAME-property features (tap answers stay
-        # correct). NO as-needed fallbacks on ANY band: those merge ACROSS
+        # correct) — and, now that every polygon has its own id, only pieces
+        # of the same polygon. NO as-needed fallbacks on ANY band: those merge ACROSS
         # classes — wrong colour + wrong tap answer, silently. The banding
         # keeps every tile comfortably under the limit; if a future rebuild
         # oversizes one, tippecanoe erroring out is the correct failure mode

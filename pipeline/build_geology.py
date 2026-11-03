@@ -11,16 +11,24 @@ Fetched via paged REST GeoJSON queries (the mrt.tas.gov.au download page is
 Cloudflare-blocked to scripts). ~7,700 polygons, ~26 MB raw.
 
 Run: python3 pipeline/build_geology.py   (stdlib + tippecanoe/pmtiles CLIs)
+     python3 pipeline/build_geology.py --tiles-only   (re-tile the cached
+     work/geology.geojsonl; no fetch, units JSON left untouched)
+
+Feature ids: every polygon carries the source OBJECTID as its tile feature
+id (lines cached before OBJECTID was fetched get their 1-based line number:
+the pull is OBJECTID-ordered). tippecanoe copies the id onto every clipped
+piece, so a tapped unit's outline can be filtered by id across tile edges.
 """
 import json
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 LAYER = "https://data.stategrowth.tas.gov.au/ags/rest/services/MRT/Geology_Tasmania/MapServer/16"
-FIELDS = "map_symb,description,strat_name,max_age,min_age,max_age_ma,min_age_ma,ga_strat_no,RGBHex"
+FIELDS = "OBJECTID,map_symb,description,strat_name,max_age,min_age,max_age_ma,min_age_ma,ga_strat_no,RGBHex"
 PAGE = 2000  # server maxRecordCount
 HERE = Path(__file__).parent
 WORK = HERE / "work"
@@ -84,6 +92,8 @@ def group_of(strat_name: str | None) -> str:
 def main():
     WORK.mkdir(exist_ok=True)
     DATA.mkdir(exist_ok=True)
+    if "--tiles-only" in sys.argv[1:]:
+        return build_tiles(WORK / "geology.geojsonl")
 
     features = []
     offset = 0
@@ -129,6 +139,7 @@ def main():
             # sheet shows comes from geology_units.json keyed by SYMB
             # (verified constant per unit in the source data)
             f["properties"] = {"SYMB": symb, "color": color}
+            f["id"] = int(p.get("OBJECTID", f.get("id")))  # stable tile feature id
             out.write(json.dumps(f, ensure_ascii=False) + "\n")
 
     GEN.mkdir(parents=True, exist_ok=True)
@@ -137,6 +148,23 @@ def main():
     groups = sorted({u["group"] for u in units.values()})
     print(f"{len(features)} polygons, {len(units)} units, {len(groups)} legend groups")
     print(f"wrote {units_path}")
+    build_tiles(ndjson_path)
+
+
+def build_tiles(ndjson_path: Path):
+    # Every feature needs a unique integer id (outline-by-id in the app).
+    ids_path = WORK / "geology_ids.geojsonl"
+    seen: set[int] = set()
+    with open(ndjson_path, encoding="utf-8") as src, \
+            open(ids_path, "w", encoding="utf-8") as out:
+        for i, line in enumerate(src, 1):
+            f = json.loads(line)
+            f.setdefault("id", i)  # pre-OBJECTID cache: OBJECTID-ordered line no.
+            assert isinstance(f["id"], int) and f["id"] not in seen, f["id"]
+            seen.add(f["id"])
+            out.write(json.dumps(f, ensure_ascii=False) + "\n")
+    assert len(seen) > 7000, f"suspiciously few features: {len(seen)}"
+    print(f"{len(seen)} features with unique ids")
 
     # 1:500k linework: z11 native detail is ample; overzoom renders beyond.
     # NO coalescing flags: coalescing can merge polygons ACROSS units (wrong
@@ -149,7 +177,7 @@ def main():
         "-A", ATTRIBUTION,
         "-Z0", "-z11",
         "--detect-shared-borders", "--hilbert",
-        str(ndjson_path),
+        str(ids_path),
     ], check=True)
     # belt-and-braces: fail loudly if any feature-merging strategy fired
     import sqlite3

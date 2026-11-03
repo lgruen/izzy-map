@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import IzzyKit
 import Testing
 @testable import IzzyMap
 
@@ -32,19 +33,22 @@ struct DataLocatorTests {
 @MainActor
 struct CommunityNameTests {
     @Test func codePrefixIsStripped() {
-        #expect(CommunityTable.plainName("(DOB) Eucalyptus obliqua dry forest", code: "DOB") == "Eucalyptus obliqua dry forest")
-        #expect(CommunityTable.plainName("Something else", code: "DOB") == "Something else")
-        #expect(CommunityTable.plainName("(DOB) X", code: "AAP") == "(DOB) X")
+        #expect(Community.stripCodePrefix("(DOB) Eucalyptus obliqua dry forest") == "Eucalyptus obliqua dry forest")
+        #expect(Community.stripCodePrefix("Something else") == "Something else")
     }
 
-    @Test func selectingUsesTheTable() {
-        let model = AppModel(data: .none, communities: StyleBuilderTests.communities)
-        model.selectCommunity(code: "DOB", sourceName: "ignored")
-        #expect(model.selection?.name == "Eucalyptus obliqua dry forest")
-        #expect(model.selection?.colorHex == "#38a800")
+    @Test func selectingUsesTheTable() throws {
+        let model = AppModel(data: .none, tables: StyleBuilderTests.tables)
+        model.selectCommunity(code: "DOB", sourceName: "ignored", attributes: ["FOREST_STR": "Tall forest", "WEED_TYP_D": "null"])
+        guard case let .community(dob) = try #require(model.selection).feature else { Issue.record("not a community"); return }
+        #expect(dob.name == "Eucalyptus obliqua dry forest")
+        #expect(dob.colorHex == "#38a800")
+        #expect(dob.structure == "Tall forest")
+        #expect(dob.weeds == nil)  // the tiles' "null" string is no fact
         model.selectCommunity(code: "ZZZ", sourceName: "(ZZZ) Unknown community")
-        #expect(model.selection?.name == "Unknown community")
-        #expect(model.selection?.colorHex == nil)
+        guard case let .community(zzz) = try #require(model.selection).feature else { Issue.record("not a community"); return }
+        #expect(zzz.name == "Unknown community")
+        #expect(zzz.colorHex == nil)
     }
 }
 
@@ -117,7 +121,7 @@ func settle(_ condition: () -> Bool = { false }) async {
 @MainActor
 struct LocationRulesTests {
     private func following(_ clock: ManualClock) async -> AppModel {
-        let model = AppModel(data: .none, communities: .empty, clock: clock.clock)
+        let model = AppModel(data: .none, tables: .empty, clock: clock.clock)
         model.authorization = .authorizedWhenInUse
         model.cycleTracking()
         await settle { clock.sleeperCount > 0 }
@@ -125,7 +129,7 @@ struct LocationRulesTests {
     }
 
     @Test func trackingCyclesOffFollowHeading() {
-        let model = AppModel(data: .none, communities: .empty)
+        let model = AppModel(data: .none, tables: .empty)
         model.authorization = .authorizedWhenInUse
         model.cycleTracking(); #expect(model.trackingMode == .follow)
         model.cycleTracking(); #expect(model.trackingMode == .followWithHeading)
@@ -133,7 +137,7 @@ struct LocationRulesTests {
     }
 
     @Test func deniedNeverStartsFollowingAndSaysWhy() {
-        let model = AppModel(data: .none, communities: .empty)
+        let model = AppModel(data: .none, tables: .empty)
         model.authorization = .denied
         model.cycleTracking()
         #expect(model.trackingMode == .off)
@@ -172,7 +176,7 @@ struct LocationRulesTests {
     /// while it is recent; once it is stale and nothing new came, say so.
     @Test func aRecentFixFromBeforeFollowingDefersTheMessage() async {
         let clock = ManualClock()
-        let model = AppModel(data: .none, communities: .empty, clock: clock.clock)
+        let model = AppModel(data: .none, tables: .empty, clock: clock.clock)
         model.authorization = .authorizedWhenInUse
         model.locationUpdated()
         clock.advance(by: .seconds(30))
@@ -191,7 +195,7 @@ struct LocationRulesTests {
 
     @Test func aStaleFixFromBeforeFollowingDoesNotCount() async {
         let clock = ManualClock()
-        let model = AppModel(data: .none, communities: .empty, clock: clock.clock)
+        let model = AppModel(data: .none, tables: .empty, clock: clock.clock)
         model.authorization = .authorizedWhenInUse
         model.locationUpdated()
         clock.advance(by: .seconds(90))
@@ -230,7 +234,7 @@ struct LocationRulesTests {
     }
 
     @Test func followingStartsOnceThePromptIsAnsweredYes() {
-        let model = AppModel(data: .none, communities: .empty)
+        let model = AppModel(data: .none, tables: .empty)
         model.cycleTracking()                       // prompt shows
         model.mapChangedTracking(to: .off)          // the map drops it meanwhile
         model.authorizationChanged(to: .authorizedWhenInUse)
@@ -239,7 +243,7 @@ struct LocationRulesTests {
     }
 
     @Test func answeringNoToThePromptSaysWhy() {
-        let model = AppModel(data: .none, communities: .empty)
+        let model = AppModel(data: .none, tables: .empty)
         model.cycleTracking()
         model.mapChangedTracking(to: .off)
         model.authorizationChanged(to: .denied)
@@ -248,7 +252,7 @@ struct LocationRulesTests {
     }
 
     @Test func revokingPermissionEndsFollowing() {
-        let model = AppModel(data: .none, communities: .empty)
+        let model = AppModel(data: .none, tables: .empty)
         model.authorization = .authorizedWhenInUse
         model.cycleTracking()
         model.authorizationChanged(to: .denied)
@@ -257,7 +261,7 @@ struct LocationRulesTests {
     }
 
     @Test func aDenialFromTheMapEndsFollowing() {
-        let model = AppModel(data: .none, communities: .empty)
+        let model = AppModel(data: .none, tables: .empty)
         model.authorization = .authorizedWhenInUse
         model.cycleTracking()
         model.locationDenied()
@@ -309,19 +313,19 @@ struct IdleTimerTests {
 @MainActor
 struct WindowModelTests {
     @Test func windowsShareTheLoadedDataButNotTheirState() {
-        let shared = AppData(location: .none, communities: StyleBuilderTests.communities)
+        let shared = AppData(location: .none, tables: StyleBuilderTests.tables)
         let a = AppModel(shared: shared), b = AppModel(shared: shared)
         a.selectCommunity(code: "DOB", sourceName: nil)
         a.authorization = .authorizedWhenInUse
         a.cycleTracking()
         #expect(b.selection == nil)
         #expect(b.trackingMode == .off)
-        #expect(a.styleJSON == b.styleJSON)
+        #expect(a.styleJSON(selection: .none) == b.styleJSON(selection: .none))
         #expect(a.map !== b.map)
     }
 
     @Test func escapeWalksBackOneLevel() {
-        let model = AppModel(data: .none, communities: StyleBuilderTests.communities)
+        let model = AppModel(data: .none, tables: StyleBuilderTests.tables)
         #expect(model.escapeStep == nil)
         model.selectCommunity(code: "DOB", sourceName: nil)
         #expect(model.escapeStep == .closeCard)
@@ -339,7 +343,7 @@ struct WindowModelTests {
     }
 
     @Test func aLayoutSwitchResetsTheModal() {
-        let model = AppModel(data: .none, communities: .empty)
+        let model = AppModel(data: .none, tables: .empty)
         model.layoutChanged(to: .sheet)
         model.present(.plantID)
         #expect(model.isPresenting(.plantID, in: .sheet))

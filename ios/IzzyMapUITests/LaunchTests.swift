@@ -41,7 +41,10 @@ final class LaunchTests: XCTestCase {
         // statewide over the central highlands (UserDefaults reads <hex> as Data)
         let camera = #"{"latitude":-42.0,"longitude":146.5,"zoom":8,"heading":0}"#
         let hex = camera.utf8.map { String(format: "%02x", $0) }.joined()
-        app.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false), "-lastCamera", "<\(hex)>"]
+        // default layers (topo + vegetation), whatever an earlier test left
+        let layers = "{}".utf8.map { String(format: "%02x", $0) }.joined()
+        app.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false), "-lastCamera", "<\(hex)>",
+                               "-layerState", "<\(layers)>"]
         app.launch()
         XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: 15))
         return app
@@ -91,29 +94,70 @@ final class LaunchTests: XCTestCase {
     /// again from the new layout.
     @MainActor
     func testPlantIDSurvivesRotationWithoutGettingStuck() throws {
+        // a full-screen iPad stays regular width (card layout) both ways up:
+        // rotating it switches no layout, so nothing closes
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "rotation switches layouts on a phone only")
+        // a phone held upright, whatever an earlier (failed) test left
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
         let app = XCUIApplication()
         app.launch()
+        let window = app.windows.firstMatch
         let plantID = app.buttons["plant-id-button"]
-        XCTAssertTrue(plantID.waitForExistence(timeout: 15))
         let placeholder = app.staticTexts["Identify a plant"]
+        // every wait is on a state, with room for a slow CI simulator
+        let patience: TimeInterval = 20
+        XCTAssertTrue(waitUntil(patience) { window.frame.height > window.frame.width }, "portrait")
+        XCTAssertTrue(waitUntil(patience) { plantID.isHittable }, "the plant ID button")
 
         plantID.tap()
-        XCTAssertTrue(placeholder.waitForExistence(timeout: 5))
+        // fully up (hittable), not mid-presentation, before the rotation
+        XCTAssertTrue(waitUntil(patience) { placeholder.exists && placeholder.isHittable }, "plant ID opens")
         XCUIDevice.shared.orientation = .landscapeLeft
-        defer { XCUIDevice.shared.orientation = .portrait }
-        XCTAssertTrue(placeholder.waitForNonExistence(timeout: 5), "the old layout's modal closes")
+        XCTAssertTrue(waitUntil(patience) { window.frame.width > window.frame.height }, "landscape")
+        XCTAssertTrue(placeholder.waitForNonExistence(timeout: patience), "the old layout's modal closes")
         attachScreenshot("plant-id-rotated-closed")
-        XCTAssertTrue(plantID.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil(patience) { plantID.isHittable }, "the button in the card layout")
         plantID.tap()
-        XCTAssertTrue(placeholder.waitForExistence(timeout: 5), "and opens again in the new layout")
+        XCTAssertTrue(waitUntil(patience) { placeholder.exists && placeholder.isHittable }, "and opens again in the new layout")
         attachScreenshot("plant-id-landscape")
 
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(placeholder.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.textFields["search-field"].waitForExistence(timeout: 5), "the panel sheet is back")
+        XCTAssertTrue(waitUntil(patience) { window.frame.height > window.frame.width }, "portrait again")
+        XCTAssertTrue(placeholder.waitForNonExistence(timeout: patience), "the card layout's modal closes")
+        XCTAssertTrue(app.textFields["search-field"].waitForExistence(timeout: patience), "the panel sheet is back")
+        XCTAssertTrue(waitUntil(patience) { plantID.isHittable }, "the button in the sheet layout")
         plantID.tap()
-        XCTAssertTrue(placeholder.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil(patience) { placeholder.exists && placeholder.isHittable }, "and opens in the sheet layout")
         attachScreenshot("plant-id-portrait-again")
+    }
+
+    /// Rotating while the modal is still animating in must not strand it
+    /// over the new layout (UIKit drops a dismissal during a transition).
+    @MainActor
+    func testRotatingWhileAModalOpensNeverStrandsIt() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "rotation switches layouts on a phone only")
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        app.launch()
+        let window = app.windows.firstMatch
+        let plantID = app.buttons["plant-id-button"]
+        XCTAssertTrue(waitUntil(20) { window.frame.height > window.frame.width && plantID.isHittable })
+        plantID.tap()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitUntil(20) { window.frame.width > window.frame.height }, "landscape")
+        XCTAssertTrue(app.staticTexts["Identify a plant"].waitForNonExistence(timeout: 20), "no stranded modal")
+        attachScreenshot("rotated-mid-presentation")
+    }
+
+    /// Polls `condition` (UI state, never a fixed sleep) until it holds or
+    /// `timeout` passes.
+    @MainActor
+    private func waitUntil(_ timeout: TimeInterval, _ condition: @escaping () -> Bool) -> Bool {
+        let predicate = NSPredicate { _, _ in MainActor.assumeIsolated { condition() } }
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: nil)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
     /// The app's own (i) lists the credits of what the map shows.

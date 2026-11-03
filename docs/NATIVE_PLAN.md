@@ -55,7 +55,7 @@ Decisions already taken (Leo, 2026-11-03):
 |---|---|---|---|
 | `vector` | TASVEG, geology, pre-1750 | 0.39 GB | essential (installs with the app) |
 | `topo` | topo z0–15 | 2.04 GB | prefetch (starts during install) |
-| `relief` | relief shading, pre-rendered (see §3) | ~1.7 GB, re-measure | prefetch |
+| `relief` | relief shading, pre-rendered AVIF (see §3) | 1.29 GB | prefetch |
 | `plantid` | Core ML encoder + head + kNN bank + prior | ~1.4 GB | prefetch |
 | `aerial` | statewide photo mosaic | 1.93 GB | on demand (one tap) |
 | `tasmap` | paper-map scans | 3.24 GB | on demand |
@@ -116,13 +116,25 @@ Decisions already taken (Leo, 2026-11-03):
   Measured 2026-11-03 (1,522 sampled tiles of 198,727):
   - Lossless alpha is 2–2.7× the JPEG source (PNG 4.7 GB, WebP 3.1–3.5 GB),
     because the JPEG noise ends up in the alpha channel.
-  - Plan: **AVIF q85 ≈ 1.28 GB** (mean alpha error 0.4 levels; a full
-    conversion takes ~7 min on 10 cores with Pillow). Identical blank tiles
-    are stored once.
-  - First check that MapLibre Native on iOS decodes AVIF with alpha. If it
-    doesn't, use WebP lossy alpha q50 (≈ 1.75 GB, max error 9 levels).
   - Rejected: converting on the device, because it needs a custom tile
     protocol.
+
+  **Built 2026-11-03: AVIF q85, `data/relief_tas.pmtiles`, 1.29 GB**
+  (`pipeline/build_relief.py`, 12 min on 10 cores; not uploaded yet).
+  - Gate passed: MapLibre Native 7.0.0 (iOS 27.2 simulator) decodes
+    AVIF-with-alpha tiles from a `pmtiles://file://` raster source,
+    PMTiles tile_type 5, no warnings. Over topo + TASVEG at 0.5 the
+    screenshots differ from a lossless PNG archive by mean 0.4 / max 4
+    levels (WebP lossy alpha q50: mean 0.7 / max 6), so WebP is not needed.
+  - 198,727 tiles, 1:1 with the source; 181,582 distinct contents. Fully
+    transparent tiles (~17k) share ONE stored tile. They must not be left
+    out: MapLibre Native draws the stretched parent tile in a missing tile's
+    place (tested), which would put blurred shading where there is none.
+  - 200 random tiles vs the exact formula: mean alpha error 0.44 levels,
+    max 10, colour channels always 0.
+  - Layer: plain `raster`, `raster-fade-duration` 0, maxzoom 15 (overzoomed
+    above); above the overlay fills, below outlines and labels.
+
 - **Overlays:** TASVEG, pre-1750, geology, or none, at Full (0.5), Light
   (0.25) or Outlines.
   - Pre-1750 has no outlines; Outlines falls back to Light there.

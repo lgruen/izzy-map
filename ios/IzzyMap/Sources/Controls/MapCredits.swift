@@ -5,6 +5,7 @@ import SwiftUI
 struct AttributionButton: View {
     let action: () -> Void
     @ScaledMetric(relativeTo: .footnote) private var size = 32
+    private var hitSize: CGFloat { max(44, size) }
 
     var body: some View {
         Button(action: action) {
@@ -12,12 +13,16 @@ struct AttributionButton: View {
                 .font(.footnote.weight(.semibold))
                 .frame(width: size, height: size)
                 .glassEffect(.regular.interactive(), in: .circle)
-                .frame(width: max(44, size), height: max(44, size))
+                .frame(width: hitSize, height: hitSize)
                 .contentShape(.circle)
         }
+        // the hit area overhangs the glyph: lay out by the glyph, so its
+        // edges sit exactly on the margins the root gives it
+        .padding(-(hitSize - size) / 2)
         .buttonStyle(.plain)
-        .foregroundStyle(.primary)
+        .foregroundStyle(DesignColor.ink)
         .hoverEffect(.highlight)
+        .mapChrome()
         .accessibilityLabel("Map credits")
         .accessibilityIdentifier("attribution-button")
     }
@@ -43,8 +48,10 @@ struct AttributionSheet: View {
                 } header: {
                     Text("On the map now")
                 }
+                .panelRows()
                 // TODO(M7): link to About's full credits by licence regime.
             }
+            .panelListSurface()
             .navigationTitle("Map Credits")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

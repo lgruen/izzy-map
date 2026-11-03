@@ -48,8 +48,21 @@ question or the walk to it.
 ### Colour roles
 
 Chrome uses system materials and system label colours throughout; Liquid
-Glass, Increase Contrast and Reduce Transparency are the system's. The
-custom roles are few:
+Glass, Increase Contrast and Reduce Transparency are the system's.
+
+**Panel material = system glass** (Leo, 2026-11-03). The bottom sheet is
+the system's default Liquid Glass sheet — no `presentationBackground`
+override — and the iPad floating card is one `.glassEffect(.regular)` slab,
+its equivalent. Content sits directly on the glass in explicit,
+non-vibrant label colours (`label`, `secondaryLabel`; the hierarchical
+`.primary`/`.secondary` styles turn vibrant on glass and pick up the map's
+hue); no inner glass or material groups — never glass on glass. A solid
+near-opaque plate (`systemBackground` @ 94 % over thick material) remains
+only as a DEBUG fallback (`-sheetStyle plate`) for comparison. The modal
+sheets over the panel (Layers, attribution, plant ID) and the iPad Layers
+popover still sit on that plate (grouped lists of keys and thumbnails).
+
+The custom roles are few:
 
 | Role | Light | Dark | Use |
 |---|---|---|---|
@@ -68,10 +81,18 @@ custom roles are few:
 - **Key boxes are opaque.** Glass tints whatever sits on it (the M1 card's
   RPW swatch floats on a rainbow of refracted map), so every key box sits on
   `keyPlate` and is judged against white, as on paper.
-- **Key box colour = the map:** the official fill composited at the current
-  strength over white (RPW #3232FE at 0.55 → #8E8EFE), because the key's job
-  is matching what she sees. The card lists the official hex as a fact
-  ("Map colour #3232FE"). See open question 4.
+- **Key box colour — two rules (open question 4, resolved 2026-11):**
+  - *The Layers key (and the strength picker) blends:* the official fill
+    composited at the current strength over white (RPW #3232FE at 0.55 →
+    #8E8EFE), because the key's job is matching what she sees. In Outlines
+    it shows an edge band in the map's band colour (`StyleBuilder.bandColor`
+    — dark fills lightened to luminance ≥ 0.4, so no band reads as ink — at
+    the band's 70 % opacity).
+  - *The feature card's swatch is the official fill*, full strength, at
+    every strength and in Outlines: it names the unit. Blended, dark fills
+    washed out to near-white (WDR #326565 at aerial-light 0.20 is #D6E0E0)
+    and Outlines left a white box with a thin band. (No "Map colour #hex"
+    row: the box is the colour.)
 - **Why red selection is out.** #FF3B30 on SMM #CB6565 at 0.5 is 1.9:1, on
   SHS #FE9898 2.5:1, and topo roads are red-brown. Ink on a white halo is
   ≥ 7.5:1 on every composited fill; over dark aerial forest the halo does
@@ -301,6 +322,40 @@ Layers (sheet / iPad popover)           Key (pushed)
 ╰──────────────────────────╯
 ```
 
+### Layer thumbnails
+
+Every choice in the Layers sheet is a picture first (a layer picker in the
+manner of Google Maps), so base, overlay and "Also show" are recognisable
+without reading:
+
+- **Tiles in a grid**, four to a row on a phone (fewer at accessibility
+  sizes): a 4:3 thumbnail with **square corners and a 0.5 pt keyline** (data
+  is square), a one-line label (`.footnote`) and the on-device status
+  (`.caption2`, secondary). The selected tile gets a **2.5 pt ink frame and a
+  small ink checkmark disc** — the selection idiom in chrome, no accent hue;
+  VoiceOver reads label, status and the selected trait. The chosen item's
+  one-line hint sits in the section footer.
+- **One fixed place for every thumbnail**, so the differences read: the
+  slopes of Mt Arthur east of Launceston at z12 (all land; topo roads and
+  streams, dark forest on the photos, the 1:100k sheet's greens, shaded
+  spurs on relief, and a LIST flying-project edge across the frame so "By
+  season" shows its patchwork). Hobart trees use the Queens Domain at
+  z15.3 instead (single discs, not a cluster count). Base tiles show the bare
+  base; overlay tiles the current base with that overlay at the current
+  strength; Relief and trees the bare current base with that layer.
+- **Rendered on the device** from the local packs with `MLNMapSnapshotter`,
+  exactly as the map draws them — never bundled (the aerial and Tasmap
+  rasters are CC BY-NC-ND: drawing them on the device is fine, shipping
+  re-encoded copies is not). A tile whose pack is missing renders from live
+  LIST tiles only while online (kept in memory, not on disk); offline it
+  keeps its placeholder: the tile's SF Symbol on a quiet fill — never a
+  broken image.
+- Lazy and cached: the sheet opens at once with placeholders; images render
+  one at a time and fade in (0.2 s), then live on disk keyed by the tile's
+  layer state, every pack's size and date, size and scale (the map is always
+  light, so appearance is not in the key). A new strength re-renders the
+  overlay tiles while the old image stays up.
+
 Plant ID:
 
 ```
@@ -382,9 +437,10 @@ Tasmap, paper (#FFFFFF @ 45 %) on aerial. The QML outlines #ECE9D8 and
 not cartographic intent — so replacing them recolours nothing the provider
 designed. Fills stay exactly official.
 
-**Outlines mode = edge band.** A 3 pt band of the official colour just
-*inside* each polygon (`line-offset` inward, 85 %) plus a 0.5 pt graphite
-boundary — the hand-tinted boundary ribbon of old printed maps: ground
+**Outlines mode = edge band.** A 2.5 pt band of the official colour just
+*inside* each polygon (`line-offset` inward, 70 %; dark fills lightened by
+`StyleBuilder.bandColor` to luminance ≥ 0.4 so no band reads as ink)
+plus a 0.5 pt graphite boundary — the hand-tinted boundary ribbon of old printed maps: ground
 readable, sides unambiguous. If tile-clip edges show as seams on device,
 fall back to a centred 2 pt line.
 
@@ -413,7 +469,8 @@ fall back to a centred 2 pt line.
   short names).
 - One box per run of codes sharing a fill, spanning those rows, as printed
   keys bracket a shared symbol. The box mirrors the mode (composited fill,
-  or an edge-band box in Outlines).
+  or an edge-band box in the map's `bandColor` in Outlines); the card's
+  swatch does not (official fill — §2).
 - Tapping a row draws the same-community line for it and, on iPhone,
   returns to the map.
 
@@ -489,8 +546,9 @@ Where the first plan drifted to defaults, and what changed:
 2. Bloom chart: spring-first (Sep → Aug, as proposed) or calendar Jan → Dec?
 3. Overlay strength: at 0.55 / 0.40 / 0.30, how much topo or photo should
    show through? Show her three screenshots.
-4. Key boxes: blended as they appear on the map (proposed), or the official
-   full-strength colour?
+4. ~~Key boxes: blended as they appear on the map, or the official
+   full-strength colour?~~ Resolved: both — the Layers key blends (matches
+   the map), the card's swatch is the official fill (names the unit); §2.
 5. Community codes on the map from z14: a help in the field, or clutter
    over the topo's own lettering?
 6. The dashed "same community elsewhere" line on selection: useful, or

@@ -87,6 +87,23 @@ milestones, map-proof results); the design brief and language is
   (1.79 GB; shapefile EPSG:28355, 482,138 polygons, 156 communities keyed by
   `VEGCODE`; official solid-fill colours in bundled `TASVEG_5_0.qml`).
   Unpacked dir also available: `.../opendata/data/LIST_TASVEG_50_STATEWIDE/`.
+  All plain Polygons (no multis); area p10/50/90 = 0.14 / 1.7 / 20 ha.
+- TASVEG archive (rebuilt 2026-11-03, `pipeline/build_tasveg.py`, 368 MB):
+  layer `tasveg` z0–10 = **mode-raster bands** (VEGCODE rasterised in
+  EPSG:3857 at 19.1 m, mode-resampled per zoom to one point of a 512-pt
+  tile = 78271.5/2^z m, sea = class 0 voting like any community,
+  polygonised 4-connected, VEGCODE only, fed to tippecanoe with
+  `--projection=EPSG:3857` so cells sit exactly on the tile grid); z11–14
+  = the source polygons with all six attributes and feature **id =
+  shapefile FID + 1** (same id in every tile a polygon touches, stable
+  across rebuilds of one release → outline a selection by id). Layer
+  `tasveg_labels` z13–14 = one point per polygon at the maximum-inscribed-
+  circle centre, `VEGCODE`, `area` (m², MGA55), `r` (inscribed radius, m),
+  same id. Why: the old single run's `--coalesce-densest-as-needed` merged
+  ACROSS communities at z5–10 (~35 % of land at z8 painted and tapped as
+  the wrong community statewide; on three test tiles old z8 was only 19–32 %
+  point-correct vs 86–90 % now, z10 84–91 % → 95–97 %). No zoom may coalesce/drop (strategies tripwire;
+  only tiny_polygons ≈ 400–1,600 slivers per zoom ≥ 11, ids survive).
 - F2F chapter PDFs: `https://nre.tas.gov.au/Documents/f2f_*.pdf` (~36 MB
   total; chapters map 1:1 to the 11 VEG_GROUPs).
 - Attribute fields: VEGCODE, VEGCODE_D (name), VEG_GROUP, FOREST_STR,
@@ -283,10 +300,20 @@ milestones, map-proof results); the design brief and language is
   is out of date" made `simctl`/`devicectl` hang) — open Xcode once or
   `sudo xcodebuild -runFirstLaunch`.
 - **Refresh TASVEG (e.g. 6.0 release):** update URL/version in
-  `pipeline/build_tasveg.sh`, run pipeline (`build_style.py` rewrites
-  `ios/IzzyMap/Resources/Data/tasveg_communities.json`), verify
-  counts/colours (IzzyKit's `communities()` test pins 156), rebuild the
-  vector pack.
+  `pipeline/build_tasveg.sh` and the constants in `build_tasveg.py` (zip,
+  `EXPECTED_FEATURES`, `OLD_BOUNDS`); `pipeline/build_tasveg.sh --clip
+  8/232/160` first (densest NW z8 tile, ~2 min), then statewide (~13 min,
+  uv only — no brew GDAL; rasterising is the slow step). It rewrites
+  `ios/IzzyMap/Resources/Data/tasveg_communities.json` (`build_style.py`;
+  IzzyKit's `communities()` test pins 156) and writes
+  `data/tasveg_v2.pmtiles`. Tripwires: strategies (anything but
+  tiny_polygons fails), every source polygon id present at z14, every
+  label point at z13 AND z14 (`-r1`), table codes == tile codes, z11–14
+  bounds ±0.01° of the previous archive. Then swap by hand
+  (`tasveg.pmtiles` → `tasveg_v1.pmtiles`, `_v2` → `tasveg.pmtiles`). Label
+  fit filter for the style: a ~3-letter code at 10–12 pt needs `r` ≥
+  ~12 pt = 43 m at z14, halving per zoom (233k polygons qualify at z14,
+  365k at z15, 439k at z16).
 - **Add an overlay map (e.g. geology):** pipeline variant → PMTiles +
   colour table in `ios/IzzyMap/Resources/Data/`; decoder in IzzyKit,
   source + layers in `StyleBuilder.swift`, a row in the Layers sheet, the
@@ -317,9 +344,25 @@ milestones, map-proof results); the design brief and language is
   one new packs.json entry + a season in the app.
 - **Relief shading pack:** `python3 pipeline/build_raster.py --pack
   hillshade` (z0–15, prune blank@13; 2026-10-03: ~20 min at ~200 tiles/s).
-  Natively the pipeline will pre-render translucent-black tiles (alpha =
-  0.4 × (1 − g/247), the exact multiply look; CC BY allows it) — format
-  measurements in NATIVE_PLAN §3.
+  The native app does not draw this pack — see the next entry.
+- **Relief pack (native):** `uv run --with pillow --with numpy python3
+  pipeline/build_relief.py` (`--measure 1500` first) reads
+  `data/hillshade_tas.pmtiles` and writes `data/relief_tas.pmtiles`: every
+  grey tile → RGBA black, alpha = round(255 × 0.4 × max(0, 1 − g/247))
+  (exactly the web app's shadeTile; CC BY 3.0 AU allows the adaptation),
+  AVIF q85 (Pillow ≥ 11.3 has libavif), PMTiles tile_type 5. Own PMTiles v3
+  writer (no MBTiles detour): dedupes identical bytes, run-length encodes,
+  verified by `pmtiles verify`. 2026-11-03: 198,727 tiles (1:1 with the
+  source), 181,582 distinct, **1.29 GB**, 12 min on 10 cores (the
+  `--measure` estimate said 7 — budget ~1.8×); 200-tile check: mean alpha
+  error 0.44 levels, max 10, RGB always 0. Fully transparent tiles
+  (16,524 + ~550 that quantise to it) are KEPT as one shared 523-byte
+  tile, never omitted: MapLibre Native overzooms the PARENT into a
+  missing tile (measured — a hole archive drew blurred z14 shading at
+  z15). MapLibre Native 7.0.0 on iOS decodes AVIF-with-alpha from a
+  `pmtiles://file://` source (simulator screenshots match a lossless PNG
+  archive within 4/255; WebP alpha q50 within 6). Rebuild only when the
+  hillshade pack changes (new bytes → every device re-downloads).
 - **Do not re-upload topo unless its tiles changed:** `build_raster.py`
   writes extra metadata (`copyright_text`, `built`, …) into the archive, so
   a rebuild of identical tiles has a different byte size — on R2 every
@@ -590,7 +633,10 @@ plants UI, areas), never the workarounds.
   Shipped as the Vegetation/Geology/Off switcher; tiles carry only
   SYMB+color, everything else comes from geology_units.json. NO tippecanoe
   coalescing flags for geology (cross-unit merges = wrong answers; the build
-  fails loudly if a merge strategy fires).
+  fails loudly if a merge strategy fires). Feature ids (2026-11-03, for
+  outline-by-id): top-level GeoJSON `id` = OBJECTID (cached pre-OBJECTID
+  pulls: line number), same on every tile piece; `--tiles-only` re-tiles
+  the cached `work/geology.geojsonl` (5.4 → 5.7 MB).
 
 - **Pre-1750 vegetation overlay — SHIPPED 2026-08-30** (dataset facts):
   NVIS V7.0 "Estimated Pre-1750" Major Vegetation Subgroups, the only
@@ -615,6 +661,10 @@ plants UI, areas), never the workarounds.
   per zoom band with mode resampling (100/200/400/800/1600 m -> z10-11/
   z9/z8/z7/z0-6), tippecanoe per band, tile-join. Tiles carry MVS+color
   only; names/groups/areas live in pre1750_units.json (geology pattern).
+  Feature ids (2026-11-03): band_no × 10⁷ + polygon line number per band
+  (1 = 100 m … 5 = 1600 m), identical on every tile piece; this stops
+  `--coalesce` merging distinct polygons (+27 %: 19.0 → 24.1 MB).
+  `--tiles-only` re-tiles cached `work/pre1750_<cell>.geojsonl` without GDAL.
 
 
 ## Deployed endpoints (2026-08-29; still live — the PWA keeps running until the native app is on all devices)

@@ -37,6 +37,9 @@ targets:
     sources:
       - path: IzzyMap/Sources
       - path: IzzyMap/Resources/Assets.xcassets
+      # Icon Composer layered icon (iOS 26+); same name as the asset-catalog
+      # AppIcon set, which stays as the pre-26 / fallback rendition
+      - path: IzzyMap/Resources/AppIcon.icon
       # folder references: the bundle keeps the directory layout, so the
       # style can say asset://glyphs/{fontstack}/{range}.pbf
       - path: IzzyMap/Resources/Data

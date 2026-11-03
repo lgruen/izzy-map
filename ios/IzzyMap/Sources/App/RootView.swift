@@ -12,8 +12,9 @@ struct RootView: View {
     @Environment(\.verticalSizeClass) private var heightClass
 
     @State private var screen = ScreenMetrics()
-    /// Global y of the compact sheet's top edge.
-    @State private var sheetTop: CGFloat?
+    /// The compact sheet's frame in global coordinates, as measured inside
+    /// it (the system places the floating sheet; nil until it reports).
+    @State private var sheetFrame: CGRect?
     @State private var sheetResting = true
     /// Sheet height at its smallest detent with no card: the map's bottom inset.
     @State private var restingLift: CGFloat = 0
@@ -36,7 +37,9 @@ struct RootView: View {
                 model: model,
                 chrome: chrome,
                 trackingMode: model.trackingMode,
-                hasSelection: model.selection != nil
+                hasSelection: model.selection != nil,
+                layers: model.layers,
+                keyHighlight: model.keyHighlight
             )
 
             if !usesSheet {
@@ -51,17 +54,19 @@ struct RootView: View {
                 .padding([.trailing, .top], Self.margin)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
+            // Bottom ornaments on the panel's grid: on a phone the cluster's
+            // leading edge and the (i)'s trailing edge sit on the sheet's
+            // edges, the same gap above its top; beside the card they share
+            // the card's and the controls' margins.
             GridPill(map: model.map)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pillHeight = $0 }
-                .padding(.leading, Self.margin)
+                .padding(.leading, ornamentInsets.leading)
                 .padding(.bottom, bottomOrnamentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 
             AttributionButton { model.present(.attribution) }
-                // its 44 pt hit area overhangs the 32 pt glyph: keep the glyph
-                // on the pill's margins
-                .padding(.trailing, Self.margin - 6)
-                .padding(.bottom, bottomOrnamentInset - 6)
+                .padding(.trailing, ornamentInsets.trailing)
+                .padding(.bottom, bottomOrnamentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
 
             if let notice = model.notice {
@@ -84,12 +89,19 @@ struct RootView: View {
         .onGeometryChange(for: ScreenMetrics.self) { proxy in
             ScreenMetrics(
                 size: proxy.size,
+                frame: proxy.frame(in: .global),
                 safe: proxy.safeAreaInsets,
                 bottom: proxy.frame(in: .global).maxY + proxy.safeAreaInsets.bottom
             )
         } action: { screen = $0 }
         .sheet(isPresented: .constant(usesSheet)) {
-            CompactPanelSheet(model: model) { sheetTop = $0 } onRestingChange: { sheetResting = $0 }
+            CompactPanelSheet(model: model) { frame in
+                // whole points: sub-point jitter during a detent change
+                // would re-render the root for nothing
+                let rounded = CGRect(x: frame.minX.rounded(), y: frame.minY.rounded(),
+                                     width: frame.width.rounded(), height: frame.height.rounded())
+                if rounded != sheetFrame { sheetFrame = rounded }
+            } onRestingChange: { sheetResting = $0 }
         }
         // Remember the header-only sheet height once the sheet settles there.
         .task(id: RestingProbe(lift: sheetLift, resting: sheetResting, empty: model.selection == nil)) {
@@ -99,13 +111,29 @@ struct RootView: View {
         }
     }
 
+    /// Gap between the bottom ornaments and the sheet's top edge (or the
+    /// safe area's bottom beside the card).
+    private static let ornamentGap: CGFloat = 8
+
     /// Bottom padding of the pill and the (i) control.
-    private var bottomOrnamentInset: CGFloat { bottomBase - screen.safe.bottom + ornamentLift + 8 }
+    private var bottomOrnamentInset: CGFloat { bottomBase - screen.safe.bottom + ornamentLift + Self.ornamentGap }
+
+    /// Leading padding of the pill, trailing padding of the (i), from the
+    /// safe area. Sheet: the measured sheet's edges (the floating sheet is
+    /// inset by the system, more on some phones than others); before the
+    /// first measurement, and beside the card: the chrome margin.
+    private var ornamentInsets: (leading: CGFloat, trailing: CGFloat) {
+        guard usesSheet, let sheetFrame, sheetFrame.width > 0, screen.frame.width > 0 else {
+            return (Self.margin, Self.margin)
+        }
+        return (max(0, sheetFrame.minX - screen.frame.minX),
+                max(0, screen.frame.maxX - sheetFrame.maxX))
+    }
 
     /// Distance of the compact sheet's top edge above the screen bottom.
     private var sheetLift: CGFloat {
-        guard usesSheet, let sheetTop else { return 0 }
-        return max(0, screen.bottom - sheetTop)
+        guard usesSheet, let sheetFrame else { return 0 }
+        return max(0, screen.bottom - sheetFrame.minY)
     }
 
     /// Bottom edge of the uncovered map, from the screen bottom.
@@ -113,10 +141,15 @@ struct RootView: View {
         usesSheet ? max(restingLift, screen.safe.bottom) : screen.safe.bottom + 8
     }
 
-    /// How far the bottom ornaments ride up with a raised sheet (up to medium).
+    /// How far the bottom ornaments ride up with a raised sheet: they stay
+    /// on its top edge through the medium detent (taller than half the
+    /// screen on iOS 26) and stop below the top-trailing controls, where the
+    /// large sheet covers them.
     private var ornamentLift: CGFloat {
         guard usesSheet else { return 0 }
-        let cap = max(0, (screen.size.height + screen.safe.top + screen.safe.bottom) / 2 - bottomBase)
+        let highest = screen.safe.top + Self.margin + controlsHeight + Self.margin
+            + max(pillHeight, 44) + Self.ornamentGap
+        let cap = max(0, screen.size.height + screen.safe.top + screen.safe.bottom - highest - bottomBase)
         return min(max(0, sheetLift - bottomBase), cap)
     }
 
@@ -134,6 +167,8 @@ struct RootView: View {
 
 nonisolated struct ScreenMetrics: Equatable, Sendable {
     var size: CGSize = .zero
+    /// The safe-area frame in global coordinates.
+    var frame: CGRect = .zero
     var safe = EdgeInsets()
     /// Global y of the screen's bottom edge.
     var bottom: CGFloat = 0
@@ -152,9 +187,12 @@ private struct MapLayer: View {
     var chrome: MapChrome
     var trackingMode: TrackingMode
     var hasSelection: Bool
+    var layers: LayerState
+    var keyHighlight: String?
 
     var body: some View {
-        MapView(model: model, chrome: chrome, trackingMode: trackingMode, hasSelection: hasSelection)
+        MapView(model: model, chrome: chrome, trackingMode: trackingMode, hasSelection: hasSelection,
+                layers: layers, keyHighlight: keyHighlight)
             .ignoresSafeArea()
             .accessibilityLabel("Map")
             // UI tests wait for "idle" (camera settled, tiles loaded) before tapping

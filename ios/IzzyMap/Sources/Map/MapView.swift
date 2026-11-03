@@ -23,11 +23,13 @@ struct MapView: UIViewRepresentable {
     var chrome: MapChrome
     var trackingMode: TrackingMode
     var hasSelection: Bool
+    var layers: LayerState
+    var keyHighlight: String?
 
     func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let map = MLNMapView(frame: .zero, styleJSON: model.styleJSON)
+        let map = MLNMapView(frame: .zero, styleJSON: context.coordinator.initialStyleJSON())
         context.coordinator.attach(to: map)
         return map
     }
@@ -36,6 +38,8 @@ struct MapView: UIViewRepresentable {
         let coordinator = context.coordinator
         coordinator.apply(chrome: chrome, to: map)
         coordinator.apply(tracking: trackingMode, to: map)
+        coordinator.apply(layers: layers, to: map)
         if !hasSelection { coordinator.clearSelectionShape() }
+        coordinator.apply(keyHighlight: keyHighlight)
     }
 }
