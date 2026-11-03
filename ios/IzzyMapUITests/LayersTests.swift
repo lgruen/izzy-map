@@ -24,18 +24,17 @@ final class LayersTests: XCTestCase {
             FileManager.default.fileExists(atPath: Self.dataDir.appending(path: "tasveg.pmtiles").path(percentEncoded: false)),
             "no local packs at \(Self.dataDir.path)"
         )
-        let app = XCUIApplication()
-        app.resetAuthorizationStatus(for: .location)
         let camera = #"{"latitude":\#(latitude),"longitude":\#(longitude),"zoom":\#(zoom),"heading":0}"#
-        app.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false),
-                               "-lastCamera", Self.hex(camera), "-layerState", Self.hex(layers)]
+        let app = offlineApp(["-dataDir", Self.dataDir.path(percentEncoded: false),
+                              "-lastCamera", Self.hex(camera), "-layerState", Self.hex(layers)])
+        app.resetAuthorizationStatus(for: .location)
         app.launch()
-        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         return app
     }
 
     @MainActor
-    private func waitForMapIdle(_ app: XCUIApplication, timeout: TimeInterval = 20) {
+    private func waitForMapIdle(_ app: XCUIApplication, timeout: TimeInterval = patience(20)) {
         let map = app.descendants(matching: .any)["map"]
         let found = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'idle'"), object: map)
         _ = XCTWaiter().wait(for: [found], timeout: timeout)
@@ -44,7 +43,7 @@ final class LayersTests: XCTestCase {
     @MainActor
     private func openLayers(_ app: XCUIApplication) {
         app.buttons["layers-button"].tap()
-        XCTAssertTrue(app.navigationBars["Layers"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Layers"].waitForExistence(timeout: patience(5)))
     }
 
     /// Scrolls the sheet until `element` can be tapped.
@@ -71,7 +70,7 @@ final class LayersTests: XCTestCase {
         let app = try launch()
         openLayers(app)
         let topo = app.buttons["base-topo"], aerial = app.buttons["base-aerial"]
-        XCTAssertTrue(topo.waitForExistence(timeout: 5))
+        XCTAssertTrue(topo.waitForExistence(timeout: patience(5)))
         XCTAssertTrue(topo.isSelected)
         aerial.tap()
         XCTAssertTrue(aerial.isSelected)
@@ -88,11 +87,10 @@ final class LayersTests: XCTestCase {
 
         // the state survives a relaunch (without a -layerState argument)
         app.terminate()
-        let again = XCUIApplication()
-        again.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false)]
+        let again = offlineApp(["-dataDir", Self.dataDir.path(percentEncoded: false)])
         again.launch()
         openLayers(again)
-        XCTAssertTrue(again.buttons["base-aerial"].waitForExistence(timeout: 5))
+        XCTAssertTrue(again.buttons["base-aerial"].waitForExistence(timeout: patience(5)))
         XCTAssertTrue(again.buttons["base-aerial"].isSelected)
         reveal(again.buttons["overlay-pre1750"], in: again)
         XCTAssertTrue(again.buttons["overlay-pre1750"].isSelected)
@@ -105,8 +103,8 @@ final class LayersTests: XCTestCase {
         let link = app.buttons["legend-link"]
         reveal(link, in: app)
         link.tap()
-        XCTAssertTrue(app.navigationBars["Vegetation key"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Dry eucalypt forest and woodland"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Vegetation key"].waitForExistence(timeout: patience(5)))
+        XCTAssertTrue(app.staticTexts["Dry eucalypt forest and woodland"].waitForExistence(timeout: patience(5)))
         XCTAssertTrue(app.buttons["strength-full"].exists, "the key has its own strength control")
         attach("legend")
     }
@@ -130,8 +128,8 @@ final class LayersTests: XCTestCase {
         save("map-topo-veg")
         // tap a polygon: the card + selection line
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.32)).tap()
-        _ = app.buttons["card-close"].waitForExistence(timeout: 5)
-        waitForMapIdle(app, timeout: 5)
+        _ = app.buttons["card-close"].waitForExistence(timeout: patience(5))
+        waitForMapIdle(app, timeout: patience(5))
         save("card-veg")
         app.buttons["card-close"].tap()
 
@@ -145,7 +143,7 @@ final class LayersTests: XCTestCase {
         let link = app.buttons["legend-link"]
         reveal(link, in: app)
         link.tap()
-        _ = app.navigationBars["Vegetation key"].waitForExistence(timeout: 5)
+        _ = app.navigationBars["Vegetation key"].waitForExistence(timeout: patience(5))
         sleep(1)
         save("legend-veg")
         app.terminate()
@@ -174,7 +172,7 @@ final class LayersTests: XCTestCase {
         app = try launch(layers: #"{"overlay":"geology"}"#, latitude: -42.2, longitude: 146.6, zoom: 9)
         waitForMapIdle(app)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.32)).tap()
-        _ = app.buttons["card-close"].waitForExistence(timeout: 5)
+        _ = app.buttons["card-close"].waitForExistence(timeout: patience(5))
         save("card-geology")
         app.buttons["card-close"].tap()
         openLayers(app)
@@ -188,7 +186,7 @@ final class LayersTests: XCTestCase {
         app = try launch(layers: #"{"overlay":"pre1750"}"#, latitude: -42.2, longitude: 146.6, zoom: 9)
         waitForMapIdle(app)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.32)).tap()
-        _ = app.buttons["card-close"].waitForExistence(timeout: 5)
+        _ = app.buttons["card-close"].waitForExistence(timeout: patience(5))
         save("card-pre1750")
         app.terminate()
 
@@ -202,7 +200,7 @@ final class LayersTests: XCTestCase {
         waitForMapIdle(app)
         for dy in stride(from: 0.40, through: 0.52, by: 0.02) where !app.buttons["card-close"].exists {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy)).tap()
-            _ = app.buttons["card-close"].waitForExistence(timeout: 1.5)
+            _ = app.buttons["card-close"].waitForExistence(timeout: patience(1.5))
         }
         save("card-tree")
         app.terminate()

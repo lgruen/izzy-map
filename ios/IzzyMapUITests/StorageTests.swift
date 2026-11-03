@@ -10,10 +10,9 @@ final class StorageTests: XCTestCase {
 
     @MainActor
     private func launch(packs: String = "vector,topo,relief") -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = ["-fakePacks", packs, "-fakePackSeconds", "2"]
+        let app = offlineApp(["-fakePacks", packs, "-fakePackSeconds", "2"])
         app.launch()
-        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         return app
     }
 
@@ -21,11 +20,11 @@ final class StorageTests: XCTestCase {
     @MainActor
     private func openStorage(_ app: XCUIApplication) {
         app.buttons["layers-button"].tap()
-        XCTAssertTrue(app.navigationBars["Layers"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Layers"].waitForExistence(timeout: patience(5)))
         let link = app.buttons["storage-link"]
         for _ in 0 ..< 8 where !(link.exists && link.isHittable) { drag(app, under: "Layers") }
         link.tap()
-        XCTAssertTrue(app.navigationBars["Storage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Storage"].waitForExistence(timeout: patience(5)))
     }
 
     /// Drags the list up by ~300 pt under the navigation bar (XCUITest gives
@@ -53,7 +52,7 @@ final class StorageTests: XCTestCase {
     func testGetAndRemoveAPackFromStorage() {
         let app = launch()
         openStorage(app)
-        XCTAssertTrue(app.descendants(matching: .any)["storage-gauge"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["storage-gauge"].waitForExistence(timeout: patience(5)))
         // core packs show as on the device, without a control
         XCTAssertTrue(app.staticTexts["pack-topo-status"].label.hasPrefix("On this"))
         XCTAssertFalse(app.buttons["pack-topo-remove"].exists)
@@ -63,40 +62,39 @@ final class StorageTests: XCTestCase {
         XCTAssertTrue(get.isHittable)
         get.tap()
         // one tap: progress at once, then on the device
-        XCTAssertTrue(app.buttons["pack-tasmap-progress"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["pack-tasmap-progress"].waitForExistence(timeout: patience(2)))
         let remove = app.buttons["pack-tasmap-remove"]
-        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        XCTAssertTrue(remove.waitForExistence(timeout: patience(10)))
         XCTAssertTrue(app.staticTexts["pack-tasmap-status"].label.hasPrefix("On this"))
 
         // Remove asks first, then it's a Get again
         remove.tap()
         let confirm = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove from'")).firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        XCTAssertTrue(confirm.waitForExistence(timeout: patience(5)))
         confirm.tap()
-        XCTAssertTrue(app.buttons["pack-tasmap-get"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["pack-tasmap-get"].waitForExistence(timeout: patience(5)))
     }
 
     @MainActor
     func testStoppedDownloadStaysStopped() {
-        let app = XCUIApplication()
         // a slow fake download, so Stop lands mid-way
-        app.launchArguments = ["-fakePacks", "vector,topo,relief", "-fakePackSeconds", "6"]
+        let app = offlineApp(["-fakePacks", "vector,topo,relief", "-fakePackSeconds", "6"])
         app.launch()
-        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         openStorage(app)
         let get = app.buttons["pack-tasmap-get"]
         reveal(get, in: app)
         get.tap()
         let ring = app.buttons["pack-tasmap-progress"]
-        XCTAssertTrue(ring.waitForExistence(timeout: 2))
+        XCTAssertTrue(ring.waitForExistence(timeout: patience(2)))
         ring.tap()
         let stop = app.buttons["Stop Download"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCTAssertTrue(stop.waitForExistence(timeout: patience(5)))
         stop.tap()
-        XCTAssertTrue(app.buttons["pack-tasmap-get"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["pack-tasmap-get"].waitForExistence(timeout: patience(5)))
         // the stopped download's late steps never bring it back
         let back = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: ring)
-        XCTAssertEqual(XCTWaiter().wait(for: [back], timeout: 7), .timedOut)
+        XCTAssertEqual(XCTWaiter().wait(for: [back], timeout: patience(7)), .timedOut)
         XCTAssertFalse(app.buttons["pack-tasmap-remove"].exists)
     }
 
@@ -111,11 +109,11 @@ final class StorageTests: XCTestCase {
         reveal(all, in: app)
         all.tap()
         // every missing season downloads; once all are here the row goes away
-        XCTAssertTrue(app.buttons["pack-season-2020-progress"].waitForExistence(timeout: 3)
+        XCTAssertTrue(app.buttons["pack-season-2020-progress"].waitForExistence(timeout: patience(3))
             || app.buttons["pack-season-2020-remove"].exists)
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: all)
-        XCTAssertEqual(XCTWaiter().wait(for: [gone], timeout: 12), .completed)
+        XCTAssertEqual(XCTWaiter().wait(for: [gone], timeout: patience(12)), .completed)
         // (the bottom season: still on screen in the iPad's shorter form sheet)
-        XCTAssertTrue(app.buttons["pack-season-2020-remove"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["pack-season-2020-remove"].waitForExistence(timeout: patience(2)))
     }
 }

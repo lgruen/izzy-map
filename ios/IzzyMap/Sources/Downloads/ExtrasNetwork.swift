@@ -28,7 +28,11 @@ nonisolated enum ExtrasNetwork {
         config.timeoutIntervalForResource = max(timeout, resourceTimeout)
         config.httpMaximumConnectionsPerHost = 4
         #if DEBUG
-        if let stub = StubNetwork.current { config.protocolClasses = [stub] + (config.protocolClasses ?? []) }
+        // the stub answers first; simulated offline, whatever it doesn't fails
+        var debugClasses: [AnyClass] = []
+        if let stub = StubNetwork.current { debugClasses.append(stub) }
+        if DebugNetwork.simulatedOffline { debugClasses.append(FailingURLProtocol.self) }
+        config.protocolClasses = debugClasses + (config.protocolClasses ?? [])
         #endif
         return config
     }

@@ -5,7 +5,7 @@ Three GitHub Actions workflows, all on GitHub's Xcode 27 preview runner
 
 | Workflow | File | When | What |
 |---|---|---|---|
-| CI | `.github/workflows/ci.yml` | every push / PR touching `ios/**` | `swift test` (IzzyKit), `xcodebuild test` on a simulator. No secrets, no signing. |
+| CI | `.github/workflows/ci.yml` | every push / PR touching `ios/**` | `swift test` (IzzyKit), `xcodebuild test` on a simulator. No secrets; ad hoc signing only (see "UI tests in CI"). |
 | IzzyMap setup | `.github/workflows/setup.yml` | manual only | validate secrets → App IDs → certificates and profiles |
 | TestFlight | `.github/workflows/testflight.yml` | manual; push to `main` touching the app with `[testflight]` in the head commit message; 2nd Sunday of each month | refresh profiles → archive → upload to TestFlight |
 
@@ -272,6 +272,41 @@ meant to stop. The remedy is any one of:
 
 Rule of thumb: if the repo has been quiet for about two months, check the
 Actions tab, and look at the expiry date of the newest run's summary.
+
+## UI tests in CI
+
+The runner is a shared VM in the US with a slow simulator; the UI tests
+are built to pass there as they do on a Mac:
+
+- **Ad hoc signing, never `CODE_SIGNING_ALLOWED=NO`.** ci.yml passes
+  `CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=` ("Sign to
+  Run Locally": no team, certificate or profile). An unsigned build has no
+  entitlements, so the app group named by `BAAppGroupID` is missing, and
+  Background Assets *traps* on its first use ("The app group … is
+  inaccessible"): every test that launched without `-dataDir`/`-fakePacks`
+  crashed a few seconds in (runs 41597894375, 41633880403 — the "XCTAssertTrue
+  failed" on `layers-button` and both "Lost connection to the application"
+  rotation failures). The app now also checks the group before touching
+  `AssetPackManager` (`PackStore.launch`: no group → no packs, a logged
+  fault, no crash), but CI must still sign so the real Background Assets
+  path is what the tests exercise.
+- **Offline, always.** Every UI test launches through `offlineApp(_:)`
+  (`ios/IzzyMapUITests/UITestSupport.swift`): `-simulateOffline YES` leaves
+  the live LIST sources out of the style, fails every http(s) request the
+  app makes (MapLibre, the extras sessions, `URLSession.shared`; a
+  `-stubNetwork` stub still answers first) and skips the Background Assets
+  manifest refresh. `-networkLog <file>` makes the app write down each
+  request it stopped; the test fails at tear-down if there was one. Before
+  this, the US runner fetched live LIST tiles and timed out (-1001).
+- **Scaled timeouts.** Waits are on conditions; their ceilings go through
+  `patience(_:)`, multiplied by `TEST_RUNNER_UI_TIMEOUT_SCALE` (3 in
+  ci.yml, 1 locally). On the runner a single XCUITest snapshot took 9–16 s,
+  so a 10 s wait could expire on its first query with the answer already
+  on screen (SearchTests, run 41633880403). The accessibility tree is not
+  the cause: the map exposes two elements (compass, credits) whatever the
+  map shows (measured 2026-11-03, ~60 elements in all, 0.1 s per snapshot
+  on a Mac).
+- Tests that need the developer's `data/` packs skip in CI.
 
 ## Troubleshooting
 

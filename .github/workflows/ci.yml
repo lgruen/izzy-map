@@ -1,6 +1,6 @@
 # Native app tests (docs/NATIVE_PLAN.md §6): IzzyKit unit tests on the Mac,
-# then the app's unit + UI tests on an iOS simulator. No secrets, no signing:
-# simulator builds only. TestFlight: testflight.yml + setup.yml (docs/CI.md).
+# then the app's unit + UI tests on an iOS simulator. No secrets; ad hoc signing
+# of simulator builds only. TestFlight: testflight.yml + setup.yml (docs/CI.md).
 name: CI
 
 on:
@@ -131,7 +131,19 @@ jobs:
       - name: xcodebuild test
         working-directory: ios
         # No -dataDir: the UI tests run without the developer's packs and
-        # skip the data-dependent case. Simulator builds need no signing.
+        # skip the data-dependent cases. Every UI test runs offline
+        # (`-simulateOffline`, IzzyMapUITests/UITestSupport.swift).
+        #
+        # Signing: ad hoc ("Sign to Run Locally": no team, certificate or
+        # profile), NOT CODE_SIGNING_ALLOWED=NO. An unsigned build carries no
+        # entitlements, so the app group named by BAAppGroupID is missing
+        # and Background Assets traps on first use: every plain launch
+        # crashed (2026-11-03). Ad hoc keeps the simulator entitlements.
+        #
+        # The shared runner's simulator is several times slower than a Mac
+        # (an XCUITest snapshot took 9–16 s): UI test timeouts are scaled.
+        env:
+          TEST_RUNNER_UI_TIMEOUT_SCALE: "3"
         run: |
           set -o pipefail
           xcodebuild test \
@@ -139,7 +151,7 @@ jobs:
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath build/dd \
             -resultBundlePath build/IzzyMap.xcresult \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

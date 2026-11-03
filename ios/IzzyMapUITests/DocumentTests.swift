@@ -22,16 +22,15 @@ final class DocumentTests: XCTestCase {
             FileManager.default.fileExists(atPath: Self.dataDir.appending(path: "tasveg.pmtiles").path(percentEncoded: false)),
             "no local packs")
         XCUIDevice.shared.orientation = .portrait
-        let app = XCUIApplication()
         let camera = #"{"latitude":-42.905,"longitude":147.245,"zoom":14,"heading":0}"#
-        app.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false),
-                               "-lastCamera", Self.hex(camera), "-layerState", Self.hex("{}"),
-                               "-stubNetwork", "documents"]
+        let app = offlineApp(["-dataDir", Self.dataDir.path(percentEncoded: false),
+                              "-lastCamera", Self.hex(camera), "-layerState", Self.hex("{}"),
+                              "-stubNetwork", "documents"])
         app.launch()
-        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         let map = app.descendants(matching: .any)["map"]
         let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'idle'"), object: map)
-        _ = XCTWaiter().wait(for: [idle], timeout: 20)
+        _ = XCTWaiter().wait(for: [idle], timeout: patience(20))
         return app
     }
 
@@ -42,7 +41,7 @@ final class DocumentTests: XCTestCase {
         let read = app.buttons["read-description"]
         for dy in [0.3, 0.34, 0.26, 0.38, 0.22] where !read.exists {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy)).tap()
-            _ = read.waitForExistence(timeout: 4)
+            _ = read.waitForExistence(timeout: patience(4))
         }
         XCTAssertTrue(read.exists, "no community card with a description")
         for _ in 0 ..< 4 where !read.isHittable {
@@ -51,8 +50,8 @@ final class DocumentTests: XCTestCase {
         }
         read.tap()
         let reader = app.descendants(matching: .any)["pdf-reader"]
-        XCTAssertTrue(reader.waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["reader-page"].waitForExistence(timeout: 5))
+        XCTAssertTrue(reader.waitForExistence(timeout: patience(15)))
+        XCTAssertTrue(app.staticTexts["reader-page"].waitForExistence(timeout: patience(5)))
         return reader
     }
 
@@ -68,9 +67,9 @@ final class DocumentTests: XCTestCase {
         let reader = openReader(app)
         XCTAssertEqual(reader.value as? String, "Close Document")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        if !reader.waitForNonExistence(timeout: 2) { app.buttons["reader-close"].tap() }
-        XCTAssertTrue(reader.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["card-close"].waitForExistence(timeout: 5), "the card under the reader stays")
+        if !reader.waitForNonExistence(timeout: patience(2)) { app.buttons["reader-close"].tap() }
+        XCTAssertTrue(reader.waitForNonExistence(timeout: patience(5)))
+        XCTAssertTrue(app.buttons["card-close"].waitForExistence(timeout: patience(5)), "the card under the reader stays")
     }
 
     /// iPhone rotation switches sheet ↔ card layout: the reader is
@@ -84,14 +83,14 @@ final class DocumentTests: XCTestCase {
         let before = page.label
         XCUIDevice.shared.orientation = .landscapeLeft
         sleep(2)
-        XCTAssertTrue(reader.waitForExistence(timeout: 10), "the reader is still up after the switch")
-        XCTAssertTrue(page.waitForExistence(timeout: 5))
+        XCTAssertTrue(reader.waitForExistence(timeout: patience(10)), "the reader is still up after the switch")
+        XCTAssertTrue(page.waitForExistence(timeout: patience(5)))
         XCTAssertEqual(page.label, before)
         XCUIDevice.shared.orientation = .portrait
         sleep(2)
-        XCTAssertTrue(reader.waitForExistence(timeout: 10), "and after switching back")
+        XCTAssertTrue(reader.waitForExistence(timeout: patience(10)), "and after switching back")
         app.buttons["reader-close"].tap()
-        XCTAssertTrue(reader.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["card-close"].waitForExistence(timeout: 5))
+        XCTAssertTrue(reader.waitForNonExistence(timeout: patience(5)))
+        XCTAssertTrue(app.buttons["card-close"].waitForExistence(timeout: patience(5)))
     }
 }

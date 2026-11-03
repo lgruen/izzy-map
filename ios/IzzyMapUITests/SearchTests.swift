@@ -15,15 +15,14 @@ final class SearchTests: XCTestCase {
     /// Over Hobart, no launch fix, default layers.
     @MainActor
     private func launch() -> XCUIApplication {
-        let app = XCUIApplication()
-        app.resetAuthorizationStatus(for: .location)
         let camera = #"{"latitude":-42.88,"longitude":147.33,"zoom":13,"heading":0}"#
         let hex = camera.utf8.map { String(format: "%02x", $0) }.joined()
         let layers = "{}".utf8.map { String(format: "%02x", $0) }.joined()
-        app.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false), "-lastCamera", "<\(hex)>",
-                               "-layerState", "<\(layers)>"]
+        let app = offlineApp(["-dataDir", Self.dataDir.path(percentEncoded: false), "-lastCamera", "<\(hex)>",
+                              "-layerState", "<\(layers)>"])
+        app.resetAuthorizationStatus(for: .location)
         app.launch()
-        XCTAssertTrue(app.textFields["search-field"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.textFields["search-field"].waitForExistence(timeout: patience(15)))
         return app
     }
 
@@ -46,7 +45,7 @@ final class SearchTests: XCTestCase {
         let first = firstResult(app)
         let match = NSPredicate(format: "label CONTAINS %@", text)
         let found = XCTNSPredicateExpectation(predicate: match, object: first)
-        XCTAssertEqual(XCTWaiter().wait(for: [found], timeout: 10), .completed,
+        XCTAssertEqual(XCTWaiter().wait(for: [found], timeout: patience(10)), .completed,
                        "first result should contain “\(text)”, is “\(first.exists ? first.label : "none")”")
     }
 
@@ -55,7 +54,7 @@ final class SearchTests: XCTestCase {
         let app = launch()
         let field = app.textFields["search-field"]
         field.tap()
-        XCTAssertTrue(app.buttons["search-cancel"].waitForExistence(timeout: 5), "searching shows Cancel")
+        XCTAssertTrue(app.buttons["search-cancel"].waitForExistence(timeout: patience(5)), "searching shows Cancel")
 
         field.typeText("salamanca")
         // the engine ranks the square first (docs: "Salamanca" → the
@@ -73,29 +72,29 @@ final class SearchTests: XCTestCase {
         // Return picks the first row of the CURRENT text
         field.typeText("\n")
         let chip = app.buttons["search-chip"]
-        XCTAssertTrue(chip.waitForExistence(timeout: 5), "a pick shows the place in the header")
+        XCTAssertTrue(chip.waitForExistence(timeout: patience(5)), "a pick shows the place in the header")
         XCTAssertTrue(chip.label.hasPrefix("Seven Mile Beach"), chip.label)
         XCTAssertFalse(app.buttons["search-cancel"].exists, "a pick ends searching")
         let pin = app.descendants(matching: .any)["search-pin"]
-        XCTAssertTrue(pin.waitForExistence(timeout: 5), "a pick drops a pin")
+        XCTAssertTrue(pin.waitForExistence(timeout: patience(5)), "a pick drops a pin")
         attachScreenshot("picked")
 
         // the chip flies there again (no state change to see but the pin stays)
         chip.tap()
         XCTAssertTrue(pin.exists)
-        XCTAssertFalse(app.buttons["search-cancel"].waitForExistence(timeout: 1), "the chip re-flies, it doesn't open search")
+        XCTAssertFalse(app.buttons["search-cancel"].waitForExistence(timeout: patience(1)), "the chip re-flies, it doesn't open search")
 
         // reopening restores the query and its results
         field.tap()
-        XCTAssertTrue(app.buttons["search-cancel"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["search-cancel"].waitForExistence(timeout: patience(5)))
         XCTAssertEqual(field.value as? String, "7 mile beach")
         waitForFirst(app, containing: "Seven Mile Beach")
         app.buttons["search-cancel"].tap()
 
         // × clears the place and its pin
-        XCTAssertTrue(app.buttons["search-chip-clear"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["search-chip-clear"].waitForExistence(timeout: patience(5)))
         app.buttons["search-chip-clear"].tap()
-        XCTAssertFalse(chip.waitForExistence(timeout: 2))
+        XCTAssertFalse(chip.waitForExistence(timeout: patience(2)))
         XCTAssertFalse(pin.exists, "the pin goes with the chip")
     }
 
@@ -107,7 +106,7 @@ final class SearchTests: XCTestCase {
         field.typeText("salamanca")
         waitForFirst(app, containing: "Salamanca")
         firstResult(app).tap()
-        XCTAssertTrue(app.buttons["search-chip"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["search-chip"].waitForExistence(timeout: patience(5)))
 
         field.tap()
         app.buttons["search-clear-text"].tap()
@@ -115,7 +114,7 @@ final class SearchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Recent"].exists)
 
         field.typeText("qzxqzx")
-        XCTAssertTrue(app.descendants(matching: .any)["search-no-results"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["search-no-results"].waitForExistence(timeout: patience(5)))
     }
 
     /// iPad: ⌘F opens search, ↓ ↓ highlight the second row, Return picks
@@ -131,7 +130,7 @@ final class SearchTests: XCTestCase {
         let cancel = app.buttons["search-cancel"]
         for _ in 0 ..< 3 where !cancel.exists {
             app.typeKey("f", modifierFlags: .command)
-            _ = cancel.waitForExistence(timeout: 2)
+            _ = cancel.waitForExistence(timeout: patience(2))
         }
         let field = app.textFields["search-field"]
         XCTAssertTrue(cancel.exists, "⌘F opens search")
@@ -146,7 +145,7 @@ final class SearchTests: XCTestCase {
         // doesn't pass a test's hardware Return to onSubmit)
         field.typeText("\n")
         let chip = app.buttons["search-chip"]
-        XCTAssertTrue(chip.waitForExistence(timeout: 5))
+        XCTAssertTrue(chip.waitForExistence(timeout: patience(5)))
         let name = String(chip.label.split(separator: ",").first ?? "")
         XCTAssertTrue(second.contains(", \(name),"), "picked “\(chip.label)”, second row was “\(second)”")
 
@@ -176,7 +175,7 @@ final class SearchTests: XCTestCase {
         if pad { app.typeKey(.downArrow, modifierFlags: []) }
         shot("results")
         field.typeText("\n")
-        XCTAssertTrue(app.buttons["search-chip"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["search-chip"].waitForExistence(timeout: patience(5)))
         shot("picked")
         field.tap()
         app.buttons["search-clear-text"].tap()

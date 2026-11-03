@@ -40,18 +40,17 @@ final class ChromeTourTests: XCTestCase {
 
     @MainActor
     private func launch(layers: String, latitude: Double, longitude: Double, zoom: Double) -> XCUIApplication {
-        let app = XCUIApplication()
         let camera = #"{"latitude":\#(latitude),"longitude":\#(longitude),"zoom":\#(zoom),"heading":0}"#
-        app.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false),
-                               "-lastCamera", Self.hex(camera), "-layerState", Self.hex(layers)]
+        let app = offlineApp(["-dataDir", Self.dataDir.path(percentEncoded: false),
+                              "-lastCamera", Self.hex(camera), "-layerState", Self.hex(layers)])
         app.launch()
-        _ = app.buttons["layers-button"].waitForExistence(timeout: 15)
+        _ = app.buttons["layers-button"].waitForExistence(timeout: patience(15))
         waitForIdle(app)
         return app
     }
 
     @MainActor
-    private func waitForIdle(_ app: XCUIApplication, timeout: TimeInterval = 20) {
+    private func waitForIdle(_ app: XCUIApplication, timeout: TimeInterval = patience(20)) {
         let map = app.descendants(matching: .any)["map"]
         let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'idle'"), object: map)
         _ = XCTWaiter().wait(for: [idle], timeout: timeout)
@@ -61,7 +60,7 @@ final class ChromeTourTests: XCTestCase {
     private func tapCard(_ app: XCUIApplication, dys: [Double] = [0.32, 0.36, 0.28, 0.4]) {
         for dy in dys where !app.buttons["card-close"].exists {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy)).tap()
-            _ = app.buttons["card-close"].waitForExistence(timeout: 2)
+            _ = app.buttons["card-close"].waitForExistence(timeout: patience(2))
         }
         sleep(1)
     }
@@ -77,7 +76,7 @@ final class ChromeTourTests: XCTestCase {
         save("card-geology")
         if app.buttons["card-close"].exists { app.buttons["card-close"].tap() }
         app.buttons["layers-button"].tap()
-        _ = app.navigationBars["Layers"].waitForExistence(timeout: 5)
+        _ = app.navigationBars["Layers"].waitForExistence(timeout: patience(5))
         sleep(3)
         save("layers-medium")
         // large detent (phone sheet): drag the navigation bar up
@@ -92,7 +91,7 @@ final class ChromeTourTests: XCTestCase {
                 .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
         }
         link.tap()
-        _ = app.navigationBars["Geology key"].waitForExistence(timeout: 5)
+        _ = app.navigationBars["Geology key"].waitForExistence(timeout: patience(5))
         sleep(1)
         save("legend-geology")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
@@ -111,7 +110,7 @@ final class ChromeTourTests: XCTestCase {
         if app.buttons["card-close"].exists { app.buttons["card-close"].tap() }
         app.buttons["layers-button"].tap()
         let link = app.buttons["legend-link"]
-        _ = app.navigationBars["Layers"].waitForExistence(timeout: 5)
+        _ = app.navigationBars["Layers"].waitForExistence(timeout: patience(5))
         for _ in 0 ..< 6 where !(link.exists && link.isHittable) {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
                 .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)))
@@ -128,7 +127,7 @@ final class ChromeTourTests: XCTestCase {
 
         app = launch(layers: #"{"base":"seasons","overlay":"none","season":4}"#, latitude: -42.88, longitude: 147.33, zoom: 14)
         app.buttons["layers-button"].tap()
-        _ = app.navigationBars["Layers"].waitForExistence(timeout: 5)
+        _ = app.navigationBars["Layers"].waitForExistence(timeout: patience(5))
         sleep(3)
         save("layers-seasons")
         app.terminate()
@@ -141,7 +140,7 @@ final class ChromeTourTests: XCTestCase {
         var app = launch(layers: #"{"trees":true,"overlay":"none"}"#, latitude: -42.875571, longitude: 147.331568, zoom: 17)
         for dy in stride(from: 0.40, through: 0.52, by: 0.02) where !app.buttons["card-close"].exists {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy)).tap()
-            _ = app.buttons["card-close"].waitForExistence(timeout: 1.5)
+            _ = app.buttons["card-close"].waitForExistence(timeout: patience(1.5))
         }
         sleep(1)
         save("card-tree")

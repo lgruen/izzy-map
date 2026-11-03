@@ -30,15 +30,14 @@ final class ContentTests: XCTestCase {
         try XCTSkipUnless(
             FileManager.default.fileExists(atPath: Self.dataDir.appending(path: "tasveg.pmtiles").path(percentEncoded: false)),
             "no local packs")
-        let app = XCUIApplication()
         let camera = #"{"latitude":\#(latitude),"longitude":\#(longitude),"zoom":\#(zoom),"heading":0}"#
-        app.launchArguments = ["-dataDir", Self.dataDir.path(percentEncoded: false),
-                               "-lastCamera", Self.hex(camera), "-layerState", Self.hex("{}")] + extra
+        let app = offlineApp(["-dataDir", Self.dataDir.path(percentEncoded: false),
+                              "-lastCamera", Self.hex(camera), "-layerState", Self.hex("{}")] + extra)
         app.launch()
-        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         let map = app.descendants(matching: .any)["map"]
         let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'idle'"), object: map)
-        _ = XCTWaiter().wait(for: [idle], timeout: 20)
+        _ = XCTWaiter().wait(for: [idle], timeout: patience(20))
         return app
     }
 
@@ -46,7 +45,7 @@ final class ContentTests: XCTestCase {
     @MainActor private func tapCommunity(_ app: XCUIApplication) {
         for dy in [0.3, 0.34, 0.26, 0.38, 0.22] where !app.descendants(matching: .any)["plant-faces"].exists {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy)).tap()
-            _ = app.descendants(matching: .any)["plant-faces"].waitForExistence(timeout: 4)
+            _ = app.descendants(matching: .any)["plant-faces"].waitForExistence(timeout: patience(4))
         }
         XCTAssertTrue(app.descendants(matching: .any)["plant-faces"].exists, "no community card with plants")
     }
@@ -65,18 +64,18 @@ final class ContentTests: XCTestCase {
         // "All n plants" under the faces opens the lists and scrolls to them
         app.buttons["plants-more"].tap()
         let section = app.descendants(matching: .any)["plants-section"]
-        XCTAssertTrue(section.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["plants-toggle"].waitForExistence(timeout: 2))
+        XCTAssertTrue(section.waitForExistence(timeout: patience(5)))
+        XCTAssertTrue(app.buttons["plants-toggle"].waitForExistence(timeout: patience(2)))
         XCTAssertEqual(app.buttons["plants-toggle"].value as? String, "expanded")
         sleep(2)
         save("card-plants")
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'plant-row-'")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(row.waitForExistence(timeout: patience(5)))
         for _ in 0 ..< 4 where !row.isHittable { dragUp(app) }
         row.tap()
         let sheet = app.descendants(matching: .any)["plant-sheet"]
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["plant-name"].waitForExistence(timeout: 3))
+        XCTAssertTrue(sheet.waitForExistence(timeout: patience(5)))
+        XCTAssertTrue(app.staticTexts["plant-name"].waitForExistence(timeout: patience(3)))
         sleep(2)
         save("plant-sheet")
         dragUp(app)
@@ -84,7 +83,7 @@ final class ContentTests: XCTestCase {
         save("plant-sheet-scrolled")
         // back to the card, lists still open where they were
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["plants-toggle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["plants-toggle"].waitForExistence(timeout: patience(5)))
         XCTAssertFalse(sheet.exists)
         XCTAssertTrue(app.buttons["card-close"].exists)
     }
@@ -95,38 +94,38 @@ final class ContentTests: XCTestCase {
         tapCommunity(app)
         dragUp(app)
         let whereElse = app.descendants(matching: .any)["where-else"]
-        XCTAssertTrue(whereElse.waitForExistence(timeout: 5))
+        XCTAssertTrue(whereElse.waitForExistence(timeout: patience(5)))
         sleep(1)
         save("card-where-else")
         let read = app.buttons["read-description"]
-        XCTAssertTrue(read.waitForExistence(timeout: 5))
+        XCTAssertTrue(read.waitForExistence(timeout: patience(5)))
         for _ in 0 ..< 3 where !read.isHittable { dragUp(app) }
         read.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["pdf-reader"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any)["pdf-reader"].waitForExistence(timeout: patience(15)))
         let page = app.staticTexts["reader-page"]
-        XCTAssertTrue(page.waitForExistence(timeout: 5))
+        XCTAssertTrue(page.waitForExistence(timeout: patience(5)))
         sleep(1)
         save("reader")
         app.buttons["reader-close"].tap()
-        XCTAssertTrue(read.waitForExistence(timeout: 5))
+        XCTAssertTrue(read.waitForExistence(timeout: patience(5)))
         // "Show on map" solos the community: the pill steps through its
         // largest patches, × ends it; the card stays
         let show = app.buttons["show-on-map"]
         for _ in 0 ..< 3 where !show.isHittable { dragUp(app) }
         show.tap()
         let pill = app.descendants(matching: .any)["spotlight-pill"]
-        XCTAssertTrue(pill.waitForExistence(timeout: 5))
+        XCTAssertTrue(pill.waitForExistence(timeout: patience(5)))
         XCTAssertTrue(app.buttons["card-close"].exists)
         sleep(2)
         save("show-on-map")
         app.buttons["spotlight-next"].tap()
         let title = app.descendants(matching: .any)["spotlight-title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        XCTAssertTrue(title.waitForExistence(timeout: patience(3)))
         XCTAssertTrue((title.label as String).contains("patch 1 of"), title.label)
         sleep(2)
         save("show-on-map-patch")
         app.buttons["spotlight-close"].tap()
-        XCTAssertTrue(pill.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(pill.waitForNonExistence(timeout: patience(5)))
     }
 
     /// Design-review screenshots (only with TEST_RUNNER_SHOT_DIR): plant

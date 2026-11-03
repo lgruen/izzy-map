@@ -65,6 +65,9 @@ final class PackStore {
     @ObservationIgnored private var stopped: Set<Pack> = []
     @ObservationIgnored private var statusTask: Task<Void, Never>?
     @ObservationIgnored private var manifest: [Pack: AssetPack] = [:]
+    /// Set at launch when the process can't use Background Assets (no app
+    /// group in its signature): no packs, and the manager is never touched.
+    private(set) var backgroundAssetsUnavailable = false
     #if DEBUG
     @ObservationIgnored private var fake: FakePacks?
     #endif
@@ -122,6 +125,16 @@ final class PackStore {
         store.isResolved = false
         Task { [weak store] in
             let start = ContinuousClock.now
+            // Background Assets traps (kills the app) when the app group named
+            // by BAAppGroupID isn't in the signature — an unsigned build
+            // (`CODE_SIGNING_ALLOWED=NO`; CI crashed on launch this way,
+            // 2026-11-03). Without the group there are no packs: run with none.
+            guard await Self.appGroupIsAccessibleOffMain() else {
+                logger.fault("Background Assets unavailable: the app group isn't accessible (unsigned build?)")
+                store?.backgroundAssetsUnavailable = true
+                store?.isResolved = true
+                return
+            }
             // first: nothing on the main actor may touch the manager before this
             await store?.refresh()
             guard let store else { return }
@@ -140,8 +153,11 @@ final class PackStore {
         #if DEBUG
         if mode == .fake { return true }
         #endif
-        return mode == .assetPacks
+        return managesPacks
     }
+
+    /// Background Assets mode with a usable manager.
+    private var managesPacks: Bool { mode == .assetPacks && !backgroundAssetsUnavailable }
 
     // MARK: Observation for non-SwiftUI code
 
@@ -169,7 +185,7 @@ final class PackStore {
         #if DEBUG
         if mode == .fake { return fakeFetch(pack) }
         #endif
-        guard mode == .assetPacks, fetches[pack] == nil, !state(pack).isInstalled else { return }
+        guard managesPacks, fetches[pack] == nil, !state(pack).isInstalled else { return }
         start(pack)
     }
 
@@ -184,7 +200,7 @@ final class PackStore {
             return fakeFetch(pack)
         }
         #endif
-        guard mode == .assetPacks, !state(pack).isInstalled else { return }
+        guard managesPacks, !state(pack).isInstalled else { return }
         fetches[pack]?.cancel()
         start(pack)
     }
@@ -231,7 +247,7 @@ final class PackStore {
         #if DEBUG
         if mode == .fake { return await fakeRemove(pack) }
         #endif
-        guard mode == .assetPacks, pack.isRemovable else { return }
+        guard managesPacks, pack.isRemovable else { return }
         // Stop as much as Remove: late events of this download are ignored
         stopped.insert(pack)
         fetches[pack]?.cancel()
@@ -266,6 +282,10 @@ final class PackStore {
             }
         }
         Task { [weak self] in
+            #if DEBUG
+            // simulated offline: the manifest refresh would go to Apple's servers
+            if DebugNetwork.simulatedOffline { return }
+            #endif
             await self?.loadManifest()
             guard let self else { return }
             // Core packs are the system's job, but "network dropouts or other
@@ -403,6 +423,14 @@ final class PackStore {
 
     @concurrent nonisolated private static func resolveInstalledOffMain() async -> (DataLocation, Set<Pack>) {
         resolveInstalled()
+    }
+
+    /// Whether this process can use the app group Background Assets
+    /// coordinates through (Info.plist BAAppGroupID): `containerURL` is nil
+    /// when the signature doesn't carry it.
+    @concurrent nonisolated private static func appGroupIsAccessibleOffMain() async -> Bool {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "BAAppGroupID") as? String else { return false }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil
     }
 
     /// Which packs are local, and the file URL of each of their archives.

@@ -2,6 +2,7 @@ import Foundation
 import MapLibre
 import Network
 import Observation
+import os
 
 /// Whether the device has a usable network path (`NWPathMonitor`), for the
 /// two things that stream: the live LIST map sources and thumbnails of
@@ -28,7 +29,7 @@ final class Connectivity {
     private init() {
         #if DEBUG
         // `-simulateOffline YES`: the path never comes up (screenshots, tests)
-        if UserDefaults.standard.bool(forKey: "simulateOffline") {
+        if DebugNetwork.simulatedOffline {
             Self.failEveryRequest()
             return
         }
@@ -65,16 +66,49 @@ final class Connectivity {
     #if DEBUG
     /// Every http(s) request MapLibre makes fails as "not connected" — the
     /// map proof's offline simulation, through MapLibre's supported session
-    /// configuration hook.
+    /// configuration hook. `URLSession.shared` too; the extras sessions add
+    /// the protocol themselves (`ExtrasNetwork.configuration`).
     private static func failEveryRequest() {
         let config = URLSessionConfiguration.default
         config.protocolClasses = [FailingURLProtocol.self]
         MLNNetworkConfiguration.sharedManager.sessionConfiguration = config
+        URLProtocol.registerClass(FailingURLProtocol.self)
     }
     #endif
 }
 
 #if DEBUG
+/// DEBUG launch switches for the network (UI tests, screenshots).
+nonisolated enum DebugNetwork {
+    /// `-simulateOffline YES`: no network path, and every http(s) request of
+    /// this process fails (MapLibre, the extras sessions, `URLSession.shared`).
+    /// Background Assets' manifest refresh (done by a system daemon) is
+    /// skipped too. Every UI test runs this way: CI runners are far from
+    /// LIST, and a test must never wait on a live tile.
+    static let simulatedOffline = UserDefaults.standard.bool(forKey: "simulateOffline")
+
+    /// `-networkLog <file>`: each request `FailingURLProtocol` stops is
+    /// appended to that file (one URL per line), so a UI test can fail when
+    /// the app tried the network at all (`UITestSupport`).
+    private static let logPath = UserDefaults.standard.string(forKey: "networkLog").flatMap { $0.isEmpty ? nil : $0 }
+    private static let logLock = OSAllocatedUnfairLock()
+    private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Network")
+
+    static func stopped(_ request: URLRequest) {
+        let url = request.url?.absoluteString ?? "?"
+        logger.notice("stopped a request: \(url, privacy: .public)")
+        guard let logPath else { return }
+        logLock.withLock {
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: logPath) { fm.createFile(atPath: logPath, contents: nil) }
+            guard let handle = FileHandle(forWritingAtPath: logPath) else { return }
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data((url + "\n").utf8))
+        }
+    }
+}
+
 /// DEBUG only: fails every http(s) request (offline simulation).
 nonisolated final class FailingURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool {
@@ -83,7 +117,10 @@ nonisolated final class FailingURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)) }
+    override func startLoading() {
+        DebugNetwork.stopped(request)
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
     override func stopLoading() {}
 }
 #endif
