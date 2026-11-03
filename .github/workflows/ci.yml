@@ -98,24 +98,31 @@ jobs:
                       if r.get("isAvailable") and ver(r["identifier"]) and ver(r["identifier"]) >= (26, 0)]
           if not runtimes:
               sys.exit("no iOS 26+ simulator runtime")
-          v = max(ver(r["identifier"]) for r in runtimes)
-          # a version can come as several runtimes (e.g. a device-specific
-          # "iOS-27-2-iPhone19-4" beside "iOS-27-2"): pool their devices
-          ids = {r["identifier"] for r in runtimes if ver(r["identifier"]) == v}
           devs = simctl("devices", "available")["devices"]
-          phones = [d for rt in ids for d in devs.get(rt, []) if d["name"].startswith("iPhone")]
           wanted = [re.compile(r"\b16e\b"), re.compile(r"\b\d+e\b")]
-          pick = next((d for w in wanted for d in phones if w.search(d["name"])), None)
+          # Newest runtime that has an e-model iPhone. A point release can be
+          # device-specific (iOS 27.1 shipped only for the foldable iPhone
+          # Duo, whose window never rotates), so fall back version by version.
+          pick = None
+          for v in sorted({ver(r["identifier"]) for r in runtimes}, reverse=True):
+              # a version can come as several runtimes (e.g. a device-specific
+              # "iOS-27-2-iPhone19-4" beside "iOS-27-2"): pool their devices
+              ids = {r["identifier"] for r in runtimes if ver(r["identifier"]) == v}
+              phones = [d for rt in ids for d in devs.get(rt, []) if d["name"].startswith("iPhone")]
+              pick = next((d for w in wanted for d in phones if w.search(d["name"])), None)
+              if pick is None:
+                  types = [(r["identifier"], t) for r in runtimes if r["identifier"] in ids
+                           for t in r.get("supportedDeviceTypes", [])]
+                  made = next(((rt, t) for w in wanted for rt, t in types if w.search(t["name"])), None)
+                  if made is not None:
+                      rt, t = made
+                      udid = subprocess.check_output(
+                          ["xcrun", "simctl", "create", "CI " + t["name"], t["identifier"], rt], text=True).strip()
+                      pick = {"name": t["name"] + " (created)", "udid": udid}
+              if pick is not None:
+                  break
           if pick is None:
-              types = [(r["identifier"], t) for r in runtimes if r["identifier"] in ids
-                       for t in r.get("supportedDeviceTypes", [])]
-              made = next(((rt, t) for w in wanted for rt, t in types if w.search(t["name"])), None)
-              if made is None:
-                  sys.exit("no iPhone e-model simulator or device type for iOS %d.%d" % v)
-              rt, t = made
-              udid = subprocess.check_output(
-                  ["xcrun", "simctl", "create", "CI " + t["name"], t["identifier"], rt], text=True).strip()
-              pick = {"name": t["name"] + " (created)", "udid": udid}
+              sys.exit("no iPhone e-model simulator or device type on any iOS 26+ runtime")
           print(pick["name"], "on iOS %d.%d" % v, file=sys.stderr)
           print(pick["udid"])
           PY
