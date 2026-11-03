@@ -1,0 +1,3 @@
+# docs/CI.md. The API key (lanes) decides the team; these are defaults.
+app_identifier("org.gruenschloss.izzymap")
+team_id(ENV.fetch("TEAMID", "T4HS4UL2LT"))

@@ -1,0 +1,42 @@
+# Installs one exact XcodeGen release — the same in ci.yml and every
+# TestFlight build (docs/CI.md). The release zip is checked against the
+# SHA-256 GitHub records for the asset (`gh api repos/yonaskolb/XcodeGen/
+# releases/tags/<version> --jq '.assets[] | {name, digest}'`), so neither a
+# Homebrew formula bump nor a replaced asset changes what generates the
+# project. To update: bump both inputs' defaults together.
+name: XcodeGen
+description: Install a pinned, checksum-verified XcodeGen release
+inputs:
+  version:
+    description: XcodeGen release tag
+    default: "2.46.0"
+  sha256:
+    description: SHA-256 of that release's xcodegen.zip
+    default: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+runs:
+  using: composite
+  steps:
+    - name: Install XcodeGen ${{ inputs.version }}
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/xcodegen-$VERSION"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/xcodegen.zip" \
+          "https://github.com/yonaskolb/XcodeGen/releases/download/$VERSION/xcodegen.zip"
+        echo "$SHA256  $dir/xcodegen.zip" | shasum -a 256 -c -
+        unzip -q -o "$dir/xcodegen.zip" -d "$dir"
+        # the zip holds xcodegen/bin/xcodegen beside xcodegen/share/xcodegen
+        # (SettingPresets, found relative to the binary): keep the layout
+        bin=$(dirname "$(find "$dir" -type f -name xcodegen -path '*/bin/*' | head -1)")
+        test -x "$bin/xcodegen"
+        echo "$bin" >> "$GITHUB_PATH"
+        got=$("$bin/xcodegen" --version)
+        echo "$got"
+        case "$got" in
+          *"$VERSION"*) ;;
+          *) echo "::error::expected XcodeGen $VERSION, got: $got"; exit 1 ;;
+        esac

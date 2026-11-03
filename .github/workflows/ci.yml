@@ -1,6 +1,6 @@
 # Native app tests (docs/NATIVE_PLAN.md §6): IzzyKit unit tests on the Mac,
 # then the app's unit + UI tests on an iOS simulator. No secrets, no signing:
-# simulator builds only. TestFlight workflows are separate (milestone 8).
+# simulator builds only. TestFlight: testflight.yml + setup.yml (docs/CI.md).
 name: CI
 
 on:
@@ -9,10 +9,12 @@ on:
     paths:
       - "ios/**"
       - ".github/workflows/ci.yml"
+      - ".github/actions/xcodegen/**"
   pull_request:
     paths:
       - "ios/**"
       - ".github/workflows/ci.yml"
+      - ".github/actions/xcodegen/**"
   workflow_dispatch:
 
 permissions:
@@ -70,44 +72,54 @@ jobs:
             "Xcode 27.2"*) ;;
             *) echo "::error::Xcode 27.2 not found (tried: $XCODE_CANDIDATES)"; exit 1 ;;
           esac
-      - name: Install XcodeGen
-        run: |
-          brew install xcodegen
-          xcodegen --version
+      # one exact, checksum-verified release (not whatever Homebrew has today)
+      - uses: ./.github/actions/xcodegen
       - name: Generate the Xcode project
         working-directory: ios
         run: xcodegen generate
       - name: Pick a simulator
         id: sim
-        # Newest available iOS runtime; prefer an iPhone "e" model (the
-        # target is an iPhone 16e), else any iPhone. Never hard-coded: the
+        # Newest available iOS runtime; an iPhone 16e (the target), else
+        # another "e" model — created on that runtime when the image ships
+        # none. Never "any iPhone": on 2026-11-03 that fallback picked the
+        # foldable "iPhone Duo" (466 × 678 pt window), which never turned
+        # landscape, so the rotation UI tests failed. Never hard-coded: the
         # image's device list changes with every update.
         run: |
           xcrun simctl list runtimes
-          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
           cat > "$RUNNER_TEMP/pick.py" <<'PY'
-          import json, re, sys
-          devs = json.load(open(sys.argv[1]))["devices"]
+          import json, re, subprocess, sys
+          def simctl(*args):
+              return json.loads(subprocess.check_output(["xcrun", "simctl", "list", *args, "-j"]))
           def ver(rt):
               m = re.search(r"iOS-(\d+)-(\d+)", rt)
               return (int(m[1]), int(m[2])) if m else None
-          vers = [ver(rt) for rt in devs if ver(rt) and ver(rt) >= (26, 0) and devs[rt]]
-          if not vers:
-              sys.exit("no iOS 26+ simulator runtime with devices")
-          v = max(vers)
+          runtimes = [r for r in simctl("runtimes")["runtimes"]
+                      if r.get("isAvailable") and ver(r["identifier"]) and ver(r["identifier"]) >= (26, 0)]
+          if not runtimes:
+              sys.exit("no iOS 26+ simulator runtime")
+          v = max(ver(r["identifier"]) for r in runtimes)
           # a version can come as several runtimes (e.g. a device-specific
           # "iOS-27-2-iPhone19-4" beside "iOS-27-2"): pool their devices
-          phones = [d for rt in devs if ver(rt) == v for d in devs[rt]
-                    if d["name"].startswith("iPhone")]
-          pick = (next((d for d in phones if "16e" in d["name"]), None)
-                  or next((d for d in phones if re.search(r"\d+e\b", d["name"])), None)
-                  or (phones[0] if phones else None))
+          ids = {r["identifier"] for r in runtimes if ver(r["identifier"]) == v}
+          devs = simctl("devices", "available")["devices"]
+          phones = [d for rt in ids for d in devs.get(rt, []) if d["name"].startswith("iPhone")]
+          wanted = [re.compile(r"\b16e\b"), re.compile(r"\b\d+e\b")]
+          pick = next((d for w in wanted for d in phones if w.search(d["name"])), None)
           if pick is None:
-              sys.exit("no iPhone simulator for iOS %d.%d" % v)
+              types = [(r["identifier"], t) for r in runtimes if r["identifier"] in ids
+                       for t in r.get("supportedDeviceTypes", [])]
+              made = next(((rt, t) for w in wanted for rt, t in types if w.search(t["name"])), None)
+              if made is None:
+                  sys.exit("no iPhone e-model simulator or device type for iOS %d.%d" % v)
+              rt, t = made
+              udid = subprocess.check_output(
+                  ["xcrun", "simctl", "create", "CI " + t["name"], t["identifier"], rt], text=True).strip()
+              pick = {"name": t["name"] + " (created)", "udid": udid}
           print(pick["name"], "on iOS %d.%d" % v, file=sys.stderr)
           print(pick["udid"])
           PY
-          udid=$(python3 "$RUNNER_TEMP/pick.py" "$RUNNER_TEMP/devices.json")
+          udid=$(python3 "$RUNNER_TEMP/pick.py")
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
       - name: xcodebuild test
         working-directory: ios

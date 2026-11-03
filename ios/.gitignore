@@ -7,3 +7,14 @@ DerivedData/
 .swiftpm/
 *.xcresult
 xcuserdata/
+# fastlane (docs/CI.md): gems installed locally, run reports, the CI-only
+# signing xcconfig the build lane writes, build outputs
+vendor/bundle/
+.bundle/
+Config/CI.generated.xcconfig
+fastlane/README.md
+fastlane/report.xml
+fastlane/test_output/
+*.ipa
+*.dSYM.zip
+*.mobileprovision

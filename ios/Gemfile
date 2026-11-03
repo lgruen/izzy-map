@@ -1,0 +1,6 @@
+# fastlane for the TestFlight workflows (docs/CI.md). Pinned to the version
+# preinstalled on GitHub's Xcode 27 runner image (2026-10-26); Gemfile.lock
+# pins the rest. Locally: BUNDLE_PATH=vendor/bundle bundle install
+source "https://rubygems.org"
+
+gem "fastlane", "2.241.2"

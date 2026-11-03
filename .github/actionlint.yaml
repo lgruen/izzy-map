@@ -1,0 +1,5 @@
+# actionlint config: GitHub's Xcode 27 preview image label isn't in
+# actionlint's built-in list yet (actions/runner-images README, 2026-11).
+self-hosted-runner:
+  labels:
+    - xcode-27

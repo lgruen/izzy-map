@@ -1,0 +1,14 @@
+// Release configuration of every target that ships in the archive (IzzyMap
+// now; the IzzyMapAssets extension once it exists) — see project.yml
+// `configFiles` and docs/CI.md.
+//
+// Locally the include below finds nothing: Release keeps the project-wide
+// CODE_SIGN_STYLE = Automatic (Xcode-managed signing), exactly like Debug.
+//
+// In CI, `fastlane build` writes CI.generated.xcconfig (gitignored) with
+// manual signing — the match "App Store" profile and the shared distribution
+// certificate — and the build number (latest TestFlight build + 1). It sits
+// at target level, so it overrides the project-level settings in project.yml
+// but never touches the Swift package targets (IzzyKit, MapLibre), which a
+// command-line PROVISIONING_PROFILE_SPECIFIER would break.
+#include? "CI.generated.xcconfig"

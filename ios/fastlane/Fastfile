@@ -1,0 +1,390 @@
+# IzzyMap → TestFlight (docs/CI.md). Modelled on the Trio "browser build":
+# App Store Connect API key + fastlane match against the private
+# lgruen/Match-Secrets repo, which also holds Trio's distribution
+# certificate — one Apple Distribution certificate signs both apps.
+#
+# Lanes run in GitHub Actions (.github/workflows/setup.yml, testflight.yml);
+# from ios/:  bundle exec fastlane <lane>
+#   validate_secrets  read-only checks of the six secrets
+#   identifiers       find-or-create the App IDs and their capabilities
+#   certs             match (may write): profiles for every App ID; the cert
+#                     is only ever created when Match-Secrets has none
+#   build             xcodegen → match (read-only) → gym → TestFlight
+#
+# Environment (GitHub secrets): TEAMID, FASTLANE_KEY_ID, FASTLANE_ISSUER_ID,
+# FASTLANE_KEY (the .p8 text), MATCH_PASSWORD, GH_PAT (fine-grained,
+# Contents read/write on Match-Secrets). Never print any of them.
+
+require "base64"
+require "openssl"
+require "shellwords"
+require "yaml"
+require "match" # Match::Utils (env var names) outside a match call
+
+opt_out_usage
+default_platform(:ios)
+ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
+ENV["FASTLANE_SKIP_UPDATE_CHECK"] = "1"
+ENV["FASTLANE_HIDE_CHANGELOG"] = "1"
+
+IOS_DIR = File.expand_path("..", __dir__)
+PROJECT = File.join(IOS_DIR, "IzzyMap.xcodeproj")
+SCHEME = "IzzyMap"
+CI_XCCONFIG = File.join(IOS_DIR, "Config", "CI.generated.xcconfig")
+
+APP_ID = "org.gruenschloss.izzymap"
+ASSETS_ID = "org.gruenschloss.izzymap.assets" # Background Assets extension (planned)
+APP_GROUP = "group.org.gruenschloss.izzymap"
+
+# Spaceship has no constant for Increased Memory Limit and Apple's published
+# App Store Connect API enum (OpenAPI spec 4.5.1) doesn't list it either; this
+# is the portal's capability id. The identifiers lane accepts any existing
+# capability whose type mentions MEMORY, so a different spelling upstream
+# shows up in the log instead of breaking an App ID that already has it.
+INCREASED_MEMORY_LIMIT = "INCREASED_MEMORY_LIMIT"
+CAP = Spaceship::ConnectAPI::BundleIdCapability::Type
+
+# App IDs match keeps an App Store profile for, with their capabilities.
+APP_IDS = {
+  APP_ID => { name: "IzzyMap", capabilities: [CAP::APP_GROUPS, INCREASED_MEMORY_LIMIT] },
+  ASSETS_ID => { name: "IzzyMap Assets", capabilities: [CAP::APP_GROUPS] }
+}.freeze
+
+# Targets signed in the Release archive. A target not (yet) in project.yml is
+# skipped, so the extension's id can be provisioned before the target exists.
+SIGNED_TARGETS = { "IzzyMap" => APP_ID, "IzzyMapAssets" => ASSETS_ID }.freeze
+
+MATCH_OWNER = ENV.fetch("GITHUB_REPOSITORY_OWNER", "lgruen")
+
+TRIO_RENEW_HINT = <<~TXT.freeze
+  The distribution certificate is shared with Trio and owned by Trio's
+  workflows: renew it there (lgruen/Trio → Actions → "3. Create Certificates",
+  with the repository variable ENABLE_NUKE_CERTS = true), then run
+  "IzzyMap setup" again so IzzyMap's profiles are re-made for the new
+  certificate. See docs/CI.md → "Certificate renewal".
+TXT
+
+def gh_annotation(level, message)
+  # GitHub only parses workflow commands at the very start of a line, so
+  # bypass fastlane's timestamped UI.
+  $stdout.puts("::#{level}::#{message.gsub("\n", " ")}") if ENV["GITHUB_ACTIONS"]
+end
+
+# Markdown for the run's summary page (Actions → the run).
+def step_summary(markdown)
+  path = ENV["GITHUB_STEP_SUMMARY"]
+  File.write(path, "#{markdown}\n", mode: "a") if path && !path.empty?
+end
+
+# TestFlight builds stop working this long after upload (Apple's rule).
+TESTFLIGHT_DAYS = 90
+
+def require_env(*names)
+  missing = names.select { |n| ENV[n].to_s.strip.empty? }
+  UI.user_error!("Missing environment/secret(s): #{missing.join(', ')}") unless missing.empty?
+end
+
+def api_key
+  require_env("FASTLANE_KEY_ID", "FASTLANE_ISSUER_ID", "FASTLANE_KEY")
+  app_store_connect_api_key(
+    key_id: ENV["FASTLANE_KEY_ID"],
+    issuer_id: ENV["FASTLANE_ISSUER_ID"],
+    key_content: ENV["FASTLANE_KEY"],
+    duration: 1200,
+    in_house: false
+  )
+end
+
+def match_auth
+  require_env("GH_PAT", "MATCH_PASSWORD")
+  auth = Base64.strict_encode64("#{MATCH_OWNER}:#{ENV['GH_PAT']}")
+  # The token is masked by GitHub as a secret, but this derived value is not:
+  # mask it too before anything could echo it (public repo, public logs).
+  $stdout.puts("::add-mask::#{auth}") if ENV["GITHUB_ACTIONS"]
+  auth
+end
+
+def project_targets
+  YAML.load_file(File.join(IOS_DIR, "project.yml")).fetch("targets").keys
+end
+
+def signed_targets
+  present = project_targets
+  SIGNED_TARGETS.select { |target, _| present.include?(target) }
+end
+
+# Prints every distribution certificate's expiry and annotates the run when
+# none is valid or one expires within 30 days (which one match uses isn't
+# known before match runs; match itself fails on an expired one).
+def report_distribution_certs
+  certs = Spaceship::ConnectAPI::Certificate.all.select do |c|
+    %w(DISTRIBUTION IOS_DISTRIBUTION).include?(c.certificate_type)
+  end
+  valid = certs.select { |c| Time.parse(c.expiration_date) > Time.now }
+  certs.each do |c|
+    days = ((Time.parse(c.expiration_date) - Time.now) / 86_400).floor
+    UI.message("Distribution certificate #{c.id} (#{c.certificate_type}) expires #{c.expiration_date}")
+    if days.between?(0, 29)
+      gh_annotation("warning", "Distribution certificate #{c.id} expires in #{days} days. #{TRIO_RENEW_HINT}")
+    end
+  end
+  gh_annotation("error", "No valid distribution certificate on the team. #{TRIO_RENEW_HINT}") if valid.empty?
+end
+
+def run_match(readonly:, app_identifier:)
+  match(
+    type: "appstore",
+    readonly: readonly,
+    app_identifier: app_identifier,
+    git_basic_authorization: match_auth
+  )
+rescue => e
+  first = e.message.lines.first.to_s.strip
+  # expired certificate ("is not valid"), one revoked on the portal (the
+  # error then ends by suggesting `match nuke`), or none in Match-Secrets
+  # while readonly (e.g. mid-way through a Trio nuke): all Trio's to fix
+  if e.message =~ /is not valid|match nuke|No code signing identity found/
+    gh_annotation("error", "match: #{first}")
+    UI.user_error!("#{e.message}\n\n#{TRIO_RENEW_HINT}")
+  end
+  if e.message =~ /cannot create a new one because you enabled `readonly`/
+    gh_annotation("error", "match: #{first} Run the \"IzzyMap setup\" workflow (its certs job makes them).")
+    UI.user_error!("#{e.message}\n\nRun the \"IzzyMap setup\" workflow; its certs job creates what is missing.")
+  end
+  if e.message =~ /required agreement|license agreement/i
+    UI.user_error!("#{e.message}\n\nAccept the latest Program License Agreement at https://developer.apple.com/account, wait a few minutes, re-run.")
+  end
+  raise
+end
+
+# Warns when a profile's App Groups entitlement lacks APP_GROUP: the App
+# Store Connect API can enable the capability but cannot assign the group
+# (docs/CI.md → "App Groups").
+def profile_entitlements(bundle_id)
+  path = ENV[Match::Utils.environment_variable_name_profile_path(app_identifier: bundle_id, type: "appstore")]
+  return nil if path.to_s.empty? || !File.exist?(path)
+  plist = Plist.parse_xml(`security cms -D -i #{path.shellescape} 2>/dev/null`)
+  plist && plist["Entitlements"]
+end
+
+# IzzyMap.entitlements requests the increased memory limit: a profile without
+# it fails archive signing, so stop here with the fix instead.
+def check_memory_limit(bundle_id)
+  ents = profile_entitlements(bundle_id)
+  return if ents.nil? || ents["com.apple.developer.kernel.increased-memory-limit"]
+  gh_annotation("error", "The #{bundle_id} profile lacks Increased Memory Limit.")
+  UI.user_error!("The #{bundle_id} profile lacks com.apple.developer.kernel.increased-memory-limit: tick Increased Memory Limit on the App ID (developer.apple.com → Identifiers → #{bundle_id}), then run \"IzzyMap setup\" again.")
+end
+
+def check_app_group(bundle_id)
+  ents = profile_entitlements(bundle_id)
+  return if ents.nil?
+  groups = ents["com.apple.security.application-groups"] || []
+  return if groups.include?(APP_GROUP)
+  gh_annotation("warning", "The #{bundle_id} profile has no #{APP_GROUP} App Group (has: #{groups.join(', ').then { |g| g.empty? ? 'none' : g }}). Assign it in the developer portal (docs/CI.md → App Groups); the next certs run re-makes the profile.")
+end
+
+platform :ios do
+  desc "Check the secrets without changing anything (setup.yml, first job)"
+  lane :validate_secrets do
+    setup_ci if ENV["CI"]
+    require_env("TEAMID", "FASTLANE_KEY_ID", "FASTLANE_ISSUER_ID", "FASTLANE_KEY", "MATCH_PASSWORD", "GH_PAT")
+
+    problems = []
+    problems << "TEAMID must be 10 uppercase letters/digits" unless ENV["TEAMID"] =~ /\A[A-Z0-9]{10}\z/
+    problems << "FASTLANE_KEY_ID must be 10 uppercase letters/digits (App Store Connect → Users and Access → Integrations → Keys)" unless ENV["FASTLANE_KEY_ID"] =~ /\A[A-Z0-9]{10}\z/
+    problems << "FASTLANE_ISSUER_ID must be a UUID (shown above the keys table)" unless ENV["FASTLANE_ISSUER_ID"] =~ /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+    begin
+      # app_store_connect_api_key accepts a one-line key with literal "\n"
+      OpenSSL::PKey.read(ENV["FASTLANE_KEY"].gsub('\n', "\n"))
+    rescue OpenSSL::PKey::PKeyError
+      problems << "FASTLANE_KEY is not a readable private key: paste the whole AuthKey_<id>.p8 file, BEGIN/END lines included"
+    end
+    problems << "GH_PAT does not look like a GitHub token" unless ENV["GH_PAT"] =~ /\A(ghp_|github_pat_)/
+    unless problems.empty?
+      problems.each { |p| gh_annotation("error", p) }
+      UI.user_error!("Secret format problems:\n- #{problems.join("\n- ")}")
+    end
+
+    api_key # an invalid key / issuer fails on the first API call below
+    UI.user_error!("No App Store Connect app record for #{APP_ID}: create it at appstoreconnect.apple.com → Apps → +") unless Spaceship::ConnectAPI::App.find(APP_ID)
+    APP_IDS.each_key do |id|
+      next if Spaceship::ConnectAPI::BundleId.find(id)
+      gh_annotation("warning", "App ID #{id} is not registered yet; the identifiers job creates it.")
+    end
+    report_distribution_certs
+    # read-only: proves GH_PAT can read Match-Secrets and MATCH_PASSWORD
+    # decrypts it, and that the stored certificate is still valid
+    run_match(readonly: true, app_identifier: [])
+    UI.success("All six secrets work.")
+  end
+
+  desc "Find or create the App IDs and their capabilities (setup.yml)"
+  lane :identifiers do
+    api_key
+    APP_IDS.each do |identifier, spec|
+      bundle_id = Spaceship::ConnectAPI::BundleId.find(identifier)
+      if bundle_id
+        UI.message("App ID #{identifier} exists")
+      else
+        UI.important("Creating App ID #{identifier} (#{spec[:name]})")
+        bundle_id = Spaceship::ConnectAPI::BundleId.create(name: spec[:name], identifier: identifier, platform: "IOS")
+      end
+      existing = bundle_id.get_capabilities.map { |c| c.capability_type.to_s }
+      UI.message("#{identifier} capabilities: #{existing.sort.join(', ')}")
+      spec[:capabilities].each do |cap|
+        present = cap == INCREASED_MEMORY_LIMIT ? existing.any? { |t| t.to_s.include?("MEMORY") } : existing.include?(cap)
+        next if present
+        UI.important("Enabling #{cap} on #{identifier}")
+        begin
+          bundle_id.create_capability(cap)
+        rescue => e
+          message = "Could not enable #{cap} on #{identifier} (#{e.message.lines.first.strip}). Tick it by hand: developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → #{identifier}."
+          # the API may neither list nor accept this undocumented type; the
+          # certs lane checks the profile's entitlements instead
+          UI.user_error!(message) unless cap == INCREASED_MEMORY_LIMIT
+          gh_annotation("warning", "#{message} (The certs job checks the profile for the entitlement.)")
+        end
+      end
+    end
+    gh_annotation("notice", "App Groups: the API can't assign #{APP_GROUP} to an App ID. Check once per App ID in the developer portal (docs/CI.md → App Groups).")
+  end
+
+  desc "Make or refresh the App Store profiles with match; may write to Match-Secrets"
+  lane :certs do
+    setup_ci if ENV["CI"]
+    api_key
+    report_distribution_certs
+    # readonly: false re-makes a profile that is missing or 'Invalid' (an App
+    # ID's capabilities changed, or Trio's nuke revoked the old certificate).
+    # A certificate is created only when Match-Secrets holds none at all.
+    # An App ID the identifiers lane hasn't created yet is skipped (match
+    # would abort on it), so a push before the first setup run still builds.
+    ids = APP_IDS.keys.select do |id|
+      next true if Spaceship::ConnectAPI::BundleId.find(id)
+      UI.user_error!("App ID #{id} is not registered: run the \"IzzyMap setup\" workflow") if id == APP_ID
+      gh_annotation("warning", "App ID #{id} is not registered yet, so it has no profile: run the \"IzzyMap setup\" workflow.")
+      false
+    end
+    run_match(readonly: false, app_identifier: ids)
+    ids.each { |id| check_app_group(id) }
+    check_memory_limit(APP_ID)
+  end
+
+  desc "Archive with the match profile(s) and upload to TestFlight"
+  lane :build do
+    setup_ci if ENV["CI"]
+    require_env("TEAMID")
+    key = api_key
+
+    sh("xcodegen", "generate", "--spec", File.join(IOS_DIR, "project.yml"), "--quiet")
+
+    targets = signed_targets
+    run_match(readonly: true, app_identifier: targets.values)
+    mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING] || {}
+    identity = ENV[Match::Utils.environment_variable_name_certificate_name(app_identifier: APP_ID, type: "appstore")]
+    UI.user_error!("match returned no certificate name") if identity.to_s.empty?
+    targets.each_value do |id|
+      # the generated xcconfig names each profile by its bundle id, so it
+      # must be match's default name
+      UI.user_error!("Unexpected match profile name for #{id}: #{mapping[id].inspect}") unless mapping[id] == "match AppStore #{id}"
+    end
+
+    # latest_testflight_build_number is the most recently *uploaded* build;
+    # take the highest of the last 200 uploads too, so an out-of-band upload
+    # with a lower number (Xcode Organizer: build 1) can't make CI collide
+    latest = latest_testflight_build_number(api_key: key, app_identifier: APP_ID, initial_build_number: 0).to_i
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    uploads = Spaceship::ConnectAPI.get_build_uploads(
+      app_id: app.id, filter: { state: "PROCESSING,FAILED,COMPLETE" }, sort: "-uploadedDate", limit: 200
+    ).to_models
+    build_number = ([latest] + uploads.map { |u| u.cf_build_version.to_s.to_i }).max + 1
+    UI.message("Build number #{build_number}")
+    # what testers have until this upload lands (if this run fails, that
+    # is the date that matters)
+    begin
+      newest = Spaceship::ConnectAPI.get_builds(filter: { app: app.id }, sort: "-uploadedDate", limit: 1).to_models.first
+      if newest && newest.expiration_date
+        UI.message("Newest build on TestFlight: #{newest.version}, expires #{newest.expiration_date}#{newest.expired ? ' (already expired)' : ''}")
+      end
+    rescue StandardError => e
+      UI.important("Couldn't read the newest TestFlight build's expiry: #{e.message}")
+    end
+
+    File.write(CI_XCCONFIG, <<~XCCONFIG)
+      // Written by `fastlane build` (ios/fastlane/Fastfile) for one CI archive.
+      // Gitignored; included by Config/Release.xcconfig.
+      CODE_SIGN_STYLE = Manual
+      DEVELOPMENT_TEAM = #{ENV['TEAMID']}
+      IZZY_CI_CODE_SIGN_IDENTITY = #{identity}
+      PROVISIONING_PROFILE_SPECIFIER = match AppStore $(PRODUCT_BUNDLE_IDENTIFIER)
+      CURRENT_PROJECT_VERSION = #{build_number}
+    XCCONFIG
+
+    # match is done and the API key is held in `key`: keep these secrets out
+    # of the environment of xcodegen/xcodebuild and everything they spawn
+    %w(GH_PAT MATCH_PASSWORD FASTLANE_KEY).each { |name| ENV.delete(name) }
+
+    # Xcode's export calls `rsync` from PATH with flags only Apple's openrsync
+    # accepts; a Homebrew rsync first in PATH fails it ("Copy failed").
+    shim = File.join(IOS_DIR, "build", "rsync-shim")
+    if `command -v rsync`.strip != "/usr/bin/rsync"
+      FileUtils.mkdir_p(shim)
+      FileUtils.ln_sf("/usr/bin/rsync", File.join(shim, "rsync"))
+      ENV["PATH"] = "#{shim}:#{ENV['PATH']}"
+    end
+
+    begin
+      gym(
+        project: PROJECT,
+        scheme: SCHEME,
+        configuration: "Release",
+        destination: "generic/platform=iOS",
+        export_method: "app-store",
+        export_options: {
+          signingStyle: "manual",
+          provisioningProfiles: targets.values.to_h { |id| [id, mapping[id]] },
+          manageAppVersionAndBuildNumber: false,
+          uploadSymbols: true
+        },
+        output_directory: File.join(IOS_DIR, "build", "gym"),
+        output_name: "IzzyMap.ipa",
+        buildlog_path: File.join(IOS_DIR, "build", "gym", "logs"),
+        derived_data_path: File.join(IOS_DIR, "build", "dd-release"),
+        cloned_source_packages_path: File.join(IOS_DIR, "build", "spm")
+      )
+    ensure
+      File.delete(CI_XCCONFIG) if File.exist?(CI_XCCONFIG)
+    end
+
+    commit = last_git_commit
+    notes = commit[:message].to_s.strip
+    if ENV["GITHUB_EVENT_NAME"] == "schedule"
+      notes = "Monthly rebuild of the current version (keeps TestFlight from expiring).\n\n#{notes}"
+    end
+    notes = "#{notes}\n\n#{commit[:abbreviated_commit_hash]}"
+
+    upload_to_testflight(
+      api_key: key,
+      ipa: lane_context[SharedValues::IPA_OUTPUT_PATH],
+      # with a changelog, pilot waits only until the build appears, sets
+      # "What to Test", then returns — processing continues on Apple's side
+      changelog: notes,
+      skip_waiting_for_build_processing: true,
+      # `changelog` alone only patches localizations that already exist on
+      # the new build; naming the app's primary locale creates it if missing
+      localized_build_info: { app.primary_locale => { whats_new: notes } },
+      wait_processing_timeout_duration: 1800,
+      distribute_external: false
+    )
+    uploaded = Time.now.utc
+    expires = (uploaded + TESTFLIGHT_DAYS * 86_400).strftime("%Y-%m-%d")
+    gh_annotation("notice", "Uploaded build #{build_number}; it reaches TestFlight after Apple's processing (usually 5–30 min). It expires around #{expires} (UTC), #{TESTFLIGHT_DAYS} days after upload.")
+    step_summary(<<~MD)
+      ### TestFlight build #{build_number}
+      - Uploaded #{uploaded.strftime('%Y-%m-%d %H:%M')} UTC; Apple's processing adds 5–30 min.
+      - **Expires around #{expires}** (TestFlight builds last #{TESTFLIGHT_DAYS} days from upload).
+      - The monthly keep-alive (2nd Sunday) uploads a fresh build well before then, as long as GitHub hasn't disabled the schedule after 60 days without repository activity — see docs/CI.md → Keep-alive.
+    MD
+  end
+end

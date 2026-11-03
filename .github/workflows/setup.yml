@@ -1,0 +1,84 @@
+# One-off (and after any signing change) setup for TestFlight builds —
+# docs/CI.md. Manual only: GitHub → Actions → "IzzyMap setup" → Run workflow.
+# Safe to re-run at any time; every step is find-or-create. ONE job, three
+# steps in order (each step's secrets reach only that step):
+#   1. validate     read-only check of the six secrets
+#   2. identifiers  App IDs + capabilities (app and the Background Assets extension)
+#   3. certs        match: profiles in lgruen/Match-Secrets (shared with Trio)
+# One job, not three, because the Match-Secrets writers share one
+# concurrency group with testflight.yml's build job, and GitHub keeps at
+# most ONE pending job per group: three chained jobs each re-entered the
+# queue and could replace (cancel) a waiting TestFlight build, or be
+# replaced by it, half-way through setup.
+name: IzzyMap setup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    name: Validate secrets, identifiers, certificates and profiles
+    if: github.repository == 'lgruen/izzy-map'
+    runs-on: xcode-27
+    timeout-minutes: 45
+    concurrency: # shared with testflight.yml's build job (docs/CI.md)
+      group: izzymap-signing
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: GH_PAT reaches the private Match-Secrets repo
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository_owner }}/Match-Secrets
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::The GH_PAT secret is unset or empty."; exit 2
+          fi
+          if ! vis=$(gh api "repos/$REPO" --jq .visibility 2>/dev/null); then
+            echo "::error::GH_PAT cannot see $REPO. Check the token has not expired and that its repository access includes Match-Secrets (github.com/settings/personal-access-tokens)."
+            exit 2
+          fi
+          if [ "$vis" != "private" ]; then
+            echo "::error::$REPO is $vis — it holds the signing certificate and must be private."
+            exit 2
+          fi
+          echo "GH_PAT can read the private $REPO."
+
+      - uses: ./.github/actions/fastlane-setup
+
+      - name: 1. fastlane validate_secrets
+        working-directory: ios
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: bundle exec fastlane validate_secrets
+
+      - name: 2. fastlane identifiers
+        working-directory: ios
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+        run: bundle exec fastlane identifiers
+
+      - name: 3. fastlane certs
+        working-directory: ios
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: bundle exec fastlane certs

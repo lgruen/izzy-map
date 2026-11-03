@@ -1,0 +1,9 @@
+# fastlane match storage (docs/CI.md). The private repo is shared with Trio
+# (lgruen/Trio's fastlane/Matchfile points at the same URL): its one Apple
+# Distribution certificate signs both apps; each app adds its own profiles.
+# Keep match's default git branch ("master") — the one Trio uses.
+git_url("https://github.com/#{ENV.fetch('GITHUB_REPOSITORY_OWNER', 'lgruen')}/Match-Secrets.git")
+storage_mode("git")
+type("appstore")
+# Safe default: only lanes that mean to write pass readonly: false (certs).
+readonly(true)

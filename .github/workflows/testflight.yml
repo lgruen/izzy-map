@@ -1,0 +1,119 @@
+# Build IzzyMap and upload it to TestFlight — docs/CI.md. Needs "IzzyMap
+# setup" (setup.yml) to have run once. Triggers:
+#   - manual: GitHub → Actions → "TestFlight" → Run workflow
+#   - push to main touching the app (not test-only or Markdown changes)
+#     whose head commit message contains "[testflight]" — not every commit:
+#     each upload is a "new build" notification on the tester's phone
+#   - keep-alive: TestFlight builds expire after 90 days, so the 2nd Sunday
+#     of every month rebuilds main (Trio's rule). 09:17 UTC is ~2.5 h after
+#     Trio's own run (06:43 UTC), so if Trio has just nuked and re-made the
+#     shared certificate, this run's certs step re-makes IzzyMap's profiles.
+# Never on pull requests; never in forks.
+name: TestFlight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "!ios/IzzyMapTests/**"
+      - "!ios/IzzyMapUITests/**"
+      - "!ios/IzzyKit/Tests/**"
+      - "!ios/**/*.md"
+  schedule:
+    - cron: "17 9 * * 0" # Sundays 09:17 UTC; the gate below keeps the 2nd one
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Decide whether to build
+    # a push builds only when asked: "[testflight]" in the head commit message
+    if: >-
+      github.repository == 'lgruen/izzy-map' &&
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[testflight]'))
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.due.outputs.build }}
+    steps:
+      - id: due
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          day=$(date -u +%-d)
+          if [ "$EVENT" != "schedule" ]; then
+            build=true
+          elif [ "$day" -ge 8 ] && [ "$day" -le 14 ]; then
+            build=true   # the 2nd Sunday of the month
+          else
+            build=false
+            echo "Not the 2nd Sunday of the month — no keep-alive build today." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and upload
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: xcode-27
+    # job-level (not workflow-level), so no-op Sunday gate runs never enter
+    # the group; shared with setup.yml's jobs, which also write to
+    # Match-Secrets. Never cancelled mid-upload; GitHub keeps at most ONE
+    # pending job per group (a newer one replaces it).
+    concurrency:
+      group: izzymap-signing
+      cancel-in-progress: false
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/fastlane-setup
+        with:
+          xcodegen: "true"
+
+      # MapLibre's binary xcframework and other SwiftPM checkouts (gym's
+      # cloned_source_packages_path)
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ios/build/spm
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/project.yml', 'ios/IzzyKit/Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      # match with readonly: false — re-makes a profile that is missing or
+      # was invalidated (App ID capability change, Trio certificate nuke).
+      # Writes to Match-Secrets only when something had to be re-made.
+      - name: Refresh profiles (fastlane certs)
+        working-directory: ios
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: bundle exec fastlane certs
+
+      - name: Build and upload (fastlane build)
+        working-directory: ios
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: bundle exec fastlane build
+
+      # build logs only: the repo is public, and so are its artifacts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: testflight-build-logs
+          path: ios/build/gym/logs
+          retention-days: 7
+          if-no-files-found: ignore

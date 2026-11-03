@@ -1,0 +1,65 @@
+# Shared by setup.yml and testflight.yml (docs/CI.md): Xcode 27.2, the pinned
+# fastlane bundle from ios/Gemfile.lock (cached), optionally the pinned
+# XcodeGen (.github/actions/xcodegen), and a
+# clock sync (App Store Connect rejects JWTs from a skewed runner clock —
+# actions/runner#2996, the same workaround Trio uses). No secrets here: they
+# go only to the fastlane steps, never to gem or brew installs.
+name: fastlane setup
+description: Select Xcode 27.2 and install IzzyMap's pinned fastlane bundle
+inputs:
+  xcodegen:
+    description: Also install XcodeGen
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode 27.2
+      shell: bash
+      # same candidates and check as ci.yml — keep the two in step
+      env:
+        XCODE_CANDIDATES: >-
+          /Applications/Xcode_27.2.app
+          /Applications/Xcode_27.2_Release_Candidate.app
+      run: |
+        for x in $XCODE_CANDIDATES; do
+          if [ -d "$x" ]; then sudo xcode-select -s "$x/Contents/Developer"; break; fi
+        done
+        xcodebuild -version
+        case "$(xcodebuild -version | head -1)" in
+          "Xcode 27.2"*) ;;
+          *) echo "::error::Xcode 27.2 not found (tried: $XCODE_CANDIDATES)"; exit 1 ;;
+        esac
+
+    - name: Bundler environment
+      id: ruby
+      shell: bash
+      run: |
+        {
+          echo "BUNDLE_GEMFILE=$GITHUB_WORKSPACE/ios/Gemfile"
+          echo "BUNDLE_PATH=$GITHUB_WORKSPACE/ios/vendor/bundle"
+          echo "BUNDLE_DEPLOYMENT=true"
+          echo "LC_ALL=en_US.UTF-8"
+          echo "LANG=en_US.UTF-8"
+        } >> "$GITHUB_ENV"
+        ruby -v
+        echo "version=$(ruby -e 'print RUBY_VERSION')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache gems
+      uses: actions/cache@v4
+      with:
+        path: ios/vendor/bundle
+        key: gems-${{ runner.os }}-${{ runner.arch }}-ruby${{ steps.ruby.outputs.version }}-${{ hashFiles('ios/Gemfile.lock') }}
+
+    - name: bundle install
+      shell: bash
+      working-directory: ios
+      run: bundle install --jobs 4
+
+    # the same pinned, checksum-verified release as ci.yml
+    - name: Install XcodeGen
+      if: inputs.xcodegen == 'true'
+      uses: ./.github/actions/xcodegen
+
+    - name: Sync clock
+      shell: bash
+      run: sudo sntp -sS time.windows.com || echo "::warning::Clock sync failed; App Store Connect calls may be refused if the runner clock is off"
