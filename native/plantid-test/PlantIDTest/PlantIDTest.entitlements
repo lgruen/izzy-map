@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- a real app would ship with it; os_proc_available_memory at launch shows the effect -->
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+</dict>
+</plist>

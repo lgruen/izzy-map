@@ -1,0 +1,49 @@
+# XcodeGen spec for the native plant-ID feasibility test (can an iPhone 16e
+# run BioCLIP 2.5 through Core ML?). Generate + build: see README.md.
+# The model and test data come from the gitignored pipeline cache
+# (pipeline/plantid/export_coreml.py); nothing large is committed.
+name: PlantIDTest
+options:
+  bundleIdPrefix: org.gruenschloss
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # set by the build command (-allowProvisioningUpdates + DEVELOPMENT_TEAM=…)
+    CODE_SIGN_STYLE: Automatic
+targets:
+  PlantIDTest:
+    type: application
+    platform: iOS
+    supportedDestinations: [iOS, macCatalyst]
+    sources:
+      - path: PlantIDTest
+      - path: ../../pipeline/cache/plantid/coreml/bioclip25/PlantEncoder.mlpackage
+        buildPhase: sources
+      - path: ../../pipeline/cache/plantid/coreml/bioclip25/data
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.gruenschloss.plantidtest
+        # iPhone only: an iPad build must support every orientation to pass
+        # App Store Connect validation. Mac Catalyst needs the iPad family.
+        TARGETED_DEVICE_FAMILY: "1"
+        "TARGETED_DEVICE_FAMILY[sdk=macosx*]": "2,6"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # no custom encryption: skips TestFlight's export-compliance question
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Plant ID test
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        # Core ML's generated class isn't used (the app loads the compiled model by URL)
+        COREML_CODEGEN_LANGUAGE: None
+        # iPhone only: the Mac check is ad-hoc signed and can't carry it
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": PlantIDTest/PlantIDTest.entitlements
+        SUPPORTS_MACCATALYST: YES
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
