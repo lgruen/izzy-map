@@ -32,6 +32,11 @@ final class MapCoordinator: NSObject {
     /// zoomed in).
     private var anchor: OverlayAnchor?
     private var connectivity: Connectivity.Subscription?
+    /// "Show on map": what the style shows, the camera to fly back to, and
+    /// the paint values the fade replaced (restored when it ends).
+    private var appliedSpotlight: Spotlight?
+    private var cameraBeforeSpotlight: MLNMapCamera?
+    private var fadedPaint: [(layer: String, restore: (MLNStyleLayer) -> Void)] = []
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Map")
 
     private struct OverlayAnchor {
@@ -186,15 +191,108 @@ final class MapCoordinator: NSObject {
     private func applySelectionFilters() {
         guard let style = map?.style else { return }
         let id = NSPredicate(mglJSONObject: StyleBuilder.featureFilter(selectionStyle.featureID))
-        for layerID in [StyleBuilder.LayerID.selectedFeatureHalo, StyleBuilder.LayerID.selectedFeature] {
-            (style.layer(withIdentifier: layerID) as? MLNVectorStyleLayer)?.predicate = id
-        }
+        (style.layer(withIdentifier: StyleBuilder.LayerID.selectedFeature) as? MLNVectorStyleLayer)?.predicate = id
         (style.layer(withIdentifier: StyleBuilder.LayerID.sameCommunity) as? MLNVectorStyleLayer)?.predicate =
             NSPredicate(mglJSONObject: StyleBuilder.sameCommunityFilter(selectionStyle.community))
     }
 
     private var selectionSource: MLNShapeSource? {
         map?.style?.source(withIdentifier: StyleBuilder.SourceID.selection) as? MLNShapeSource
+    }
+
+    // MARK: Show on map
+
+    /// Solo the spotlight's community (others faded) and frame what it
+    /// shows; when it goes, unfade and — on an exit — fly back.
+    func apply(spotlight: Spotlight?, to map: MLNMapView) {
+        guard spotlight != appliedSpotlight else { return }
+        let old = appliedSpotlight
+        appliedSpotlight = spotlight
+        if let spotlight {
+            if old?.code != spotlight.code { applyFade() }
+            if old == nil {
+                cameraBeforeSpotlight = map.camera
+                // the phone's sheet drops to its glance first: frame once
+                // the chrome has settled
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self, weak map] in
+                    guard let self, let map, let current = self.appliedSpotlight, current.code == spotlight.code else { return }
+                    self.frame(current.bounds, in: map)
+                }
+            } else {
+                frame(spotlight.bounds, in: map)
+            }
+        } else {
+            clearFade()
+            if model.spotlightRestoresCamera, let camera = cameraBeforeSpotlight {
+                move(map, to: camera)
+            }
+            cameraBeforeSpotlight = nil
+        }
+    }
+
+    /// Fade every other community (style-level `case` expressions on the
+    /// fill, band and code labels — data-driven paint, supported by
+    /// MapLibre for these properties); the soloed one near opaque in every
+    /// strength, Outlines included, so it reads.
+    private func applyFade() {
+        clearFade()
+        guard let style = map?.style, let code = appliedSpotlight?.code, MapText.isLatin1(code) else { return }
+        typealias L = StyleBuilder.LayerID
+        let state = model.layers
+        // the soloed community well above Full strength: at a statewide
+        // zoom its patches are specks and must still read
+        let solo = max(0.85, state.fillOpacity)
+        let others = min(0.1, state.fillOpacity)
+        func pick(_ on: Double, _ off: Double) -> NSExpression {
+            NSExpression(mglJSONObject: ["case", ["==", ["get", "VEGCODE"], code], on, off] as [Any])
+        }
+        if let fill = style.layer(withIdentifier: L.tasvegFill) as? MLNFillStyleLayer {
+            let original = fill.fillOpacity
+            fill.fillOpacity = pick(solo, others)
+            fadedPaint.append((L.tasvegFill, { ($0 as? MLNFillStyleLayer)?.fillOpacity = original }))
+        }
+        if let band = style.layer(withIdentifier: L.tasvegBand) as? MLNLineStyleLayer {
+            let original = band.lineOpacity
+            band.lineOpacity = pick(1, 0.15)
+            fadedPaint.append((L.tasvegBand, { ($0 as? MLNLineStyleLayer)?.lineOpacity = original }))
+        }
+        for layer in style.layers where layer.identifier.hasPrefix(L.tasvegLabel) {
+            guard let label = layer as? MLNSymbolStyleLayer else { continue }
+            let original = label.textOpacity
+            label.textOpacity = pick(1, 0.3)
+            fadedPaint.append((label.identifier, { ($0 as? MLNSymbolStyleLayer)?.textOpacity = original }))
+        }
+    }
+
+    private func clearFade() {
+        guard let style = map?.style else { fadedPaint = []; return }
+        for (id, restore) in fadedPaint {
+            if let layer = style.layer(withIdentifier: id) { restore(layer) }
+        }
+        fadedPaint = []
+    }
+
+    /// Frame [west, south, east, north] clear of the chrome (a tiny patch
+    /// is padded so the camera stops short of street level).
+    private func frame(_ box: [Double], in map: MLNMapView) {
+        let b = Spotlight.padded(box)
+        let bounds = MLNCoordinateBounds(sw: CLLocationCoordinate2D(latitude: b[1], longitude: b[0]),
+                                         ne: CLLocationCoordinate2D(latitude: b[3], longitude: b[2]))
+        let extra = appliedChrome?.framingInsets ?? .zero
+        let padding = UIEdgeInsets(top: 20 + extra.top, left: 20 + extra.left,
+                                   bottom: 20 + extra.bottom, right: 20 + extra.right)
+        let camera = map.cameraThatFitsCoordinateBounds(bounds, edgePadding: padding)
+        camera.heading = 0
+        move(map, to: camera)
+    }
+
+    /// A flight (Reduce Motion: a cut).
+    private func move(_ map: MLNMapView, to camera: MLNMapCamera) {
+        if UIAccessibility.isReduceMotionEnabled {
+            map.setCamera(camera, animated: false)
+        } else {
+            map.fly(to: camera, withDuration: 1.2, completionHandler: nil)
+        }
     }
 
     // MARK: Taps
@@ -236,7 +334,9 @@ final class MapCoordinator: NSObject {
 
         let hits = map.visibleFeatures(at: point, styleLayerIdentifiers: Set(L.overlayFills))
         guard let feature = hits.first, let (overlay, key) = Self.overlayClass(feature) else {
-            // an empty spot: everything highlighted goes
+            // an empty spot: everything highlighted goes (a soloed
+            // community too, the camera staying where she is)
+            model.endSpotlight()
             model.clearSelection()
             model.keyHighlight = nil
             clearSelectionShape()
@@ -246,7 +346,8 @@ final class MapCoordinator: NSObject {
         case .vegetation:
             var facts: [String: String] = [:]
             for k in ["VEG_GROUP", "FOREST_STR", "NOTABLE_TD", "WEED_TYP_D"] { facts[k] = Self.text(feature, k) }
-            model.selectCommunity(code: key, sourceName: Self.text(feature, "VEGCODE_D"), attributes: facts)
+            model.selectCommunity(code: key, sourceName: Self.text(feature, "VEGCODE_D"), attributes: facts,
+                                  at: map.convert(point, toCoordinateFrom: map))
         case .geology: model.select(.geology(key))
         case .pre1750: model.select(.pre1750(key))
         case .none: return
@@ -454,6 +555,9 @@ extension MapCoordinator: MLNMapViewDelegate {
         // a reloaded style starts with an empty selection source
         selectionSource?.shape = selectionShape
         applySelectionFilters()
+        // … and with its own paint: fade again for a soloed community
+        fadedPaint = []
+        if appliedSpotlight != nil { applyFade() }
         refreshVisibleSources(mapView)
         model.map.zoom = mapView.zoomLevel
     }

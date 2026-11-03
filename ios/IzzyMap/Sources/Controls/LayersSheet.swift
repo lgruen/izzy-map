@@ -55,7 +55,7 @@ struct LayersSheet: View {
                 SeasonControl(model: model)
             }
         } header: {
-            Text("Base map")
+            Text("Base map").panelHeader()
         } footer: {
             Text(model.layers.base.hint).foregroundStyle(DesignColor.inkSecondary)
         }
@@ -93,7 +93,7 @@ struct LayersSheet: View {
                 StrengthPicker(model: model)
             }
         } header: {
-            Text("Overlay")
+            Text("Overlay").panelHeader()
         } footer: {
             Text(model.layers.overlay.hint).foregroundStyle(DesignColor.inkSecondary)
         }
@@ -107,7 +107,7 @@ struct LayersSheet: View {
     // MARK: Also show
 
     private var alsoShowSection: some View {
-        Section("Also show") {
+        Section {
             TileGrid {
                 LayerTile(model: model, subject: .relief, title: "Relief",
                           status: model.data.url(for: .relief) != nil ? nil : "Not downloaded",
@@ -123,6 +123,8 @@ struct LayersSheet: View {
                 .accessibilityHint("City of Hobart significant tree register")
                 .accessibilityIdentifier("trees-row")
             }
+        } header: {
+            Text("Also show").panelHeader()
         }
     }
 }
@@ -239,7 +241,9 @@ struct StrengthPicker: View {
         HStack(alignment: .center, spacing: 6) {
             Text("Strength")
                 .font(.subheadline)
-                .foregroundStyle(DesignColor.inkSecondary)
+                // ink, not secondary: on glass over a yellow map the grey
+                // label fell to ~3:1
+                .foregroundStyle(DesignColor.ink)
                 .accessibilityHidden(true)
             Spacer(minLength: 8)
             ForEach(choices) { strength in
@@ -434,16 +438,31 @@ private struct SeasonCaption: View {
 // MARK: - Surfaces
 
 extension View {
-    /// A list on the panel's near-opaque plate with opaque grouped rows:
-    /// no glass-on-glass blobs, and the same look at every detent.
-    func panelListSurface() -> some View {
-        self
-            .scrollContentBackground(.hidden)
-            .background { PanelPlate(grouped: true).ignoresSafeArea() }
+    /// A list straight on the presentation's system glass (sheet or
+    /// popover; DESIGN.md §2): no list background, no grouped row plates —
+    /// never glass on glass, never a plate inside the glass. DEBUG
+    /// `-sheetStyle plate` keeps the old near-opaque plate for comparison.
+    @ViewBuilder func panelListSurface() -> some View {
+        switch PanelSurface.current {
+        case .system:
+            self.scrollContentBackground(.hidden)
+        case .plate:
+            self.scrollContentBackground(.hidden)
+                .background { PanelPlate(grouped: true).ignoresSafeArea() }
+        }
     }
 
-    /// Opaque grouped row ground (apply to a Section: its rows inherit it).
-    func panelRows() -> some View {
-        listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
+    /// A section header on glass: `.headline` in explicit ink (the
+    /// default grey header turns vibrant and sinks into a saturated map).
+    func panelHeader() -> some View {
+        font(.headline).foregroundStyle(DesignColor.ink).textCase(nil)
+    }
+
+    /// Row ground (apply to a Section: its rows inherit it): clear on glass.
+    @ViewBuilder func panelRows() -> some View {
+        switch PanelSurface.current {
+        case .system: listRowBackground(Color.clear)
+        case .plate: listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
+        }
     }
 }

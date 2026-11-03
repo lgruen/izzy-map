@@ -2,20 +2,79 @@ import IzzyKit
 import SwiftUI
 
 /// The tapped feature's card: key box, code and name answer "what is this?"
-/// at a glance; facts follow. (Milestone 3 adds the F2F description, plants
-/// and the tree data sheet.)
+/// at a glance — with, for a community, its plants' faces — and that much
+/// is the peek. Facts, the F2F description, "where else" and the plant
+/// lists follow; a tree card ends with its data sheet.
 struct FeatureCard: View {
     let model: AppModel
     let selection: FeatureSelection
     let onClose: () -> Void
+    @State private var plants: PlantsState = .loading
+    @Environment(\.panelActions) private var actions
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            if case let .community(c) = selection.feature {
+                PlantFaces(model: model, state: plants, context: context(c))
+            }
+            // the bottom of the glance: the compact sheet's resting height
+            Color.clear.frame(height: 0)
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(PanelContent.space)).minY } action: {
+                    actions.peek($0)
+                }
             facts
+            extras
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("feature-card")
+        .task(id: selection.id) {
+            guard case let .community(c) = selection.feature else { return }
+            plants = .loading
+            plants = await PlantsState.load(code: c.code, latitude: c.latitude, longitude: c.longitude)
+            #if DEBUG
+            DebugScript.afterCard(model: model, context: context(c))
+            #endif
+        }
+    }
+
+    private func context(_ c: CommunitySelection) -> PlantContext {
+        PlantContext(code: c.code, latitude: c.latitude, longitude: c.longitude)
+    }
+
+    // MARK: Documents, where else, plants
+
+    @ViewBuilder private var extras: some View {
+        switch selection.feature {
+        case let .community(c):
+            VStack(alignment: .leading, spacing: 24) {
+                if let entry = PlantLibrary.shared.f2f?.index[c.code] {
+                    DocumentButton(doc: .f2f(file: entry.file, page: entry.page, title: c.name),
+                                   title: "Read the description", symbol: "book.pages",
+                                   publisher: "From Forest to Fjaeldmark")
+                }
+                WhereElse(model: model, code: c.code, latitude: c.latitude, longitude: c.longitude)
+                PlantsSection(model: model, code: c.code, state: plants, context: context(c))
+            }
+            .padding(.top, 8)
+        case let .tree(t):
+            if let trees = model.tables.trees, let id = sheetID(t, trees) {
+                let ref = trees.refs[t.ref]
+                let name = [ref?.common, ref?.name].compactMap { $0 }.first { !$0.isEmpty } ?? t.ref
+                DocumentButton(doc: .sheet(item: id, title: "\(t.ref) · \(name)", bytes: trees.sheets[id]?.bytes),
+                               title: "Open the data sheet", symbol: "doc.text", publisher: "City of Hobart",
+                               sheetsTotal: trees.sheetsTotalBytes)
+                    .padding(.top, 8)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func sheetID(_ t: TreeSelection, _ trees: TreesData) -> String? {
+        let tags = t.isArea ? trees.areas.map(\.tag) : trees.points.map(\.tag)
+        if tags.indices.contains(t.index), tags[t.index].ref == t.ref { return trees.sheetID(for: tags[t.index]) }
+        return trees.refs[t.ref]?.sheets.first
     }
 
     // MARK: Header
@@ -236,3 +295,37 @@ struct CloseButton: View {
         .accessibilityIdentifier("card-close")
     }
 }
+
+#if DEBUG
+/// Screenshot scripting, once per launch, after the first community card:
+/// `-debugPlant "Eucalyptus regnans"` pushes that plant's sheet;
+/// `-debugExpandPlants YES` opens the lists; `-debugSpotlight YES` runs
+/// "Show on map" for the card's community, `-debugSpotlightStep n` then
+/// steps n patches.
+enum DebugScript {
+    private static var done = false
+
+    static func afterCard(model: AppModel, context: PlantContext) {
+        guard !done else { return }
+        done = true
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "debugExpandPlants") { PlantLibrary.shared.sectionExpanded = true }
+        if let name = defaults.string(forKey: "debugPlant"),
+           let plant = PlantLibrary.shared.catalog?.plants.first(where: { $0.name == name }) {
+            model.push(.plant(id: plant.id, key: plant.species ?? plant.name, context: context, source: "debug"))
+        }
+        if defaults.bool(forKey: "debugSpotlight"), let code = context.code {
+            model.showOnMap(code)
+            let steps = defaults.integer(forKey: "debugSpotlightStep")
+            if steps > 0 {
+                Task {
+                    for _ in 0 ..< steps {
+                        try? await Task.sleep(for: .seconds(2))
+                        model.stepSpotlight(1)
+                    }
+                }
+            }
+        }
+    }
+}
+#endif

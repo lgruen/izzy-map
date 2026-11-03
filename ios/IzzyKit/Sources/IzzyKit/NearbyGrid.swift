@@ -71,6 +71,24 @@ public struct NearbyGrid: Sendable {
         return out
     }
 
+    /// Every cell recording species `index`, in cell-id order (south to
+    /// north, west to east). A linear pass over the pairs (~510k): cheap
+    /// enough per plant sheet, run off the main thread.
+    public func cells(ofSpecies index: Int, grid: RecordsFile.Grid) -> [RecordCell] {
+        guard let target = UInt16(exactly: index), grid.nlon > 0 else { return [] }
+        var out: [RecordCell] = []
+        for i in 0 ..< cells.count {
+            for k in Int(offsets[i]) ..< Int(offsets[i + 1]) where species[k] == target {
+                let id = Int(cells[i])
+                out.append(RecordCell(latitude: grid.lat0 + Double(id / grid.nlon) * grid.step,
+                                      longitude: grid.lon0 + Double(id % grid.nlon) * grid.step,
+                                      sites: Int(sites[k])))
+                break
+            }
+        }
+        return out
+    }
+
     private func index(of cell: UInt32) -> Int? {
         var lo = 0, hi = cells.count - 1
         while lo <= hi {
@@ -81,4 +99,12 @@ public struct NearbyGrid: Sendable {
         }
         return nil
     }
+}
+
+/// One ~1 km grid cell with records of a species: its centre and the
+/// number of ~100 m sites recorded in it.
+public struct RecordCell: Sendable, Hashable {
+    public var latitude: Double
+    public var longitude: Double
+    public var sites: Int
 }

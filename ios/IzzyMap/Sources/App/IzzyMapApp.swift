@@ -6,11 +6,23 @@ struct IzzyMapApp: App {
     @State private var shared: AppData
     @State private var idleTimer = IdleTimerCoordinator()
     /// Layers-sheet thumbnails, shared by every window (one render queue).
-    @State private var thumbnails = LayerThumbnails()
+    @State private var thumbnails: LayerThumbnails
+    /// Thumbnails re-render when a pack is installed or removed (the style
+    /// follows by itself: it reads the observable `PackStore.location`).
+    @State private var packsSubscription: Connectivity.Subscription
 
     init() {
         MapLogging.install()
-        _shared = State(initialValue: AppData.launch())
+        let shared = AppData.launch()
+        let thumbnails = LayerThumbnails()
+        _shared = State(initialValue: shared)
+        _thumbnails = State(initialValue: thumbnails)
+        _packsSubscription = State(initialValue: shared.packs.observe { [weak thumbnails] in thumbnails?.packsChanged() })
+        // the one-tap extras: sweep staged leftovers, then reconnect to the
+        // background session (a previous launch's finished files report as
+        // orphans). The session may thus exist before the scene's
+        // background-task handler below runs — `handleEvents` copes.
+        ExtrasDownloads.shared.launch { SessionTransport.shared.connect() }
     }
 
     var body: some Scene {
@@ -22,6 +34,14 @@ struct IzzyMapApp: App {
         }
         // Commands are app-wide; they act on the focused window's model.
         .commands { MapCommands() }
+        // the one-tap extras' background downloads: a wake for their events
+        // hands over to the transport; once every event is in, the engine
+        // applies them and starts the next window before the system's
+        // handler is called (milestone 3)
+        .backgroundTask(.urlSession(SessionTransport.identifier)) {
+            await SessionTransport.shared.handleEvents()
+            await ExtrasDownloads.shared.settle()
+        }
     }
 }
 
@@ -68,6 +88,10 @@ private struct WindowContent: View {
 
     var body: some View {
         RootView(model: model)
+            // documents belong to the window: buttons find the opener here
+            .environment(model.documents)
+            // a document fetch lasts as long as its card is selected
+            .onChange(of: model.selection?.id) { model.documents.selectionChanged() }
             .onChange(of: model.layers) { _, state in
                 LayerStore().save(state)
                 sceneLayers = try? JSONEncoder().encode(state)

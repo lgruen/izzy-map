@@ -1,0 +1,18 @@
+{
+  "_comment": "Apple-hosted Background Assets packs (docs/NATIVE_PLAN.md §2). Built by pipeline/build_packs.py into data/packs/<id>.aar, uploaded LOCALLY by pipeline/upload_packs.sh (never from CI). Only OUR PMTiles go in packs (Apple-hosted = our hosting, docs/LICENSING.md) — never F2F chapters, Understorey Network photos or tree data sheets. Files keep their data/ names at the pack root: all packs share ONE namespace on the device, so a name must be unique across packs. The app mirrors this table by hand in ios/IzzyMap/Sources/Data/Packs.swift (Pack, Archive.pack). Asset-pack IDs can never be reused once archived in App Store Connect — don't rename casually. policy: essential = blocks first launch until downloaded (counts towards the App Store 'Up to' size); prefetch = starts with the install, may finish after launch; onDemand = only when the app asks (one tap).",
+  "packs": [
+    {"id": "vector", "policy": "essential", "files": ["tasveg.pmtiles", "geology.pmtiles", "pre1750.pmtiles"]},
+    {"id": "topo", "policy": "prefetch", "files": ["topo_tas.pmtiles"]},
+    {"id": "relief", "policy": "prefetch", "files": ["relief_tas.pmtiles"]},
+    {"id": "plantid", "policy": "prefetch", "files": [], "_todo": "milestone 6: Core ML encoder + head + kNN bank + prior; not exported yet"},
+    {"id": "aerial", "policy": "onDemand", "files": ["aerial_tas.pmtiles"]},
+    {"id": "tasmap", "policy": "onDemand", "files": ["tasmap_tas.pmtiles"]},
+    {"id": "season-2020", "policy": "onDemand", "files": ["aerial_2020.pmtiles"]},
+    {"id": "season-2021", "policy": "onDemand", "files": ["aerial_2021.pmtiles"]},
+    {"id": "season-2022", "policy": "onDemand", "files": ["aerial_2022.pmtiles"]},
+    {"id": "season-2023", "policy": "onDemand", "files": ["aerial_2023.pmtiles"]},
+    {"id": "season-2024", "policy": "onDemand", "files": ["aerial_2024.pmtiles"]},
+    {"id": "season-2025", "policy": "onDemand", "files": ["aerial_2025.pmtiles"]},
+    {"id": "season-2026", "policy": "onDemand", "files": ["aerial_2026.pmtiles"]}
+  ]
+}

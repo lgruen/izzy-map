@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged with the generated keys (GENERATE_INFOPLIST_FILE; the INFOPLIST_KEY_
+	     settings in project.yml). Apple-Hosted Background Assets
+	     ("Downloading Apple-hosted asset packs"): exactly these three keys,
+	     and no other BA* keys. -->
+	<key>BAAppGroupID</key>
+	<string>group.org.gruenschloss.izzymap</string>
+	<key>BAHasManagedAssetPacks</key>
+	<true/>
+	<key>BAUsesAppleHosting</key>
+	<true/>
+</dict>
+</plist>

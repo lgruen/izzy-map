@@ -101,8 +101,14 @@ struct LegendView: View {
     /// tap clears it); on iPhone the sheet then gets out of the way.
     private func tap(_ code: String) {
         model.clearSelection()
-        let turningOn = model.toggleKeyHighlight(code)
-        if turningOn, widthClass == .compact { model.dismissModal() }
+        // a second tap on the highlighted row clears it (and its "Show on
+        // map"); otherwise the community is soloed and framed statewide
+        if model.keyHighlight == code {
+            model.toggleKeyHighlight(code)
+            return
+        }
+        model.showOnMap(code)
+        if widthClass == .compact { model.dismissModal() }
     }
 }
 
@@ -157,7 +163,7 @@ private struct RunRow: View {
                         .accessibilityLabel(spoken(row))
                         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
                         .accessibilityHint(isOn ? "Clears the outline on the map"
-                                                : "Outlines this community on the map")
+                                                : "Shows this community everywhere on the map, the rest faded")
                     } else {
                         KeyRowContent(row: row, overlay: overlay, codeTemplate: codeTemplate, isHighlighted: false)
                             .accessibilityElement(children: .ignore)

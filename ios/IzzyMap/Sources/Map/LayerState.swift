@@ -137,7 +137,9 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
     /// index: a build that adds a season keeps "up to 2023–24" meaning that.
     var seasonYear: Int?
     var overlay: Overlay = .vegetation
-    var strength: Strength = .full
+    // Light: decided by the user (2026-11-03, DESIGN.md §7) — the topo or
+    // photo reads through; a saved choice always wins (it is encoded)
+    var strength: Strength = .light
     /// Relief shading over base and overlay.
     var relief = false
     /// City of Hobart significant trees on top of everything.

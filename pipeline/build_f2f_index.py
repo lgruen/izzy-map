@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Build f2f_index.json: VEGCODE -> {chapter file, PDF page index}.
+"""Build f2f_index.json: VEGCODE -> {chapter file, 0-based PDF page index},
+plus each chapter's byte size ("sizes": file -> bytes; the app's download
+status and space preflight).
 
 Downloads the From Forest to Fjaeldmark chapter PDFs from nre.tas.gov.au
 into pipeline/cache/f2f/ (gitignored — the PDFs are copyright, all rights
 reserved, and must never be committed or re-hosted; see docs/LICENSING.md).
-The emitted index contains only facts (file names + page numbers) and IS
-committable.
+The emitted index contains only facts (file names, page numbers, byte
+sizes) and IS committable. Sizes are the cached PDFs' sizes, checked
+against nre.tas.gov.au's Content-Length (HEAD) so a stale cache can't ship a
+wrong size; a mismatch aborts (delete the cached file and re-run). The file
+has no version field and the app decodes `sizes` as optional: additive.
 
 Section headings in the PDFs look like:  "Eucalyptus amygdalina coastal
 forest and woodland (DAC)" as the first line of the section's page, so we
 scan each page's first lines for "(CODE)".
 
-Run:  uv run --with pypdf python3 pipeline/build_f2f_index.py
+Run:  uv run --with pypdf --with truststore python3 pipeline/build_f2f_index.py
+(truststore: verify TLS against the macOS keychain — uv's Python has no CA
+store of its own; optional, the script runs without it where certs work.)
 """
 import json
 import re
@@ -19,6 +26,12 @@ import urllib.request
 from pathlib import Path
 
 from pypdf import PdfReader
+
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
 
 HERE = Path(__file__).parent
 CACHE = HERE / "cache" / "f2f"
@@ -53,6 +66,25 @@ def download(name: str) -> Path:
     return p
 
 
+def head_size(name: str) -> int | None:
+    """Content-Length from a HEAD request, None if the server gives none."""
+    req = urllib.request.Request(
+        BASE_URL + name, method="HEAD",
+        headers={"User-Agent": "IzzyMap-pipeline/1.0 (personal use)"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        length = r.headers.get("Content-Length")
+    return int(length) if length else None
+
+
+def chapter_size(path: Path) -> int:
+    size = path.stat().st_size
+    remote = head_size(path.name)
+    if remote is not None and remote != size:
+        raise SystemExit(f"{path.name}: cached {size} bytes, nre.tas.gov.au says {remote} "
+                         f"— delete {path} and re-run")
+    return size
+
+
 def heading_pages(pdf: Path) -> dict:
     """Return {code: page index of the community's section-start page}.
 
@@ -83,9 +115,11 @@ def main():
     communities = json.loads(
         (GEN / "tasveg_communities.json").read_text())
 
-    chapter_pages = {}
+    chapter_pages, sizes = {}, {}
     for chapter in sorted(set(GROUP_CHAPTER.values())):
-        chapter_pages[chapter] = heading_pages(download(chapter))
+        pdf = download(chapter)
+        chapter_pages[chapter] = heading_pages(pdf)
+        sizes[chapter] = chapter_size(pdf)
 
     index, missing = {}, []
     for code, meta in communities.items():
@@ -101,8 +135,10 @@ def main():
             index[code] = {"file": chapter, "page": page}
 
     OUT.write_text(json.dumps(
-        {"baseUrl": BASE_URL, "index": dict(sorted(index.items()))}, indent=1))
-    print(f"{len(index)} codes indexed, {len(missing)} without a page anchor")
+        {"baseUrl": BASE_URL, "index": dict(sorted(index.items())),
+         "sizes": dict(sorted(sizes.items()))}, indent=1))
+    print(f"{len(index)} codes indexed, {len(missing)} without a page anchor; "
+          f"{len(sizes)} chapters, {sum(sizes.values()) / 1e6:.1f} MB")
     for code, why in missing:
         print(f"  {code}: {why} (falls back to chapter start)")
 

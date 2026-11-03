@@ -2,8 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- device builds (project.yml); the simulator uses IzzyMap-Simulator.entitlements -->
 	<!-- plant ID runs a ~1.3 GB Core ML encoder (milestone 6) -->
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
+	<!-- Background Assets: shared with the IzzyMapAssets extension (BAAppGroupID) -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.org.gruenschloss.izzymap</string>
+	</array>
 </dict>
 </plist>

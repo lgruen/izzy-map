@@ -207,6 +207,9 @@ struct StyleBuilderTests {
 
     @Test func strengthFollowsTheBase() {
         var state = LayerState.default
+        // Light by default (decided 2026-11-03)
+        #expect(opacity(style(state), "tasveg-fill") == 0.30)
+        state.strength = .full
         #expect(opacity(style(state), "tasveg-fill") == 0.55)
         state.strength = .light
         #expect(opacity(style(state), "tasveg-fill") == 0.30)
@@ -349,7 +352,10 @@ struct StyleBuilderTests {
             var state = LayerState.default
             state.overlay = overlay
             #expect(layer(style(state), "selected-feature")?["minzoom"] as? Int == 0, "\(overlay)")
-            #expect(layer(style(state), "selected-feature-halo")?["minzoom"] as? Int == 0, "\(overlay)")
+            #expect(layer(style(state), "selected-feature-halo") == nil, "red, no casing (decided 2026-11-03)")
+            let paint = layer(style(state), "selected-feature")?["paint"] as? [String: Any]
+            #expect(paint?["line-color"] as? String == "#FF3B30")
+            #expect(paint?["line-width"] as? Double == 3)
         }
         // community codes are three capitals: Latin-1
         #expect(Self.bundled.communities.keys.allSatisfy(MapText.isLatin1))
@@ -507,9 +513,9 @@ struct LayerThumbnailTests {
         let a = thumbs.key(.base(.topo), state: .default, data: data, scale: 3)
         #expect(a == thumbs.key(.base(.topo), state: .default, data: data, scale: 3))
         #expect(a != thumbs.key(.base(.topo), state: .default, data: data, scale: 2))
-        var light = LayerState.default
-        light.strength = .light
-        #expect(a != thumbs.key(.base(.topo), state: light, data: data, scale: 3))
+        var full = LayerState.default
+        full.strength = .full
+        #expect(a != thumbs.key(.base(.topo), state: full, data: data, scale: 3))
         #expect(a != thumbs.key(.overlay(.vegetation), state: .default, data: data, scale: 3))
         // a bare base tile doesn't re-render for a strength or season change
         var other = LayerState.default
@@ -531,7 +537,7 @@ struct LayerStateTests {
         #expect(d.base == .topo)
         #expect(d.season == Season.all.count - 1)
         #expect(d.overlay == .vegetation)
-        #expect(d.strength == .full)
+        #expect(d.strength == .light, "decided by the user, 2026-11-03")
         #expect(!d.relief && !d.trees)
     }
 
@@ -543,7 +549,7 @@ struct LayerStateTests {
         #expect(s.base == .topo)
         #expect(s.season == Season.all.count - 1)
         #expect(s.overlay == .geology)
-        #expect(s.strength == .full)
+        #expect(s.strength == .light)
         #expect(s.relief)
         #expect(!s.trees)
         let empty = try JSONDecoder().decode(LayerState.self, from: Data("{}".utf8))

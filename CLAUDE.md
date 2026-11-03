@@ -210,6 +210,38 @@ milestones, map-proof results); the design brief and language is
   137k, Tasmanian Herbarium (AVH) 100k, …; licences mostly CC BY 3.0 AU /
   4.0, plus CC BY-NC 106k, CC BY-NC-ND 1,452, unspecified 6.2k — hence
   aggregate counts only (LICENSING.md §1d).
+- "Where else does this grow?" data (2026-11-03; `pipeline/build_where.py`,
+  TASVEG 5.0 facts) → `ios/IzzyMap/Resources/Data/where.bin` (450 KB) +
+  `where_patches.json` (141 KB). Grid: 0.02° lon × 0.015° lat (1.67 km
+  square at 41.5° S — square on the ground AND in Web Mercator), 236 cols
+  × 300 rows from 143.80° E / 39.18° S (north edge; rows run south); main
+  island ~190 cells across. Levels = share of the CELL's area: 1 (0, 5 %),
+  2 [5, 25 %), 3 [25, 50 %), 4 ≥ 50 %. Land = every polygon but OAQ
+  (water, sea — so big lakes are holes); land level 4 = the ≥ 50 %
+  outline (24,260 cells), level ≥ 1 keeps islets (26,204). where.bin, LE:
+  `"WHR1"`, u16 version 1, u16 ncomm 156, u16 ncols, u16 nrows, i32
+  lon0/lat0/lonStep/latStep in µdeg, u8 nlevels 4, u8 0, u16[4]
+  thresholds ‰ (0, 50, 250, 500), u16 0, u32 land offset/length/cells,
+  u32 file size, 8 × 0 (= 64 bytes); then 156 × {char[4] code + NUL,
+  u32 offset, u32 length, u32 cells} in sorted-VEGCODE order (=
+  tasveg_communities.json key order); then the streams. Stream = runs of
+  (varint skip, varint count ≥ 1, u8 level), unsigned LEB128; cursor from
+  0, cell = row·ncols + col. `read_where()` in the script is the
+  reference parser. Shares come from ONE 52 m rasterisation (32 × 32 px
+  per cell; TASVEG has no overlaps → one uint8 index per pixel), and every
+  polygon's point-on-surface forces level ≥ 1 in its cell (4,039 pairs
+  rescued — tiny patches still show; DMO = 3 cells, 5 ha: the app should
+  draw a minimum-size marker, a cell is ~0.5 pt at 120 pt). Raster vs
+  polygon area agrees within 0.2 % (tripwire 4 %). Patches = polygons of
+  one community within 0.5 m (connected components; no dissolve): 412,817
+  patches from 482,138 polygons — TASVEG is already ~dissolved per code.
+  JSON: `{version, source, levels_permille, communities: {CODE: {ha,
+  patches, top: [{ha, p: [lon, lat], bbox: [w, s, e, n]}] ≤ 10 largest}}}`;
+  `p` = area-weighted centroid if inside the patch, else point-on-surface
+  of its largest polygon (28 % of top patches — irregular shapes).
+  Geography sanity-checked by rendered mini-maps (DOB east/north, DMO
+  Hobart, HHE/HSE/RPP Central Plateau + Ben Lomond, DKW/SSZ King Island —
+  211 of SSZ's 252 polygons really are there — DVF Flinders, SCH coasts).
 
 
 ## Architecture
@@ -363,6 +395,19 @@ milestones, map-proof results); the design brief and language is
   `pmtiles://file://` source (simulator screenshots match a lossless PNG
   archive within 4/255; WebP alpha q50 within 6). Rebuild only when the
   hillshade pack changes (new bytes → every device re-downloads).
+- **Refresh "where else" data (with every TASVEG refresh):** `uv run
+  --with geopandas --with pyogrio --with pyproj --with pyarrow --with
+  rasterio --with scipy python3 pipeline/build_where.py [--tasveg ZIP]`
+  (`--clip W,S,E,N --out-dir DIR` to measure a subset; ~25 s for Hobart).
+  Reads the zip (default `pipeline/cache/`, else `data/`) via the SAME
+  slim parquet cache as build_records (`pipeline/cache/records/
+  tasveg_slim.parquet`, keyed on zip name + size + mtime). 2026-11-03:
+  2 m 43 s warm (rasterise 27 s, patch graph ~2 min). Tripwires: 156
+  codes in TASVEG and the communities JSON, every code ≥ 1 cell,
+  22–27k ≥ 50 %-land cells, land at Hobart/Cape Grim/Currie/Whitemark and
+  sea in Bass Strait/off Maria Island, file 50 KB–1.5 MB, both ≤ 2 MB,
+  byte round-trip through the reference parser. A grid change = bump
+  `version` (the Swift reader must check it).
 - **Do not re-upload topo unless its tiles changed:** `build_raster.py`
   writes extra metadata (`copyright_text`, `built`, …) into the archive, so
   a rebuild of identical tiles has a different byte size — on R2 every

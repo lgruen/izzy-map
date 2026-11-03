@@ -82,9 +82,96 @@ Decisions already taken (Leo, 2026-11-03):
 - Everything lives in Application Support, excluded from iCloud backup.
   The Storage screen shows per-item sizes and free space, and Remove for any
   on-demand pack or extra.
-- Open checks (M4): a URL/path API for handing MapLibre a pack's file; the
-  per-pack size limit (Tasmap 3.24 GB); TestFlight behaviour for internal
-  testers.
+- `plantid` stays in the table but has no files until milestone 6.
+
+### Pack facts (researched 2026-11-03, Xcode 27.2 / iOS 27.2 SDK)
+
+Sources: [A] SDK headers `BackgroundAssets.framework/Headers/BAAssetPackManager.h`
++ its swiftinterface, `StoreKit/SKDownloaderExtension.h`, Xcode's
+"Background Download" target template; [B]
+<https://developer.apple.com/documentation/backgroundassets/downloading-apple-hosted-asset-packs>;
+[C] <https://developer.apple.com/documentation/backgroundassets/creating-managed-asset-packs>;
+[D] <https://developer.apple.com/documentation/backgroundassets/testing-asset-packs-locally>;
+[E] <https://developer.apple.com/help/app-store-connect/reference/apple-hosted-asset-pack-size-limits>;
+[F] <https://developer.apple.com/help/app-store-connect/test-a-beta-version/test-apple-hosted-asset-packs>;
+[G] <https://developer.apple.com/help/app-store-connect/manage-asset-packs/upload-apple-hosted-asset-packs>;
+[H] WWDC26 378 <https://developer.apple.com/videos/play/wwdc2026/378/> (WWDC25 325
+is the introduction); [I] forum threads 845418 / 850707 (Xcode 27 scheme
+option; simulator problems on 27.1).
+
+- **File access for MapLibre:** `AssetPackManager.shared.url(for: FilePath)`
+  (iOS 26, nonisolated) returns a file URL — the only API that gives a path,
+  so `pmtiles://file://` uses it. All packs merge into ONE namespace (file
+  names must be unique across packs); the URL must not be persisted beyond
+  the process; it is "well formed even if no item exists", so the app checks
+  readability; "less efficient" than `descriptor(for:)` (an fd the caller
+  closes) / `contents(at:)` (mmapped `Data`) — call it off the main thread
+  [A]. `PackStore` resolves at launch and after each download, never per
+  tile, and off the main thread: the first touch of `AssetPackManager.shared`
+  connects to the helper service (0.2–0.27 s on the 27.2 simulator).
+- **On-disk form — not yet verified on a device:** an `.aar` is an Apple
+  Archive (pbz, block compression); `url`/`descriptor`/mmap imply extracted
+  plain files, but whether they sit uncompressed at a stable path is
+  undocumented. On the 27.2 simulator `url(for:)` points into a system
+  daemon's container: `…/Containers/Data/InternalDaemon/<uuid>/Library/Caches/
+  org.gruenschloss.izzymap/Staging/Unlocalized/<file>`. Check on the first
+  real install (log `Packs` category, debug level prints each resolved path).
+- **Packaging is lossless:** `xcrun ba-package` (2.0) only archives;
+  `pipeline/build_packs.py --verify all` extracts every pack with `aa` and
+  SHA-256-matches all 14 PMTiles against `data/` (2026-11-03). PNG/aerial
+  packs shrink 3–7 % from the archive's own compression; the bytes the app
+  reads are the originals.
+- **Limits:** 200 GB total per app (per pack the max over its live
+  versions, summed) and 200 packs per app [E]. No per-pack or per-file
+  limit is published (Tasmap = one 3.24 GB file; confirm on first upload).
+  Essential packs count towards the App Store "Up to" size [E].
+- **Manifest** (`ba-package template`): `assetPackID`, `downloadPolicy` =
+  `essential` | `prefetch` (`installationEventTypes`: `firstInstallation`,
+  `subsequentUpdate`) | `onDemand` (`{}`), `fileSelectors` (`file`,
+  `directory`, `filePattern`, `fileSource`+`fileDestination`, …),
+  `platforms`, optional `sourceRoot` (relative to the manifest), `language`
+  (27+); `userInfo` is not allowed for Apple hosting [C]. Essential blocks
+  opening the app until downloaded; prefetch starts with the install and may
+  finish later; on-demand only via the API [C].
+- **Project setup** [B, A]: an ExtensionKit "Background Download"
+  extension, type "Apple-Hosted, Managed" = `@main struct …:
+  StoreDownloaderExtension {}` (StoreKit; Apple: omit `shouldDownload` unless
+  filtering), Info.plist `EXAppExtensionAttributes.EXExtensionPointIdentifier
+  = com.apple.background-asset-downloader-extension`; the App Group on app
+  and extension; app Info.plist `BAAppGroupID`, `BAHasManagedAssetPacks` =
+  YES, `BAUsesAppleHosting` = YES, and no other BA keys.
+- **Status and control** [A, B]: `statusUpdates` (all packs) /
+  `statusUpdates(forAssetPackWithID:)` → began / paused / downloading
+  (`Progress`; `progress.cancel()` cancels) / finished / failed;
+  `ensureLocalAvailability(of:requireLatestVersion:)` (26.4; the 26.0 form
+  is deprecated) downloads and returns when local; `remove(assetPackWithID:)`
+  — the system never removes packs while the app is installed;
+  `assetPackIsAvailableLocally(withID:)` (26.4, sync); `manifest` (27; on 26
+  `allAssetPacks`) gives `downloadSize`/`version`; updates install in the
+  background by themselves. Even an essential pack can be missing after a
+  network dropout until the app calls `ensureLocalAvailability` — `PackStore`
+  does that for every essential/prefetch pack at launch.
+- **Upload** [G]: `xcrun altool --upload-asset-pack <id>.aar --apple-id
+  <numeric app id>` (+ `--api-key`/`--api-issuer`, `--wait`), or
+  Transporter / the ASC API — separately from builds. Each upload is a new
+  version (numbered automatically); devices then update in the background.
+  Archiving a pack in ASC is irreversible and its ID can never be reused.
+- **TestFlight** [F]: internal testers automatically get the latest
+  processed version (no review step described); external testers need each
+  version through TestFlight review (one in review at a time). Testers need
+  an Apple Account with access to the beta; sandbox accounts are not
+  supported.
+- **Local testing** [D, H, I]: Xcode 27's Run scheme → Options → "Background
+  Asset Packs" folder makes Xcode serve the `.aar`s while it runs the app
+  (Xcode's DT asset service serves `/assetpacks/<id>` and sets the device's
+  override). Only an Xcode *Run* starts it: an `xcodebuild test` with the
+  same scheme element got no override (tried 2026-11-03), and `xcodebuild`
+  can't run apps. The older path, `xcrun ba-serve --host … *.aar` plus Settings ▸
+  Developer ▸ Development Overrides, needs a TLS identity in the Mac keychain
+  and a trusted root CA on the device; forum reports say the override page
+  is blank and BA is unreliable on 27.1 simulators — a real iPhone is the
+  safer test bed. Without any server, a simulator build asks the App Store,
+  gets 404 (no packs uploaded) and the app shows "No offline maps" (handled).
 
 ## 3. Map
 

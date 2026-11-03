@@ -6,6 +6,8 @@ nonisolated struct DataLocation: Sendable, Equatable {
         /// DEBUG builds: `-dataDir <path>` on the command line (the simulator
         /// reads the developer's `data/` directory in place).
         case debugDirectory(URL)
+        /// The Apple-hosted Background Assets packs on the device (`PackStore`).
+        case assetPacks
         /// Nothing on this device yet.
         case none
     }
@@ -20,11 +22,8 @@ nonisolated struct DataLocation: Sendable, Equatable {
     var isEmpty: Bool { archives.isEmpty }
 }
 
-/// Resolves the archive files.
-///
-/// Production data will arrive as Apple-hosted Background Assets packs
-/// (docs/NATIVE_PLAN.md §2, milestone 5); this is the single place that
-/// learns where they are.
+/// The DEBUG `-dataDir` override: archives read in place from a directory.
+/// Production data is the Background Assets packs (`PackStore`).
 nonisolated enum DataLocator {
     /// Launch argument `-dataDir <path>` lands in UserDefaults' argument domain.
     static let dataDirectoryKey = "dataDir"
@@ -41,8 +40,6 @@ nonisolated enum DataLocator {
         if let path, !path.isEmpty {
             return scan(directory: URL(filePath: path, directoryHint: .isDirectory), fileManager: fileManager)
         }
-        // TODO(M5): Background Assets packs (vector, topo, …) — ask the pack
-        // manager for each archive's file URL here.
         return .none
     }
 

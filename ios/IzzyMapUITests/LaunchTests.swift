@@ -113,8 +113,7 @@ final class LaunchTests: XCTestCase {
         plantID.tap()
         // fully up (hittable), not mid-presentation, before the rotation
         XCTAssertTrue(waitUntil(patience) { placeholder.exists && placeholder.isHittable }, "plant ID opens")
-        XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(waitUntil(patience) { window.frame.width > window.frame.height }, "landscape")
+        try turnLandscape(window, patience)
         XCTAssertTrue(placeholder.waitForNonExistence(timeout: patience), "the old layout's modal closes")
         attachScreenshot("plant-id-rotated-closed")
         XCTAssertTrue(waitUntil(patience) { plantID.isHittable }, "the button in the card layout")
@@ -145,10 +144,23 @@ final class LaunchTests: XCTestCase {
         let plantID = app.buttons["plant-id-button"]
         XCTAssertTrue(waitUntil(20) { window.frame.height > window.frame.width && plantID.isHittable })
         plantID.tap()
-        XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(waitUntil(20) { window.frame.width > window.frame.height }, "landscape")
+        try turnLandscape(window, 20)
         XCTAssertTrue(app.staticTexts["Identify a plant"].waitForNonExistence(timeout: 20), "no stranded modal")
         attachScreenshot("rotated-mid-presentation")
+    }
+
+    /// Turns the device landscape and waits for the window to follow. A
+    /// simulator that never turns (CI once picked the foldable "iPhone Duo",
+    /// whose window stayed 466 × 678) is the environment, not the app: skip.
+    /// The app's side — landscape in the iPhone's supported orientations —
+    /// is pinned by the unit test `OrientationTests`, and the modal reset on
+    /// the layout switch by `WindowModelTests.aLayoutSwitchResetsTheModal`.
+    @MainActor
+    private func turnLandscape(_ window: XCUIElement, _ timeout: TimeInterval) throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        guard waitUntil(timeout, { window.frame.width > window.frame.height }) else {
+            throw XCTSkip("simulator did not rotate (window \(window.frame.size) after \(Int(timeout)) s)")
+        }
     }
 
     /// Polls `condition` (UI state, never a fixed sleep) until it holds or

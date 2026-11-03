@@ -67,7 +67,8 @@ The custom roles are few:
 | Role | Light | Dark | Use |
 |---|---|---|---|
 | `ink` | `label` (#000000) | `label` (#FFFFFF) | app tint: glyphs, links, prominent buttons (ink fill, inverse text), progress |
-| `mapInk` | #000000 | #000000 (map is always light) | selection line, map code labels |
+| `mapInk` | #000000 | #000000 (map is always light) | map code labels, same-community dashes |
+| `selection` | #FF3B30 | same (the map is always light) | the tapped feature: polygon line, tap ring, tree ring (3 pt) — decided 2026-11-03 |
 | `mapHalo` | #FFFFFF @ 85 % | same | halo under every map ink line/label |
 | `keyline` | #000000 @ 50 % (= #808080 on white, 3.98:1) | #FFFFFF @ 45 % (≥ 4.2:1 on #1C1C1E/#2C2C2E) | 0.5 pt border on key boxes, flowering cells, scale bar |
 | `keyPlate` | #FFFFFF | #FFFFFF | opaque ground under every key box on glass |
@@ -93,10 +94,13 @@ The custom roles are few:
     washed out to near-white (WDR #326565 at aerial-light 0.20 is #D6E0E0)
     and Outlines left a white box with a thin band. (No "Map colour #hex"
     row: the box is the colour.)
-- **Why red selection is out.** #FF3B30 on SMM #CB6565 at 0.5 is 1.9:1, on
-  SHS #FE9898 2.5:1, and topo roads are red-brown. Ink on a white halo is
-  ≥ 7.5:1 on every composited fill; over dark aerial forest the halo does
-  the work (black alone 1.7:1, white halo 12:1).
+- **Red selection — decided by the user (2026-11-03).** The proposal was a
+  cased ink line (ink on a white halo, ≥ 7.5:1 on every composited fill),
+  because #FF3B30 on SMM #CB6565 at 0.5 is 1.9:1, on SHS #FE9898 2.5:1, and
+  topo roads are red-brown. Shown both, she chose today's red: the
+  selection is #FF3B30, 3 pt, no casing — the one hue that says "this one"
+  at a glance. Known weak spots stay the salmon heaths (SMM, SHS) and
+  red-brown topo roads.
 
 ### Typography
 
@@ -202,8 +206,8 @@ iPhone portrait — map idle          iPhone — tapped, peek detent
 ┌──────────────────────────┐        ┌──────────────────────────┐
 │                     ┌──┐ │        │                     ┌──┐ │
 │                     │▤ │ │ Layers │      ╭──────╮       │▤ │ │
-│      map (paper)    │➤ │ │ Locate │     ╱ ▓▓▓▓▓▓ ╲ ink  │➤ │ │
-│                     └──┘ │        │     ╲▓▓RPW▓▓╱ +halo └──┘ │
+│      map (paper)    │➤ │ │ Locate │     ╱ ▓▓▓▓▓▓ ╲ 3 pt │➤ │ │
+│                     └──┘ │        │     ╲▓▓RPW▓▓╱ red   └──┘ │
 │                          │        │      ╰──────╯            │
 │ ▮▯▮▯ 10 km               │        │ ▮▯▮▯ 10 km               │
 │ ┌E 526 340  N 5 252 210┐ │        │ ┌E 526 340  N 5 252 210┐ │
@@ -253,9 +257,10 @@ Plant sheet (pushed; large detent on iPhone, card on iPad):
 │ Ericaceae                │  subheadline, upright
 │                          │
 │ Flowering                │
-│ S O N │D J F│M A M│J J A │  spring-first bloom chart:
-│ ■ ■ ■ │■ □ □│□ □ □│□ □ □ │  ■ ink, □ keyline; today ▴
-│       ▴                  │
+│ J F M │A M J│J A S│O N D │  January-first bloom chart:
+│ ■ ■ □ │□ □ □│□ □ □│□ ■ ■ │  ■ ink, □ keyline; this
+│ Flowers November to March│  month framed in ink
+│ Height (elevation 1:50)  │  see "Plant sheet graphics"
 │ Form     Shrub to 2 m    │
 │ Flowers  Pink, white…    │
 │ Habitat  Subalpine…      │
@@ -264,9 +269,39 @@ Plant sheet (pushed; large detent on iPhone, card on iPad):
 ╰──────────────────────────╯
 ```
 
-The bloom chart starts in **September**: a January start splits Tasmania's
-main (summer) flowering across both ends of the strip; seasons sit in
-contiguous threes with a gap between them, like a planting-plan bloom chart.
+The bloom chart starts in **January** — decided by the user (2026-11-03),
+over the proposed spring-first September start (which kept Tasmania's
+summer flowering in one run). Months sit in contiguous threes with a gap
+between them, like a planting-plan bloom chart; the runs are also said in
+words under it ("Flowers November to March"), so a run split across the
+ends of the strip still reads as one. (`Flowering.startMonth` is the one
+switch; a season-aligned start brings back season names under the threes.)
+
+**Plant sheet graphics (milestone 3).** One family of plant silhouettes
+(front elevations: eucalypt with a clear bole and open lumpy crown, dense
+broadleaf crown, tiered conifer, tree fern/pandani rosette, multi-stemmed
+shrub mound, leafy herb, cushion, mat, tussock grass, sedge, rush, pinnate
+fern, orchid scape, climber on a support) serves both the list pictograms
+and the **height elevation**: linear, at a stated ratio from a ladder of
+standard scales (2:1, 1:1, 1:2, 1:5 … 1:500 on a nominal sheet where
+1 pt ≙ 2 mm), the largest at which the maximum height fills ≤ 80 % of a
+140 pt (phone) / 180 pt (regular width) plot; a hatched ground line; the
+1.7 m filled-grey scale figure 1 m (to scale) from the plant, or — at 1:5
+and larger, where a person would dwarf the plant — a 30 cm boot cut by a
+break line; maximum silhouette in 0.75 pt ink over a 12 % fill, minimum as
+a dashed copy; a dimension string with 45° ticks and a hatched band between
+the two levels; faint level lines at 1:200 (5 m) and 1:500 (10 m); the
+ratio and a checkered scale bar under it. No height recorded → no drawing.
+Mini-maps (a plant's records, a community's "where else") are printed
+plates in both appearances: paper land #F6F5F0, a 0.5 pt grey coast, data
+in ink — record squares of 5 km in three steps (1, 2–4, 5+ sites), presence
+cells in four steps — a 100 km tick, a ringed "you are here", and the
+credit line under each. List bars always show the measure the list is
+ranked by ("Characteristic" for the indicator ranking, "Sites" with the
+count elsewhere), under a column heading. **Show on map** solos the
+community (others' fill at 10 %, the soloed one at 85 %), flies to its
+statewide extent and steps through its ten largest patches from a glass
+pill ("DCO everywhere ‹ › ✕"); × or Escape flies back.
 
 ```
 iPhone landscape (compact height)       iPad landscape (regular width)
@@ -422,11 +457,13 @@ M1 the readout pill grows into the sheet at AX-L.
 
 ## 4. Cartography
 
-**Overlay strength defaults** (per base; names unchanged):
+**Overlay strength defaults** (per base; names unchanged). The default
+strength is **Light** — decided by the user (2026-11-03): the topo or photo
+reads through the tint. A saved choice always wins.
 
 | Base | Full | Light | Outlines |
 |---|---|---|---|
-| Topographic | 0.55 | 0.30 | band (below) |
+| Topographic | 0.55 | 0.30 (default) | band (below) |
 | Paper map (Tasmap) | 0.50 | 0.25 | band |
 | Aerial / seasons | 0.40 | 0.20 | band + boundaries always on |
 
@@ -444,11 +481,13 @@ plus a 0.5 pt graphite boundary — the hand-tinted boundary ribbon of old print
 readable, sides unambiguous. If tile-clip edges show as seams on device,
 fall back to a centred 2 pt line.
 
-**Selection (replaces #FF3B30).**
+**Selection (decided by the user, 2026-11-03: red).**
 
-- Tapped polygon: **2.5 pt `mapInk` over a 6 pt `mapHalo` casing** — the
-  printed sheet's "this one". It reads on every fill and over dark photos,
-  and never borrows a hue from the data. A tapped tree gets it as a ring.
+- Tapped polygon: **3 pt #FF3B30**, drawn per feature id over the
+  polygon's own vector tiles (never a tile-clipped copy). A tapped tree
+  gets it as an 11 pt ring; a polygon too big to see whole gets a small
+  6 pt tap ring in the same red. (The cased-ink proposal — 2.5 pt ink on a
+  6 pt white halo — was shown and declined.)
 - Other polygons of the **same community**: 0.75 pt ink @ 55 %, dashed
   [2, 2], from z11 — "where else is this?" without a second colour.
 
@@ -526,7 +565,8 @@ Where the first plan drifted to defaults, and what changed:
    boxes. A rounded swatch is a UI chip; and M1's white FUR swatch vanishes
    without a keyline.
 3. **Selection.** "A stronger red" → a cased ink line (measured 1.9:1 on the
-   salmon heaths; clashes with topo roads).
+   salmon heaths; clashes with topo roads) → shown to her, she kept the
+   red (2026-11-03).
 4. **Data type.** SF Mono for codes and coordinates (the "monospace data
    label" tell) → SF small caps and monospaced *digits*.
 5. **Plant sheet.** Photo hero with the name on a gradient → a book plate
@@ -539,17 +579,27 @@ Where the first plan drifted to defaults, and what changed:
 10. **Icon.** A generic leaf or pin → one specific leaf in the data's own
     colours, carrying the selection mark.
 
-## 7. Open questions for her
+## 7. Open questions for her — decided by the user (2026-11-03)
 
-1. In lists and on the plant sheet, botanical name first (planting-schedule
-   order) or common name first?
-2. Bloom chart: spring-first (Sep → Aug, as proposed) or calendar Jan → Dec?
-3. Overlay strength: at 0.55 / 0.40 / 0.30, how much topo or photo should
-   show through? Show her three screenshots.
+She answered the design-choices page; every answer below is a decision.
+
+
+1. ~~In lists and on the plant sheet, botanical name first (planting-schedule
+   order) or common name first?~~ **Decided (2026-11-03): botanical first.**
+2. ~~Bloom chart: spring-first (Sep → Aug, as proposed) or calendar Jan →
+   Dec?~~ **Decided by the user (2026-11-03): January first.**
+3. ~~Overlay strength: at 0.55 / 0.40 / 0.30, how much topo or photo should
+   show through?~~ **Decided (2026-11-03): Light is the default.**
 4. ~~Key boxes: blended as they appear on the map, or the official
    full-strength colour?~~ Resolved: both — the Layers key blends (matches
    the map), the card's swatch is the official fill (names the unit); §2.
-5. Community codes on the map from z14: a help in the field, or clutter
-   over the topo's own lettering?
-6. The dashed "same community elsewhere" line on selection: useful, or
-   noise when tapping around to compare?
+5. ~~Community codes on the map from z14: a help in the field, or clutter
+   over the topo's own lettering?~~ **Decided (2026-11-03): keep them, on
+   the larger patches only** (the inscribed-radius filter, as built).
+6. ~~The dashed "same community elsewhere" line on selection: useful, or
+   noise when tapping around to compare?~~ **Decided (2026-11-03): keep
+   the dashes.**
+7. **Decided (2026-11-03): the selection is red** (#FF3B30, 3 pt), not the
+   cased ink line (§2, §4). Key boxes: as on the map (blended at the
+   current strength) in the Layers key; the card's swatch stays the
+   official fill (q4).

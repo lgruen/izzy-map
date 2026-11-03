@@ -14,6 +14,10 @@ nonisolated struct MapChrome: Equatable, Sendable {
     var compassTop: CGFloat = 0
     /// Trailing inset that centres the compass under the controls.
     var controlsCentreFromTrailing: CGFloat = 40
+    /// Map area covered by chrome beyond the content inset (the iPad card,
+    /// a raised sheet, the controls, the spotlight pill): a camera that
+    /// frames an extent keeps clear of it.
+    var framingInsets: UIEdgeInsets = .zero
 }
 
 /// The one MapLibre map view. SwiftUI owns the state (`AppModel`); the
@@ -25,6 +29,7 @@ struct MapView: UIViewRepresentable {
     var hasSelection: Bool
     var layers: LayerState
     var keyHighlight: String?
+    var spotlight: Spotlight?
 
     func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
 
@@ -41,5 +46,6 @@ struct MapView: UIViewRepresentable {
         coordinator.apply(layers: layers, to: map)
         if !hasSelection { coordinator.clearSelectionShape() }
         coordinator.apply(keyHighlight: keyHighlight)
+        coordinator.apply(spotlight: spotlight, to: map)
     }
 }

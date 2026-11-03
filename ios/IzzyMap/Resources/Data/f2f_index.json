@@ -625,5 +625,18 @@
    "file": "f2f_wet_eucalypt.pdf",
    "page": 36
   }
+ },
+ "sizes": {
+  "f2f_dry_eucalypt.pdf": 6621252,
+  "f2f_highland_treeless.pdf": 1445733,
+  "f2f_modified_land.pdf": 2452399,
+  "f2f_moorland_sedgeland.pdf": 1727155,
+  "f2f_native_grassland.pdf": 1299653,
+  "f2f_non-eucalypt.pdf": 2837572,
+  "f2f_other_natural.pdf": 1222798,
+  "f2f_rainforest.pdf": 3304058,
+  "f2f_saltmarsh.pdf": 1569048,
+  "f2f_scrub.pdf": 4215667,
+  "f2f_wet_eucalypt.pdf": 3751779
  }
 }

@@ -69,11 +69,8 @@ nonisolated enum StyleBuilder {
         static let treesClusterCount = "trees-cluster-count"
         static let treesPoint = "trees-point"
         static let treesLabel = "trees-label"
-        static let selectedFeatureHalo = "selected-feature-halo"
         static let selectedFeature = "selected-feature"
-        static let selectionHalo = "selected-halo"
         static let selectionOutline = "selected-outline"
-        static let selectionPointHalo = "selected-point-halo"
         static let selectionPoint = "selected-point"
 
         /// The overlay fills a tap consults.
@@ -81,8 +78,9 @@ nonisolated enum StyleBuilder {
         /// Tree layers a tap consults, topmost first.
         static let treePoints = [treesPoint, treesCluster]
         /// Everything that must stay last (after the trees), in order.
-        static let selection = [selectedFeatureHalo, selectedFeature, selectionHalo, selectionOutline,
-                                selectionPointHalo, selectionPoint]
+        /// The selection layers, last in the style. (The halo ids are no
+        /// longer drawn: the selection is red — decided 2026-11-03.)
+        static let selection = [selectedFeature, selectionOutline, selectionPoint]
     }
 
     enum SourceID {
@@ -132,6 +130,10 @@ nonisolated enum StyleBuilder {
     static let fallbackFill = "#c8c8c8"
     static let mapInk = "#000000"
     static let mapHalo = "rgba(255,255,255,0.85)"
+    /// The tapped feature's line and rings: system red, 3 pt — decided by
+    /// the user (2026-11-03, DESIGN.md §4), over the cased ink proposal.
+    static let selectionRed = "#FF3B30"
+    static let selectionWidth = 3.0
     /// Community boundaries over cartography and over photos.
     static let graphite = "rgba(0,0,0,0.2)"
     static let paper = "rgba(255,255,255,0.45)"
@@ -393,41 +395,35 @@ nonisolated enum StyleBuilder {
             addTrees(trees, sources: &sources, layers: &layers)
         }
 
-        // Selection, always last. The tapped overlay polygon by id, as halo
-        // and ink lines over its own vector tiles (never a copy of one
-        // tile's clipped geometry) …
+        // Selection, always last. The tapped overlay polygon by id, a red
+        // line over its own vector tiles (never a copy of one tile's
+        // clipped geometry) …
         if let overlaySource = overlaySource(state.overlay), let archive = state.overlay.archive,
            let url = data.url(for: archive) {
             let source = highlightSource(overlaySource.id)
             if sources[source] == nil {
                 sources[source] = ["type": "vector", "url": pmtilesURL(url)] as [String: Any]
             }
-            let filter = featureFilter(selection.featureID)
-            for (id, color, width) in [(LayerID.selectedFeatureHalo, mapHalo, 6.0), (LayerID.selectedFeature, mapInk, 2.5)] {
-                layers.append([
-                    "id": id, "type": "line", "source": source, "source-layer": overlaySource.layer,
-                    "minzoom": idMinZoom(state.overlay), "filter": filter, "layout": ["line-join": "round"],
-                    "paint": ["line-color": color, "line-width": width] as [String: Any],
-                ])
-            }
+            layers.append([
+                "id": LayerID.selectedFeature, "type": "line", "source": source, "source-layer": overlaySource.layer,
+                "minzoom": idMinZoom(state.overlay), "filter": featureFilter(selection.featureID),
+                "layout": ["line-join": "round"],
+                "paint": ["line-color": selectionRed, "line-width": selectionWidth] as [String: Any],
+            ])
         }
         // … and a tapped tree (or the tap point on a big polygon) in this
         // shape source, set at runtime.
         sources[SourceID.selection] = ["type": "geojson", "data": ["type": "FeatureCollection", "features": [Any]()]]
         let polygons: [Any] = ["!=", ["geometry-type"], "Point"]
         let points: [Any] = ["==", ["geometry-type"], "Point"]
-        layers.append(["id": LayerID.selectionHalo, "type": "line", "source": SourceID.selection, "filter": polygons,
-                       "layout": ["line-join": "round"], "paint": ["line-color": mapHalo, "line-width": 6] as [String: Any]])
         layers.append(["id": LayerID.selectionOutline, "type": "line", "source": SourceID.selection, "filter": polygons,
-                       "layout": ["line-join": "round"], "paint": ["line-color": mapInk, "line-width": 2.5] as [String: Any]])
+                       "layout": ["line-join": "round"],
+                       "paint": ["line-color": selectionRed, "line-width": selectionWidth] as [String: Any]])
         // a tree ring (11 pt) or the smaller tap ring (`tap` property, 6 pt)
         let radius: [Any] = ["case", ["has", "tap"], 6, 11]
-        layers.append(["id": LayerID.selectionPointHalo, "type": "circle", "source": SourceID.selection, "filter": points,
-                       "paint": ["circle-radius": radius, "circle-color": "rgba(0,0,0,0)",
-                                 "circle-stroke-color": mapHalo, "circle-stroke-width": 6] as [String: Any]])
         layers.append(["id": LayerID.selectionPoint, "type": "circle", "source": SourceID.selection, "filter": points,
                        "paint": ["circle-radius": radius, "circle-color": "rgba(0,0,0,0)",
-                                 "circle-stroke-color": mapInk, "circle-stroke-width": 2.5] as [String: Any]])
+                                 "circle-stroke-color": selectionRed, "circle-stroke-width": selectionWidth] as [String: Any]])
 
         return [
             "version": 8, "name": "IzzyMap", "glyphs": glyphs,

@@ -101,7 +101,8 @@ public typealias Pre1750Table = [String: Pre1750Unit]
 
 /// Where each community's account starts in the From Forest to Fjaeldmark chapters.
 public struct F2FIndex: Codable, Sendable, Hashable {
-    /// One community's chapter PDF and 1-based page.
+    /// One community's chapter PDF and the 0-based index of the page its
+    /// account starts on (PDFKit's `page(at:)`; the reader shows it + 1).
     public struct Entry: Codable, Sendable, Hashable {
         public var file: String
         public var page: Int
@@ -110,6 +111,10 @@ public struct F2FIndex: Codable, Sendable, Hashable {
     public var baseUrl: String
     /// VEGCODE → entry.
     public var index: [String: Entry]
+    /// Chapter file → byte size (pipeline/build_f2f_index.py, checked
+    /// against the server's Content-Length). Optional: added later, the
+    /// file carries no version, so older copies decode without it.
+    public var sizes: [String: Int]?
 
     /// The chapter's download URL and page for a community, if indexed.
     public func location(for code: String) -> (url: URL, page: Int)? {

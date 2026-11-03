@@ -16,6 +16,9 @@ nonisolated struct CommunitySelection: Equatable, Sendable {
     var structure: String?
     var notableTrees: String?
     var weeds: String?
+    /// Where it was tapped (the "recorded near here" list, the mini-maps' ring).
+    var latitude: Double?
+    var longitude: Double?
 }
 
 /// A tapped significant tree (a point) or a tree group (an area).
@@ -56,25 +59,32 @@ nonisolated struct FeatureSelection: Equatable, Identifiable, Sendable {
     }
 }
 
-/// Immutable launch data shared by every window: located archives and the
-/// bundled tables. Loaded once per process.
+/// Launch data shared by every window: the packs (observable: archives come
+/// and go as packs install) and the bundled tables. Loaded once per process.
 nonisolated struct AppData: Sendable {
-    let location: DataLocation
+    let packs: PackStore
     let tables: MapTables
-    /// Readers of the local season packs (for the coverage caption).
-    let seasonProbes: SeasonProbes
 
-    init(location: DataLocation, tables: MapTables) {
-        self.location = location
+    @MainActor init(packs: PackStore, tables: MapTables) {
+        self.packs = packs
         self.tables = tables
-        self.seasonProbes = SeasonProbes(location: location)
     }
+
+    /// Tests and previews: fixed archives.
+    @MainActor init(location: DataLocation, tables: MapTables) {
+        self.init(packs: PackStore(fixed: location), tables: tables)
+    }
+
+    /// The archives readable now.
+    @MainActor var location: DataLocation { packs.location }
+    /// Readers of the local season packs (for the coverage caption).
+    @MainActor var seasonProbes: SeasonProbes { packs.seasonProbes }
 
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "App")
 
     /// Archives located, tables loaded (each table on its own: one missing
     /// file must not take the others down).
-    static func launch() -> AppData {
+    @MainActor static func launch() -> AppData {
         var tables = MapTables()
         if let data = BundledData.inBundle() {
             func load<T>(_ name: String, _ body: () throws -> T) -> T? {
@@ -90,7 +100,7 @@ nonisolated struct AppData: Sendable {
         } else {
             logger.fault("bundled data folder missing")
         }
-        return AppData(location: DataLocator.locate(), tables: tables)
+        return AppData(packs: PackStore.launch(), tables: tables)
     }
 }
 
@@ -142,13 +152,19 @@ nonisolated enum Presentation: String, Identifiable, Sendable {
 /// What Escape closes next: a modal, then the card, then a key row's
 /// highlight, then nothing.
 nonisolated enum EscapeStep: Equatable, Sendable {
+    /// The full-screen document reader (over everything, so first).
+    case closeDocument
     case dismiss(Presentation)
+    /// One view back in the card's stack (plant sheet → group list → card).
+    case back
     case closeCard
     case clearHighlight
 
     var title: String {
         switch self {
+        case .closeDocument: "Close Document"
         case let .dismiss(presentation): "Close \(presentation.title)"
+        case .back: "Back"
         case .closeCard: "Close Card"
         case .clearHighlight: "Clear Highlight"
         }
@@ -169,6 +185,8 @@ struct LocationClock {
 final class AppModel {
     let shared: AppData
     let map = MapLiveState()
+    /// The window's documents: fetches, the reader, failures (Escape's first step).
+    let documents = DocumentOpener()
     private let clock: LocationClock
 
     var data: DataLocation { shared.location }
@@ -195,7 +213,18 @@ final class AppModel {
     /// dashed "same community" line. Cleared by a selection, an overlay
     /// change, a tap on an empty spot of the map, Escape, or a second tap on
     /// the same row (`toggleKeyHighlight`).
-    var keyHighlight: String?
+    var keyHighlight: String? {
+        // clearing the highlight (Escape, a second key-row tap, an overlay
+        // change) leaves "Show on map" the way it came
+        didSet { if let spotlight, keyHighlight != spotlight.code { exitSpotlight() } }
+    }
+
+    /// "Show on map": one community soloed statewide or patch by patch
+    /// (Map/Spotlight.swift). Its exit pill sits on the map.
+    var spotlight: Spotlight?
+    /// Set when the spotlight goes: whether the camera flies back to where
+    /// it was (an exit) or stays (she tapped the map and is exploring).
+    @ObservationIgnored var spotlightRestoresCamera = false
 
     /// A key row's tap: highlight that community, or clear it when it is
     /// already the highlighted one. Returns whether it is now highlighted.
@@ -222,7 +251,20 @@ final class AppModel {
 
     /// Requested user tracking; the map writes back when a pan ends it.
     var trackingMode: TrackingMode = .off
-    var selection: FeatureSelection?
+    var selection: FeatureSelection? {
+        // a new tap or a close drops the whole stack
+        didSet { if selection?.id != oldValue?.id { cardPath = [] } }
+    }
+    /// Views pushed over the card (group list, plant sheet), oldest first.
+    var cardPath: [CardRoute] = []
+
+    /// Pushes a view over the card — never the same one twice in a row (a
+    /// double tap lands on the row again before the push shows).
+    func push(_ route: CardRoute) {
+        guard selection != nil, cardPath.last != route else { return }
+        cardPath.append(route)
+    }
+
     var authorization: CLAuthorizationStatus = .notDetermined
 
     // MARK: Panel and modals
@@ -263,13 +305,15 @@ final class AppModel {
     // MARK: Selection
 
     func select(_ feature: SelectedFeature) {
+        endSpotlight()
         keyHighlight = nil
         selection = FeatureSelection(feature: feature)
     }
 
     /// A TASVEG polygon: names from the table (the tile's VEGCODE_D is the
     /// fallback for a code the table lacks), facts from the tile.
-    func selectCommunity(code: String, sourceName: String?, attributes: [String: String] = [:]) {
+    func selectCommunity(code: String, sourceName: String?, attributes: [String: String] = [:],
+                         at coordinate: CLLocationCoordinate2D? = nil) {
         let community = communities[code]
         let name = community?.name ?? sourceName ?? code
         func fact(_ key: String) -> String? {
@@ -283,7 +327,9 @@ final class AppModel {
             group: community?.group ?? fact("VEG_GROUP"),
             structure: fact("FOREST_STR"),
             notableTrees: fact("NOTABLE_TD"),
-            weeds: fact("WEED_TYP_D")
+            weeds: fact("WEED_TYP_D"),
+            latitude: coordinate?.latitude,
+            longitude: coordinate?.longitude
         )))
     }
 
@@ -312,7 +358,9 @@ final class AppModel {
 
     /// The next thing Escape closes, nil when there is nothing to close.
     var escapeStep: EscapeStep? {
+        if documents.isReading { return .closeDocument }
         if let modal { return .dismiss(modal.presentation) }
+        if selection != nil, !cardPath.isEmpty { return .back }
         if selection != nil { return .closeCard }
         if keyHighlight != nil { return .clearHighlight }
         return nil
@@ -321,7 +369,9 @@ final class AppModel {
     /// Escape: back one level.
     func escape() {
         switch escapeStep {
+        case .closeDocument: documents.closeReader()
         case .dismiss: modal = nil
+        case .back: cardPath.removeLast()
         case .closeCard: clearSelection()
         case .clearHighlight: keyHighlight = nil
         case nil: break

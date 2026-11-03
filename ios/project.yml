@@ -2,6 +2,11 @@
 #   cd ios && xcodegen generate        # IzzyMap.xcodeproj is generated, never committed
 # Simulator run with the developer's local packs (DEBUG builds only):
 #   xcrun simctl launch <udid> org.gruenschloss.izzymap -dataDir /Users/leo/izzy-map/data
+#   (+ -dataDirArrivesAfter 8: start empty, "install" the packs 8 s later)
+# Without -dataDir (always in Release) the app reads the Background Assets
+# packs (Data/PackStore.swift; -fetchPacks season-2021 asks for on-demand ones).
+# Local pack serving needs an Xcode Run with Scheme ▸ Run ▸ Options ▸
+# "Background Asset Packs" = data/packs (docs/NATIVE_PLAN.md §2 Pack facts).
 name: IzzyMap
 options:
   bundleIdPrefix: org.gruenschloss
@@ -27,6 +32,7 @@ settings:
     MARKETING_VERSION: "0.1"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: T4HS4UL2LT
+    # local builds; CI archives override it per target (Config/Release.xcconfig)
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1,2"
 
@@ -34,6 +40,13 @@ targets:
   IzzyMap:
     type: application
     platform: iOS
+    # Release signing: automatic locally, manual match profile in CI (the
+    # file includes the CI-only CI.generated.xcconfig; docs/CI.md). Every
+    # target embedded in the archive (the IzzyMapAssets extension)
+    # needs the same configFiles entry and CODE_SIGN_IDENTITY line, so its
+    # profile and build number follow along (IzzyMapAssets has both).
+    configFiles:
+      Release: Config/Release.xcconfig
     sources:
       - path: IzzyMap/Sources
       - path: IzzyMap/Resources/Assets.xcassets
@@ -53,11 +66,21 @@ targets:
         product: MapLibre
       - package: IzzyKit
         product: IzzyKit
+      # Background Assets downloader (Apple hosting requires one); embedded
+      # in IzzyMap.app/Extensions
+      - target: IzzyMapAssets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.gruenschloss.izzymap
+        # XcodeGen's preset puts "iPhone Developer" here, at target level,
+        # where it would beat Config/Release.xcconfig; CI's generated xcconfig
+        # sets IZZY_CI_CODE_SIGN_IDENTITY (the match distribution cert).
+        CODE_SIGN_IDENTITY: "$(IZZY_CI_CODE_SIGN_IDENTITY:default=iPhone Developer)"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
+        # the Background Assets keys (no INFOPLIST_KEY_ form); merged with
+        # the generated ones
+        INFOPLIST_FILE: IzzyMap/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: IzzyMap
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.navigation
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
@@ -73,8 +96,34 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: >-
           UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
           UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        # App Group (Background Assets) on both; increased-memory-limit on
         # devices only: the simulator signs ad hoc and can't carry it
         "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": IzzyMap/IzzyMap.entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]": IzzyMap/IzzyMap-Simulator.entitlements
+
+  # The Background Assets downloader extension for Apple-hosted packs
+  # (Xcode's "Background Download" template, "Apple-Hosted, Managed"). Same
+  # Release signing hook as the app (docs/CI.md): match profile, build number.
+  IzzyMapAssets:
+    type: extensionkit-extension
+    platform: iOS
+    configFiles:
+      Release: Config/Release.xcconfig
+    sources:
+      - path: IzzyMapAssets
+        excludes: [Info.plist, "*.entitlements"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.gruenschloss.izzymap.assets
+        PRODUCT_NAME: IzzyMapAssets
+        CODE_SIGN_IDENTITY: "$(IZZY_CI_CODE_SIGN_IDENTITY:default=iPhone Developer)"
+        CODE_SIGN_ENTITLEMENTS: IzzyMapAssets/IzzyMapAssets.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: IzzyMapAssets/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: IzzyMap Assets
+        # the ExtensionFoundation/StoreKit protocols are nonisolated
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        SKIP_INSTALL: YES
 
   IzzyMapTests:
     type: bundle.unit-test

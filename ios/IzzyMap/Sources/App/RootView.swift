@@ -39,7 +39,8 @@ struct RootView: View {
                 trackingMode: model.trackingMode,
                 hasSelection: model.selection != nil,
                 layers: model.layers,
-                keyHighlight: model.keyHighlight
+                keyHighlight: model.keyHighlight,
+                spotlight: model.spotlight
             )
 
             if !usesSheet {
@@ -69,6 +70,16 @@ struct RootView: View {
                 .padding(.bottom, bottomOrnamentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
 
+            // "Show on map": what is soloed, previous / next, ×
+            if let spotlight = model.spotlight {
+                SpotlightPill(model: model, spotlight: spotlight)
+                    .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
+                    .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
+                    .padding(.top, Self.margin)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: usesSheet ? .topLeading : .top)
+                    .transition(.opacity)
+            }
+
             if let notice = model.notice {
                 NoticeBanner(notice: notice) { model.dismissNotice() }
                     .frame(maxWidth: 440)
@@ -83,8 +94,10 @@ struct RootView: View {
             }
         }
         .animation(.snappy, value: model.notice)
+        .animation(.snappy, value: model.spotlight?.code)
         // card layout: modals hang off the root (the sheet layout's are on the panel sheet)
         .modifier(ModalHost(model: model, layout: .card))
+        .modifier(ReaderHost(model: model, layout: .card))
         .onChange(of: layout, initial: true) { _, new in model.layoutChanged(to: new) }
         .onGeometryChange(for: ScreenMetrics.self) { proxy in
             ScreenMetrics(
@@ -102,6 +115,9 @@ struct RootView: View {
                                      width: frame.width.rounded(), height: frame.height.rounded())
                 if rounded != sheetFrame { sheetFrame = rounded }
             } onRestingChange: { sheetResting = $0 }
+            // the reader over the panel sheet (the topmost presented controller)
+            .modifier(ReaderHost(model: model, layout: .sheet))
+            .environment(model.documents)
         }
         // Remember the header-only sheet height once the sheet settles there.
         .task(id: RestingProbe(lift: sheetLift, resting: sheetResting, empty: model.selection == nil)) {
@@ -160,7 +176,12 @@ struct RootView: View {
             ornamentLift: ornamentLift,
             pillHeight: pillHeight,
             compassTop: Self.margin + controlsHeight + 12,
-            controlsCentreFromTrailing: Self.margin + MapControls.buttonSize / 2
+            controlsCentreFromTrailing: Self.margin + MapControls.buttonSize / 2,
+            framingInsets: UIEdgeInsets(
+                top: Self.margin + 52,
+                left: usesSheet || model.selection == nil ? 0 : cardWidth + Self.margin,
+                bottom: ornamentLift + pillHeight,
+                right: Self.margin + MapControls.buttonSize)
         )
     }
 }
@@ -189,10 +210,11 @@ private struct MapLayer: View {
     var hasSelection: Bool
     var layers: LayerState
     var keyHighlight: String?
+    var spotlight: Spotlight?
 
     var body: some View {
         MapView(model: model, chrome: chrome, trackingMode: trackingMode, hasSelection: hasSelection,
-                layers: layers, keyHighlight: keyHighlight)
+                layers: layers, keyHighlight: keyHighlight, spotlight: spotlight)
             .ignoresSafeArea()
             .accessibilityLabel("Map")
             // UI tests wait for "idle" (camera settled, tiles loaded) before tapping

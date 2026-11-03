@@ -40,13 +40,13 @@ struct AttributionSheet: View {
                 Section {
                     if credits.isEmpty {
                         Text("Nothing from a data provider is on the map right now.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DesignColor.inkSecondary)
                     }
                     ForEach(credits) { credit in
                         CreditRow(credit: credit)
                     }
                 } header: {
-                    Text("On the map now")
+                    Text("On the map now").panelHeader()
                 }
                 .panelRows()
                 // TODO(M7): link to About's full credits by licence regime.
@@ -79,9 +79,9 @@ private struct CreditRow: View {
                 Link(credit.licence.name, destination: credit.licence.url)
             }
             .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DesignColor.inkSecondary)
             if let terms = credit.terms {
-                Text(terms).font(.footnote).foregroundStyle(.secondary)
+                Text(terms).font(.footnote).foregroundStyle(DesignColor.inkSecondary)
             }
         }
         .padding(.vertical, 2)

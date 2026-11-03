@@ -13,6 +13,7 @@ struct FloatingPanel: View {
     var maxHeight: CGFloat
 
     @State private var contentHeight: CGFloat = 0
+    @State private var headerHeight: CGFloat = 0
 
     private static let radius: CGFloat = 28
     /// Width of the glass rim around the DEBUG plate.
@@ -36,12 +37,32 @@ struct FloatingPanel: View {
     }
 
     private func scroller(inset: CGFloat, maxHeight: CGFloat) -> some View {
-        ScrollView {
-            PanelContent(model: model)
-                .padding(inset)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        let hasBody = PanelContent.hasBody(model)
+        return PanelStack(model: model) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    PanelContent(model: model)
+                        .padding(.horizontal, inset)
+                        .padding(.bottom, hasBody ? inset : 0)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                // the search header stays put; the card scrolls under it
+                // behind the system's soft edge
+                .safeAreaBar(edge: .top) {
+                    PanelHeader(model: model)
+                        .padding(.horizontal, inset)
+                        .padding(.top, inset)
+                        .padding(.bottom, hasBody ? 14 : inset)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
+                }
+                .scrollEdgeEffectStyle(.soft, for: .top)
+                .environment(\.panelActions, PanelActions(scrollTo: { id in
+                    withAnimation(.snappy) { proxy.scrollTo(id, anchor: .top) }
+                }))
+            }
         }
-        .scrollBounceBehavior(.basedOnSize)
-        .frame(height: min(max(contentHeight, 1), maxHeight))
+        // content-sized; a pushed plant sheet or group list takes the full height
+        .frame(height: model.cardPath.isEmpty ? min(max(headerHeight + contentHeight, 1), maxHeight) : maxHeight)
     }
 }

@@ -26,10 +26,8 @@ struct MapControls: View {
                     // the popover follows the system appearance, not the
                     // buttons' forced-light one
                     .environment(\.colorScheme, systemScheme)
-                    // a popover's default glass takes on the saturated map
-                    // beneath (yellow geology under white dark-mode text):
-                    // the panel plate keeps the key legible, like the sheets
-                    .presentationBackground { PanelPlate(grouped: true).environment(\.colorScheme, systemScheme) }
+                    // the system's popover glass, content straight on it in
+                    // explicit label colours (DESIGN.md §2: no plate)
                     .presentationCompactAdaptation(.popover)
             }
 

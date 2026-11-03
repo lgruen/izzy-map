@@ -11,6 +11,9 @@ public struct PlantCatalog: Sendable {
         public var sites: Int?
         /// Set when this B entry is a broad-sense group.
         public var group: Group?
+        /// The C1 indicator score the "often recorded" list is ranked by
+        /// (nil in every other list, and in a few-records tally).
+        public var score: Double? = nil
     }
     /// A broad-sense name F2F uses for what UN splits into several species.
     public struct Group: Sendable, Hashable {
@@ -48,6 +51,10 @@ public struct PlantCatalog: Sendable {
     let groups: [String: PlantsFile.Group]
     /// species key → the profile to show
     let profile: [String: Plant]
+    /// species key → index in `records.species`
+    let speciesIndex: [String: Int]
+    /// plant id → profile
+    let byID: [Int: Plant]
 
     public init(plants file: PlantsFile, records: RecordsFile, grid: NearbyGrid) {
         plants = file.plants
@@ -59,6 +66,8 @@ public struct PlantCatalog: Sendable {
         for p in file.plants { if let s = p.species { byKey[s, default: []].append(p) } }
         // one with photos (the species' own record first), else the
         // species' own record, else the first
+        speciesIndex = Dictionary(records.species.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        byID = Dictionary(file.plants.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         profile = byKey.mapValues { (list: [Plant]) -> Plant in
             let key = list[0].species!
             let withPhotos = list.filter { !$0.photos.isEmpty }
@@ -69,6 +78,15 @@ public struct PlantCatalog: Sendable {
 
     /// The profile shown for a species key (nil: no UN profile — such keys are skipped in lists).
     public func plant(for key: String) -> Plant? { profile[key] }
+    /// A profile by its UN post id.
+    public func plant(id: Int) -> Plant? { byID[id] }
+    /// A broad-sense group by its key, with its profiled members.
+    public func group(_ key: String) -> Group? {
+        guard let g = groups[key] else { return nil }
+        let members = g.species.compactMap { entry($0) }
+        guard !members.isEmpty else { return nil }
+        return Group(key: key, common: g.common, size: g.species.count, members: members)
+    }
 
     private func entry(_ key: String, sites: Int? = nil) -> Entry? {
         profile[key].map { Entry(key: key, plant: $0, sites: sites, group: nil) }
@@ -92,7 +110,13 @@ public struct PlantCatalog: Sendable {
     public func often(_ code: String) -> Often {
         let rows = records.communities[code] ?? []
         return Often(
-            entries: rows.compactMap { r in speciesKey(r.species).flatMap { entry($0, sites: r.sites) } },
+            entries: rows.compactMap { r in
+                speciesKey(r.species).flatMap { entry($0, sites: r.sites) }.map { e in
+                    var e = e
+                    e.score = r.score
+                    return e
+                }
+            },
             isTally: !rows.isEmpty && rows.allSatisfy { $0.score == nil },
             sites: records.sites?[code])
     }
@@ -123,5 +147,93 @@ public struct PlantCatalog: Sendable {
         }.compactMap { entry($0.key, sites: $0.value) }
         return Nearby(entries: entries, sites: sites, total: total,
                       shownTotal: entries.reduce(0) { $0 + ($1.sites ?? 0) })
+    }
+
+    // MARK: Group list
+
+    /// A group's species split by local evidence, as the group list shows
+    /// them: recorded inside the community (full, uncapped counts), then
+    /// recorded near the tapped point, then the rest A–Z. Headings carry the
+    /// counts, so the order explains itself.
+    public struct GroupSections: Sendable, Hashable {
+        public var here: [Entry]
+        public var near: [Entry]
+        public var rest: [Entry]
+    }
+
+    public func groupSections(_ group: Group, code: String?, nearby: Nearby?) -> GroupSections {
+        let inCommunity = code.map(communitySites) ?? [:]
+        var here: [Entry] = [], near: [Entry] = [], rest: [Entry] = []
+        for var m in group.members {
+            if let c = inCommunity[m.key], c > 0 {
+                m.sites = c; here.append(m)
+            } else if let n = nearby?.sites[m.key], n > 0 {
+                m.sites = n; near.append(m)
+            } else {
+                m.sites = nil; rest.append(m)
+            }
+        }
+        let en = Locale(identifier: "en")
+        let bySites: (Entry, Entry) -> Bool = {
+            $0.sites != $1.sites ? ($0.sites ?? 0) > ($1.sites ?? 0) : $0.key.compare($1.key, locale: en) == .orderedAscending
+        }
+        return GroupSections(here: here.sorted(by: bySites), near: near.sorted(by: bySites),
+                             rest: rest.sorted { $0.key.compare($1.key, locale: en) == .orderedAscending })
+    }
+
+    // MARK: A card's lists
+
+    /// Everything a community card's Plants section shows for one tap.
+    public struct CardLists: Sendable, Hashable {
+        public var named: [Entry]
+        public var often: Often
+        /// nil when the tap had no position (or the grid is unavailable).
+        public var nearby: Nearby?
+
+        /// No section at all (water, urban, …).
+        public var isEmpty: Bool { named.isEmpty && often.entries.isEmpty && (nearby?.entries.isEmpty ?? true) }
+
+        /// "22 named · 40 in records · 31 nearby" (VoiceOver, expanded header).
+        public var summary: String {
+            var parts: [String] = []
+            if !named.isEmpty { parts.append("\(named.count) named") }
+            if !often.entries.isEmpty { parts.append("\(often.entries.count) in records") }
+            if let n = nearby?.entries.count, n > 0 { parts.append("\(n) nearby") }
+            return parts.joined(separator: " · ")
+        }
+
+        /// Distinct species over the three lists (groups count as one).
+        public var distinctCount: Int {
+            Set(named.map(\.key) + often.entries.map(\.key) + (nearby?.entries.map(\.key) ?? [])).count
+        }
+
+        /// The collapsed row's faces: the most characteristic plants (C1
+        /// order, then B, then nearby), photographed ones first — up to
+        /// `limit`, topped up with pictogram-only entries.
+        public func faces(limit: Int = 5) -> [Entry] {
+            // one face per key and per profile (a group's face is a member)
+            var seen = Set<String>(), seenPlants = Set<Int>()
+            let ordered = (often.entries + named + (nearby?.entries ?? [])).filter {
+                seen.insert($0.key).inserted && seenPlants.insert($0.plant.id).inserted
+            }
+            let withPhoto = ordered.filter { !$0.plant.photos.isEmpty }
+            let without = ordered.filter { $0.plant.photos.isEmpty }
+            return Array((withPhoto + without).prefix(limit))
+        }
+    }
+
+    public func cardLists(code: String, latitude: Double?, longitude: Double?) -> CardLists {
+        let near: Nearby? = if let latitude, let longitude { nearby(latitude: latitude, longitude: longitude) } else { nil }
+        return CardLists(named: named(code), often: often(code), nearby: near)
+    }
+
+    // MARK: Distribution
+
+    /// Where a species is recorded statewide: its ~1 km cells (cell centre
+    /// and sites), read by scanning nearby.bin. Aggregate counts only
+    /// (LICENSING.md §1d) — "where recorded, not where absent".
+    public func distribution(of key: String) -> [RecordCell] {
+        guard let i = speciesIndex[key] else { return [] }
+        return grid.cells(ofSpecies: i, grid: records.grid)
     }
 }

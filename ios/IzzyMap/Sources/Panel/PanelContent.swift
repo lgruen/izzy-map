@@ -1,31 +1,40 @@
 import SwiftUI
 
-/// The panel's content, identical in the compact bottom sheet and the
-/// regular-width floating card: search, plant ID, and the tapped feature.
+/// The panel's scrolling content, identical in the compact bottom sheet
+/// and the regular-width floating card: the tapped feature's card. The
+/// search header is not in it: each container pins that as its top bar
+/// (`.safeAreaBar`), so the card scrolls under it behind the system's soft
+/// scroll edge instead of sliding bare under the grabber.
 struct PanelContent: View {
+    /// Coordinate space the card's glance is measured in.
+    nonisolated static let space = "panel-content"
     @Bindable var model: AppModel
-    /// The search field gained focus (the compact sheet rises to large).
-    var onSearchFocus: () -> Void = {}
+
+    /// Whether there is anything under the header.
+    static func hasBody(_ model: AppModel) -> Bool {
+        model.selection != nil || (model.data.isEmpty && model.shared.packs.isResolved)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            PanelHeader(model: model, onSearchFocus: onSearchFocus)
             if let selection = model.selection {
                 FeatureCard(model: model, selection: selection) { model.clearSelection() }
                     .id(selection.id)
                     .transition(.opacity)
-            } else if model.data.isEmpty {
+            } else if model.data.isEmpty, model.shared.packs.isResolved {
                 NoDataNotice()
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.snappy, value: model.selection?.id)
+        .coordinateSpace(.named(Self.space))
     }
 }
 
 /// Search field and the "Identify a plant" button.
 struct PanelHeader: View {
     @Bindable var model: AppModel
-    var onSearchFocus: () -> Void
+    var onSearchFocus: () -> Void = {}
     @FocusState private var searchFocused: Bool
     @ScaledMetric(relativeTo: .body) private var fieldHeight = 48
     @ScaledMetric(relativeTo: .title3) private var glyphSize = 22
