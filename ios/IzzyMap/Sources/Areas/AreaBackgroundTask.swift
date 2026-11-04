@@ -156,7 +156,12 @@ nonisolated struct SystemTaskScheduler: ContinuedTaskScheduling {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: .main, launchHandler: launch)
     }
 
+    /// Off the main thread: the header asks not to submit from it (the
+    /// handler hops back to the main actor itself).
     func submit(_ request: BGContinuedProcessingTaskRequest, completion: @escaping @Sendable ((any Error)?) -> Void) {
-        BGTaskScheduler.shared.submitTaskRequest(request, completionHandler: completion)
+        nonisolated(unsafe) let request = request
+        DispatchQueue.global(qos: .userInitiated).async {
+            BGTaskScheduler.shared.submitTaskRequest(request, completionHandler: completion)
+        }
     }
 }

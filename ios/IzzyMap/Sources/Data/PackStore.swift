@@ -20,7 +20,13 @@ import os
 /// starts only after the previous call has RETURNED — not merely after the
 /// store stopped waiting for it. On iOS 27.2 several at once made most fail
 /// with "The asset pack … is unavailable" while each worked alone (field
-/// report, iPhone 16e, 2026-11-04; the headers name no limit). A failed
+/// report, iPhone 16e, 2026-11-04). The headers name no concurrency limit,
+/// but the iOS 27 one for `ensureLocalAvailability(of:)` says "To download
+/// multiple asset packs at the same time, use
+/// ensureLocalAvailabilityOfAssetPacks:" (the `Set` form) — untried; the
+/// serial queue stays until a device shows the batch form behaves. A lost
+/// call is abandoned after a grace period (at most one at a time), so two
+/// may overlap then — liveness over strictness. A failed
 /// request is retried with backoff, one cut off by a suspension or made
 /// offline is asked again without using a retry, and nothing is marked
 /// failed before the system has been asked what it actually has: SYSTEM
@@ -75,6 +81,15 @@ final class PackStore {
         /// queue goes on beside it. Liveness over strict one-at-a-time — at
         /// most one abandoned call at a time, so at most two overlap.
         var abandonGrace: Duration = .seconds(120)
+        /// "Downloading" in the system but no event for this long: lost too.
+        var silentDownloadAfter: Duration = .seconds(1800)
+        /// A Stop/Remove the system doesn't answer holds the queue this long at most.
+        var removalTimeout: Duration = .seconds(60)
+        /// After a failure, a moment for the path monitor's word to arrive
+        /// before a retry is spent (it hops to the main actor).
+        var offlineRecheck: Duration = .seconds(1)
+        /// Ticks the background task hears per pack while nothing moves.
+        var maxTicksPerPack = 60
     }
 
     /// One recorded error (Diagnostics).
@@ -154,8 +169,12 @@ final class PackStore {
     /// (its attempt is already settled: settling is once only).
     @ObservationIgnored private var abandonedTask: Task<Void, Never>?
     @ObservationIgnored private var abandonedID: UUID?
-    /// Completes when a Stop/Remove has finished with the system.
-    @ObservationIgnored private var removal: Task<Void, Never>?
+    /// Stops/Removes the system hasn't finished (each gives up after
+    /// `removalTimeout`): no call starts meanwhile.
+    @ObservationIgnored private var removals: Set<UUID> = []
+    /// Per-call grace timers (a call the store stopped waiting for).
+    @ObservationIgnored private var graceTasks: [Task<Void, Never>] = []
+    @ObservationIgnored private var ticksThisPack = 0
     @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var recheckTask: Task<Void, Never>?
@@ -290,6 +309,9 @@ final class PackStore {
                 logger.fault("Background Assets unavailable: the app group isn't accessible (unsigned build?)")
                 store?.backgroundAssetsUnavailable = true
                 store?.isResolved = true
+                // a tap before this (Get all) may have begun the system task
+                if store?.background?.isRunning == true { store?.background?.end(success: false) }
+                store?.queue = []
                 return
             }
             guard let store else { return }
@@ -330,6 +352,7 @@ final class PackStore {
         watchTask?.cancel()
         heartbeatTask?.cancel()
         recheckTask?.cancel()
+        for task in graceTasks { task.cancel() }
         runner?.cancel()
         queue = []
         current = nil
@@ -472,7 +495,9 @@ final class PackStore {
         considerBackgroundTask(adding: owned(pack) ? [] : [pack])
         if pack == current {
             if case .paused = state(pack) { states[pack] = .downloading(nil) }
-            if callInFlight == nil {
+            // its own call still out: never doubled; otherwise (a retry
+            // wait, parked) it goes now — once the gate is open
+            if !(callInFlight == pack && attempt?.isPending == true) {
                 cutWait = true
                 wake()
             }
@@ -509,14 +534,20 @@ final class PackStore {
         run.done.remove(pack)
         checkpoint()
         wake()
-        let previous = removal
-        let task = Task { [weak self] in
-            await previous?.value
-            await self?.removeFromSystem(pack)
-        }
-        removal = task
+        let removalID = UUID()
+        removals.insert(removalID)
+        // the gate never waits for ever on a removal iOS doesn't answer
+        graceTasks.append(Task { [weak self, tuning] in
+            try? await Task.sleep(for: tuning.removalTimeout)
+            guard !Task.isCancelled, let self, self.removals.contains(removalID) else { return }
+            Self.logger.fault("\(pack.rawValue, privacy: .public): remove not answered; the queue goes on")
+            self.removals.remove(removalID)
+            self.wake()
+        })
+        let task = Task { [weak self] in await self?.removeFromSystem(pack) }
         await task.value
-        if removal == task { removal = nil }
+        removals.remove(removalID)
+        wake()
         updateBackground()
         queueDrained()
     }
@@ -563,6 +594,7 @@ final class PackStore {
         current = pack
         currentToken = token
         cutWait = false
+        ticksThisPack = 0
         checkpoint()
         updateBackground()
         return (pack, token)
@@ -576,10 +608,8 @@ final class PackStore {
     /// The previous call (any pack) has returned and no removal is under
     /// way: only then may a call start.
     private func gateCalls() async {
-        while true {
-            if let inFlight { await inFlight.value; continue }
-            if let removal { await removal.value; if self.removal == removal { self.removal = nil }; continue }
-            return
+        while inFlight != nil || !removals.isEmpty, !Task.isCancelled {
+            await withCheckedContinuation { waiters.append($0) }
         }
     }
 
@@ -625,6 +655,9 @@ final class PackStore {
                 if state(pack).isInstalled { return finish(pack, token) }
                 // offline (also "no such pack" offline: the catalogue can't be
                 // asked): nothing failed — wait for a path, no retry used
+                // the path monitor's "offline" may still be on its way
+                if online { await wait(tuning.offlineRecheck, pack, token) }
+                guard owns(pack, token) else { return }
                 if !online {
                     Self.logger.notice("\(pack.rawValue, privacy: .public): offline; waiting for a connection")
                     await park(.offline, pack, token) { self.online }
@@ -687,6 +720,14 @@ final class PackStore {
     private func park(_ reason: ParkReason, _ pack: Pack, _ token: UUID, until ready: () -> Bool) async {
         parkedFor = reason
         updateBackground()
+        // offline in the background: nothing will move — the system task
+        // ends now (the checkpoint resumes the queue), never kept alive
+        if reason == .offline, !isActive, let background, background.isRunning {
+            Self.logger.notice("offline in the background: ending the pack task")
+            background.end(success: false)
+            endRun()
+            checkpoint()
+        }
         while owns(pack, token), !ready(), !cutWait, !Task.isCancelled {
             await withCheckedContinuation { waiters.append($0) }
         }
@@ -740,67 +781,86 @@ final class PackStore {
             self.wake()
         }
         watch(pack, attempt)
-        try await attempt.value()
+        do {
+            try await attempt.value()
+        } catch {
+            graceIfStillOut(callID)
+            throw error
+        }
+        graceIfStillOut(callID)
         Self.logger.info("\(pack.rawValue, privacy: .public): available locally")
+    }
+
+    /// The store stopped waiting for a call that hasn't returned (Stop, the
+    /// pack found installed, the watchdog): it stays THE in-flight call for
+    /// `abandonGrace`, then it is abandoned — unless another abandoned call
+    /// is still out, then it waits for that one first.
+    private func graceIfStillOut(_ callID: UUID) {
+        guard inFlightID == callID else { return }
+        graceTasks.removeAll { $0.isCancelled }
+        graceTasks.append(Task { [weak self, tuning] in
+            try? await Task.sleep(for: tuning.abandonGrace)
+            while !Task.isCancelled, let self, self.inFlightID == callID {
+                if self.abandon(callID) { return }
+                try? await Task.sleep(for: tuning.watchInterval)
+            }
+        })
     }
 
     /// The watchdog. A request whose pack the system neither downloads nor
     /// has, with no event for a while, is lost (Diagnostics showed
     /// "downloading 79 %" here while the system had nothing: local status
-    /// []). Asking again would put a second call beside the lost one, so
-    /// the lost one is ended instead: `remove` of a pack the system has
-    /// nothing of loses nothing, and the call then returns (an error, so it
-    /// is asked again like any failure). A core pack can't be removed: the
-    /// queue waits for its call. Paused packs get a longer threshold.
+    /// []). The store stops waiting for it and asks again — after the lost
+    /// call returned, or was abandoned (`graceIfStillOut`). To make it
+    /// return, a pack the system has nothing of is removed (that loses
+    /// nothing; a core pack can't be removed). Bounded in every case: paused
+    /// packs after a longer threshold, "downloading" with no event for
+    /// `silentDownloadAfter`, and "downloaded" whose files don't resolve
+    /// like a lost call (never removed — its files are there).
     private func watch(_ pack: Pack, _ attempt: Attempt) {
         watchTask?.cancel()
         watchTask = Task { [weak self, tuning] in
-            var endedAt: ContinuousClock.Instant?
             while !Task.isCancelled {
                 try? await Task.sleep(for: tuning.watchInterval)
                 guard !Task.isCancelled, let self, attempt.isPending, let system = self.system else { return }
                 guard self.isActive || self.isKeptAlive(), self.online else { continue }
-                if let endedAt {
-                    // ended (or not endable), still not back: after the grace
-                    // period the queue goes on without it — unless another
-                    // abandoned call is still out (then it waits for that)
-                    if endedAt.duration(to: .now) >= tuning.abandonGrace, self.abandon(pack, attempt) { return }
-                    continue
-                }
                 let status = await system.localStatus(pack.rawValue)
                 if status.downloaded {
                     // here, whatever the call says (refresh settles it)
                     await self.refresh()
-                    continue
+                    guard attempt.isPending else { return }
                 }
-                guard !status.downloading else { continue }
-                let limit = self.state(pack) == .paused ? tuning.pausedStallAfter : tuning.stallAfter
+                let limit: Duration
+                if status.downloaded { limit = tuning.stallAfter }
+                else if status.downloading { limit = tuning.silentDownloadAfter }
+                else if self.state(pack) == .paused { limit = tuning.pausedStallAfter }
+                else { limit = tuning.stallAfter }
                 guard self.quiet(pack, for: limit), attempt.started.duration(to: .now) >= limit else { continue }
-                endedAt = .now
-                self.noteError(pack, PackStoreError.stalled, stage: "watchdog")
-                guard pack.isRemovable else {
-                    Self.logger.fault("\(pack.rawValue, privacy: .public): request lost; a core pack can't be ended — waiting out the grace period")
-                    continue
+                let removable = pack.isRemovable && !status.downloading && !status.downloaded
+                Self.logger.notice("\(pack.rawValue, privacy: .public): request lost (system: downloading \(status.downloading), downloaded \(status.downloaded)); asking again")
+                if removable {
+                    let id = pack.rawValue
+                    Task.detached { try? await system.remove(id) }
                 }
-                Self.logger.notice("\(pack.rawValue, privacy: .public): request lost (the system has nothing); ending it to ask again")
-                try? await system.remove(pack.rawValue)
+                attempt.settle(.failure(PackStoreError.stalled))
+                return
             }
         }
     }
 
-    /// Gives up on the in-flight call of `attempt` (see `Tuning.abandonGrace`).
-    private func abandon(_ pack: Pack, _ attempt: Attempt) -> Bool {
-        guard self.attempt === attempt, let inFlight, abandonedTask == nil else { return false }
-        Self.logger.fault("\(pack.rawValue, privacy: .public): call still not back after the grace period; abandoned — the queue goes on")
+    /// Gives up on the in-flight call `callID` (see `Tuning.abandonGrace`).
+    private func abandon(_ callID: UUID) -> Bool {
+        guard inFlightID == callID, let inFlight, abandonedTask == nil else { return false }
+        let pack = callInFlight
+        Self.logger.fault("\(pack?.rawValue ?? "?", privacy: .public): call still not back after the grace period; abandoned — the queue goes on")
         abandonedTask = inFlight
         abandonedID = inFlightID
-        abandonedCall = callInFlight
+        abandonedCall = pack
         abandonedCount += 1
         self.inFlight = nil
         inFlightID = nil
         callInFlight = nil
-        noteError(pack, PackStoreError.abandoned, stage: "watchdog")
-        attempt.settle(.failure(PackStoreError.abandoned))
+        if let pack { noteError(pack, PackStoreError.abandoned, stage: "grace period") }
         wake()
         return true
     }
@@ -923,7 +983,12 @@ final class PackStore {
     /// window, "waiting to start"): a tick and the current words, so the
     /// task never looks stalled to the scheduler.
     private func beat() {
-        if progressHigh == lastBeatValue { progressTicks += 1 }
+        // parked (offline, waiting for the app): no signal — no tick either
+        guard parkedFor == nil else { return }
+        if progressHigh == lastBeatValue, ticksThisPack < tuning.maxTicksPerPack {
+            progressTicks += 1
+            ticksThisPack += 1
+        }
         lastBeatValue = progressHigh
         updateBackground()
     }
@@ -979,6 +1044,8 @@ final class PackStore {
     private func setOnline(_ up: Bool) {
         guard up != online else { return }
         online = up
+        // a flapping connection never adds up to "Didn't finish"
+        if up { for pack in [current].compactMap({ $0 }) + queue { retries[pack] = 0 } }
         wake()
         if up { Task { await resync() } }
     }
@@ -1392,7 +1459,7 @@ nonisolated struct FakePacks: Sendable {
         for (pack, state) in states { if case let .downloading(f) = state { downloading[pack] = f ?? 0 } }
         return FakePackSystem(installed: Set(states.filter { $0.value == .installed }.keys), downloading: downloading,
                               unpublished: Set(states.filter { $0.value == .unpublished }.keys),
-                              seconds: seconds, directory: directory)
+                              seconds: seconds, directory: directory, returnDelay: 0)
     }
 }
 

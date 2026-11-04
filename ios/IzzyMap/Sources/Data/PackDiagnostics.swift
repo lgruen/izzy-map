@@ -59,8 +59,9 @@ enum PackDiagnostics {
             line += "nothing in flight"
         }
         line += store.queue.isEmpty ? " · none waiting" : " · then " + store.queue.map(\.rawValue).joined(separator: ", ")
-        line += " · call in flight: \(store.callInFlight?.rawValue ?? "none")"
-        line += " · abandoned: \(store.abandonedCall?.rawValue ?? "none") (\(store.abandonedCount) this launch)"
+        var out = [store.callInFlight?.rawValue, store.abandonedCall.map { "\($0.rawValue) (abandoned)" }].compactMap { $0 }
+        if out.isEmpty { out = ["none"] }
+        line += " · calls out: \(out.joined(separator: ", ")) · abandoned this launch: \(store.abandonedCount)"
         return [line,
                 "app active \(store.isActive) · online \(store.online) · background task \(store.backgroundTaskRunning ? "running" : "none") · last sync \(store.lastSync?.formatted(date: .omitted, time: .standard) ?? "never")"]
     }

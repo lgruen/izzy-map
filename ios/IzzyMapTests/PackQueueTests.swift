@@ -19,7 +19,15 @@ struct PackQueueTests {
         stallAfter: .milliseconds(250), pausedStallAfter: .milliseconds(400), watchInterval: .milliseconds(40),
         unreadableRechecks: [.milliseconds(40)], freeReattaches: 2,
         staleAfter: .milliseconds(60), pausedStaleAfter: .milliseconds(120), pollInterval: .milliseconds(10),
-        heartbeat: .seconds(30), abandonGrace: .milliseconds(150))
+        heartbeat: .seconds(30), abandonGrace: .seconds(1), removalTimeout: .seconds(2),
+        offlineRecheck: .milliseconds(10))
+
+    /// A short grace period, for the abandon paths.
+    static var quickAbandon: PackStore.Tuning {
+        var t = tuning
+        t.abandonGrace = .milliseconds(150)
+        return t
+    }
 
     /// What the system said on 27.2 when several requests ran at once.
     static let unavailable = NSError(domain: "AssetPackManagerError", code: 0,
@@ -112,7 +120,7 @@ struct PackQueueTests {
         #expect(await eventually { system.inFlight == 1 })
         await store.remove(.season2026)
         #expect(await eventually { store.state(.season2025).isInstalled })
-        #expect(system.log == ["season-2026", "-season-2026", "season-2025"])
+        #expect(system.calls == ["season-2026", "-season-2026", "season-2025"])
         #expect(system.maxInFlight == 1)
         #expect(store.state(.season2026) == .notInstalled)
     }
@@ -259,7 +267,7 @@ struct PackQueueTests {
         defer { store.shutdown() }
         store.fetch(.season2021)
         #expect(await eventually { store.state(.season2021).isInstalled })
-        #expect(system.log == ["season-2021", "-season-2021", "season-2021"])
+        #expect(system.calls == ["season-2021", "-season-2021", "season-2021"])
         #expect(system.maxInFlight == 1)
         #expect(store.errorLog[.season2021]?.contains { $0.text.contains("stalled") } == true)
     }
@@ -269,12 +277,12 @@ struct PackQueueTests {
     @Test func aCallThatNeverReturnsIsAbandonedAfterTheGracePeriod() async {
         let system = FakePackSystem(installed: [.vector], seconds: 0.02)
         system.script(.season2021, .init(hangs: 1, silent: true, ignoresRemove: true))
-        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.quickAbandon)
         defer { store.shutdown() }
         store.fetch([.season2021, .season2020])
         #expect(await eventually { store.state(.season2020).isInstalled })
         #expect(store.state(.season2021).isInstalled)
-        #expect(system.log == ["season-2021", "-season-2021", "season-2021", "season-2020"])
+        #expect(system.calls == ["season-2021", "-season-2021", "season-2021", "season-2020"])
         #expect(system.maxInFlight == 2)
         #expect(store.abandonedCall == .season2021 && store.abandonedCount == 1)
         #expect(store.errorLog[.season2021]?.contains { $0.text.contains("abandoned") } == true)
@@ -289,7 +297,7 @@ struct PackQueueTests {
         let system = FakePackSystem(installed: [.vector], seconds: 0.02)
         system.script(.season2026, .init(hangs: 1, silent: true, ignoresRemove: true))
         system.script(.season2025, .init(hangs: 1, silent: true, ignoresRemove: true))
-        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.quickAbandon)
         defer { store.shutdown() }
         store.fetch([.season2026, .season2025])
         #expect(await eventually { store.state(.season2026).isInstalled && store.current == .season2025 })
@@ -303,6 +311,90 @@ struct PackQueueTests {
         #expect(await eventually { store.state(.season2025).isInstalled })
         #expect(system.maxInFlight == 2)
         #expect(store.abandonedCount == 2)
+    }
+
+    /// Probe (round-2 review): a lost call that `remove` doesn't release,
+    /// then Stop — the attempt settles early with the call still out. The
+    /// per-call grace period still abandons it; the next pack goes.
+    @Test func stoppingALostCallStillLetsTheQueueGoOn() async {
+        let system = FakePackSystem(installed: [.vector], seconds: 0.02)
+        system.script(.season2026, .init(hangs: 1, silent: true, ignoresRemove: true))
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.quickAbandon)
+        defer { store.shutdown() }
+        store.fetch([.season2026, .season2025])
+        #expect(await eventually { system.inFlight == 1 })
+        await store.remove(.season2026)
+        #expect(await eventually { store.state(.season2025).isInstalled })
+        #expect(store.abandonedCall == .season2026)
+        #expect(system.maxInFlight == 2)
+    }
+
+    /// Probe: the call hangs, the pack arrives without a word, a re-sync
+    /// finds it — the attempt settles early; the queue still goes on.
+    @Test func aPackFoundInstalledWhileItsCallHangsLetsTheQueueGoOn() async {
+        let system = FakePackSystem(installed: [.vector], seconds: 0.02)
+        system.script(.season2026, .init(hangs: 1))
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.quickAbandon)
+        defer { store.shutdown() }
+        store.fetch([.season2026, .season2025])
+        #expect(await eventually { system.inFlight == 1 })
+        system.installSilently(.season2026)
+        await store.resync()
+        #expect(store.state(.season2026).isInstalled)
+        #expect(await eventually { store.state(.season2025).isInstalled })
+        #expect(system.maxInFlight == 2)
+    }
+
+    /// A Stop whose `remove` iOS never answers holds the queue for
+    /// `removalTimeout` at most.
+    @Test func aRemovalThatNeverReturnsTimesOut() async {
+        var tuning = Self.quickAbandon
+        tuning.removalTimeout = .milliseconds(150)
+        let system = FakePackSystem(installed: [.vector], seconds: 0.02)
+        system.script(.season2026, .init(hangs: 1, silent: true, ignoresRemove: true, removeHangs: true))
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: tuning)
+        defer { store.shutdown() }
+        store.fetch([.season2026, .season2025])
+        #expect(await eventually { system.inFlight == 1 })
+        Task { await store.remove(.season2026) }
+        #expect(await eventually { store.state(.season2025).isInstalled })
+        #expect(system.maxInFlight == 2)
+    }
+
+    /// The offline error arrives before the path monitor's word: the
+    /// re-check after a moment parks it instead of spending a retry.
+    @Test func anOfflineWordArrivingLateSpendsNoRetry() async {
+        var tuning = Self.tuning
+        tuning.offlineRecheck = .milliseconds(300)
+        let system = FakePackSystem(installed: [.vector], seconds: 0.02)
+        system.script(.season2022, .init(failures: [Self.unavailable]))
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: tuning)
+        defer { store.shutdown() }
+        store.fetch(.season2022)
+        #expect(await eventually { store.errorLog[.season2022]?.isEmpty == false })
+        store.simulateConnectivity(false)
+        #expect(await eventually { store.parkedFor == .offline })
+        #expect(store.retries[.season2022] ?? 0 == 0)
+        store.simulateConnectivity(true)
+        #expect(await eventually { store.state(.season2022).isInstalled })
+    }
+
+    /// A flapping connection never adds up to "Didn't finish": retries
+    /// start over when the path comes back.
+    @Test func retriesStartOverOnReconnect() async {
+        var tuning = Self.tuning
+        tuning.retryDelays = [.milliseconds(20), .milliseconds(20), .milliseconds(200)]
+        let system = FakePackSystem(installed: [.vector], seconds: 0.02, returnDelay: 0)
+        system.script(.season2022, .init(failures: Array(repeating: Self.unavailable, count: 4)))
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: tuning)
+        defer { store.shutdown() }
+        store.fetch(.season2022)
+        #expect(await eventually { store.retries[.season2022] == 3 })
+        store.simulateConnectivity(false)
+        store.simulateConnectivity(true)
+        #expect(store.retries[.season2022] == 0)
+        #expect(await eventually { store.state(.season2022).isInstalled })
+        #expect(!isFailed(store.state(.season2022)))
     }
 
     /// Paused by the system, then lost (local status []): the longer paused
@@ -319,7 +411,7 @@ struct PackQueueTests {
         system.drop(.season2024)
         #expect(await eventually { store.state(.season2023).isInstalled })
         #expect(store.state(.season2024).isInstalled)
-        #expect(system.log == ["season-2024", "-season-2024", "season-2024", "season-2023"])
+        #expect(system.calls == ["season-2024", "-season-2024", "season-2024", "season-2023"])
         #expect(system.maxInFlight == 1)
     }
 
@@ -468,6 +560,52 @@ struct PackQueueTests {
     }
 
     // MARK: Continued processing
+
+    /// Parked offline: no ticks (nothing to report); parked offline in the
+    /// background: the task ends (the checkpoint resumes the queue).
+    @Test func aTaskParkedOfflineIsNotKeptAlive() async {
+        var tuning = Self.tuning
+        tuning.heartbeat = .milliseconds(20)
+        let task = FakeContinuedWork()
+        let system = FakePackSystem(installed: [.vector], seconds: 0.02)
+        system.script(.season2026, .init(failures: [Self.unavailable]))
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: tuning, background: task, online: false)
+        defer { store.shutdown() }
+        store.fetch([.season2026, .season2025])
+        #expect(task.begun.count == 1)
+        #expect(await eventually { store.parkedFor == .offline })
+        let before = task.updates.last?.done ?? -1
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect((task.updates.last?.done ?? -1) == before, "no ticks while parked")
+        #expect(task.ended == nil)
+
+        let task2 = FakeContinuedWork()
+        let system2 = FakePackSystem(installed: [.vector], seconds: 0.02)
+        system2.script(.season2024, .init(hangs: 1))
+        let store2 = await PackStore.testing(system: system2, defaults: defaults(), tuning: tuning, background: task2, online: false)
+        defer { store2.shutdown() }
+        store2.fetch([.season2024, .season2023])
+        #expect(await eventually { system2.inFlight == 1 })
+        store2.appEnteredBackground()
+        system2.fail(.season2024, Self.unavailable)
+        #expect(await eventually { task2.ended == false })
+        #expect(store2.parkedFor == .offline)
+    }
+
+    @Test func ticksAreCappedPerPack() async {
+        var tuning = Self.tuning
+        tuning.heartbeat = .milliseconds(20)
+        tuning.maxTicksPerPack = 2
+        let task = FakeContinuedWork()
+        let system = FakePackSystem(installed: [.vector], seconds: 0.02)
+        system.script(.season2026, .init(hangs: 1))
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: tuning, background: task)
+        defer { store.shutdown() }
+        store.fetch([.season2026, .season2025])
+        #expect(await eventually { system.inFlight == 1 })
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect((task.updates.last?.done ?? 0) <= 2)
+    }
 
     @Test func aLongQueueRunsInABackgroundTask() async {
         let task = FakeContinuedWork()

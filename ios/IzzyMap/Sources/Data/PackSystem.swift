@@ -221,6 +221,8 @@ nonisolated final class FakePackSystem: PackSystem {
         var silent = false
         /// `remove` doesn't make a hanging request return (it never does).
         var ignoresRemove = false
+        /// `remove` itself never returns.
+        var removeHangs = false
         /// It throws this after the download "finished" in the system
         /// (the request failed, yet the pack is here).
         var throwsAfterInstalling: (any Error)?
@@ -247,9 +249,13 @@ nonisolated final class FakePackSystem: PackSystem {
     private let inner: Mutex<Inner>
     let seconds: Double
     let directory: URL?
+    /// How long a call takes to return after its outcome (finished, failed,
+    /// removed) — real calls answer a moment later, and the store must
+    /// still not start the next one before.
+    let returnDelay: Double
 
     init(installed: Set<Pack> = [], downloading: [Pack: Double] = [:], unpublished: Set<Pack> = [],
-         seconds: Double = 0.05, directory: URL? = nil) {
+         seconds: Double = 0.05, directory: URL? = nil, returnDelay: Double = 0.2) {
         var i = Inner()
         i.installed = Set(installed.map(\.rawValue))
         i.downloading = Dictionary(uniqueKeysWithValues: downloading.map { ($0.key.rawValue, $0.value) })
@@ -257,12 +263,15 @@ nonisolated final class FakePackSystem: PackSystem {
         inner = Mutex(i)
         self.seconds = seconds
         self.directory = directory
+        self.returnDelay = returnDelay
     }
 
     // test controls and observations
     func script(_ pack: Pack, _ script: Script) { inner.withLock { $0.scripts[pack.rawValue] = script } }
     var requests: [String] { inner.withLock { $0.requests } }
     var log: [String] { inner.withLock { $0.log } }
+    /// The log without the return marks ("<id"): calls and removals.
+    var calls: [String] { log.filter { !$0.hasPrefix("<") } }
     /// The manifest can't be read (offline).
     func setManifestFails(_ on: Bool) { inner.withLock { $0.manifestFails = on } }
     var maxInFlight: Int { inner.withLock { $0.maxInFlight } }
@@ -348,12 +357,25 @@ nonisolated final class FakePackSystem: PackSystem {
             i.scripts[id] = s
             return (script, i.unpublished.contains(id), i.downloading[id] ?? 0)
         }
-        // a request counts as in flight until the system says it's done
-        // (`finished` goes out after the count drops, as a store reacting
-        // to it may ask for the next pack straight away)
-        var counted = true
-        func leave() { if counted { counted = false; inner.withLock { $0.inFlight -= 1 } } }
-        defer { leave() }
+        let result: Result<Void, any Error>
+        do {
+            try await body(id, script: script, unpublished: unpublished, start: start)
+            result = .success(())
+        } catch {
+            result = .failure(error)
+        }
+        // like the real call, it returns a while after the system's
+        // `finished` (or a `remove`): it counts as in flight until then, so
+        // a store that started the next call early shows up as an overlap
+        if returnDelay > 0 { try? await Task.sleep(for: .seconds(returnDelay)) }
+        inner.withLock { i in
+            i.inFlight -= 1
+            i.log.append("<" + id)
+        }
+        try result.get()
+    }
+
+    private func body(_ id: String, script: Script, unpublished: Bool, start: Double) async throws {
         if unpublished { throw ManagedBackgroundAssetsError.assetPackNotFound(withID: id) }
         if inner.withLock({ $0.installed.contains(id) }) { return }
         if let error = script.failures.first {
@@ -390,12 +412,16 @@ nonisolated final class FakePackSystem: PackSystem {
             return false
         }
         if removed { throw CancellationError() }
-        leave()
         emit(id, .finished)
         if let error = script.throwsAfterInstalling { throw error }
     }
 
     func remove(_ id: String) async throws {
+        if inner.withLock({ $0.scripts[id]?.removeHangs == true }) {
+            inner.withLock { $0.log.append("-" + id) }
+            try await Task.sleep(for: .seconds(3600))
+            return
+        }
         let waiters = inner.withLock { i -> [CheckedContinuation<Void, any Error>] in
             i.installed.remove(id)
             i.downloading[id] = nil
