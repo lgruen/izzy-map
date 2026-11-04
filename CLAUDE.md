@@ -525,6 +525,17 @@ milestones, map-proof results); the design brief and language is
   every upload = a new pack version every device re-downloads, ~0.7 GB).
   If the scorer's tables change shape, regenerate the Swift fixtures
   (`build_ship.py fixture`) in the same commit.
+- **Plant-ID provenance (Leo, 2026-11-05): no weights we can't regenerate.**
+  Every script that produced data, embeddings, weights, thresholds or an
+  evaluation number is committed (pipeline/plantid/, its notes/ folder and
+  README) BEFORE its output ships; agents' one-off scratch scripts are
+  moved into the repo, not left in a temp folder. Each shipped pack's
+  pipeline.json records its provenance: the git commit of the scripts,
+  the exact commands/arguments, the data snapshots (iNat open-data date,
+  ALA pull date, name-map version), seeds, and the GCS paths of the
+  embeddings — enough to rebuild the same files. Caches and embeddings
+  stay out of git (pipeline/cache/ is ignored; GCS
+  gs://leo-superresolution-izzy-plantid holds the embeddings).
 - **Acknowledgements (licence texts of what ships):** `python3
   pipeline/build_acknowledgements.py [--fresh]` (stdlib, ~5 s cold) →
   `ios/IzzyMap/Resources/Data/acknowledgements.json`, shown by

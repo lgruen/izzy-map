@@ -13,6 +13,7 @@
 #   run_au.sh log [n]         tail of the VM log (from GCS)
 #   run_au.sh state           VM status + shards in GCS
 #   run_au.sh release         allow the train stage (uploads code + in/train-ready)
+#   run_au.sh v2-upload       train_v2.py code + australia/v2/data.npz → GCS (then `up v2 0 CAP`)
 #   run_au.sh fetch           GCS → pipeline/cache/plantid/australia/train/
 #   run_au.sh down            delete the VM and its disk
 #
@@ -38,6 +39,10 @@ case "${1:-}" in
     $G storage cp "$C/australia/train/todo.parquet" "$C/australia/plan/train.parquet" \
       "$C/australia/text.npz" "$BUCKET/in/"
     $G storage rsync "$C/emb/bioclip25" "$BUCKET/emb0" --exclude 'text\.npz|info\.json' ;;
+  v2-upload)  # train_v2.py: code + data.npz
+    tar -C "$P" -czf /tmp/izzy-au-code.tgz train_australia.py embed.py train_v2.py
+    $G storage cp /tmp/izzy-au-code.tgz "$BUCKET/code/code.tgz"
+    $G storage cp "$C/australia/v2/data.npz" "$BUCKET/v2/data.npz" ;;
   release)
     tar -C "$P" -czf /tmp/izzy-au-code.tgz train_australia.py embed.py
     $G storage cp /tmp/izzy-au-code.tgz "$BUCKET/code/code.tgz"

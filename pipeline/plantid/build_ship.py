@@ -1511,6 +1511,113 @@ def cmd_au(a):
     json.dump(pipe, open(os.path.join(SHIP, "pipeline.json"), "w"), indent=1, ensure_ascii=False)
     print(f"pipeline.json: australia section + {len(files)} files; credits {cred}")
 
+def tas_named_labels(au_labels, tas_labels):
+    """The label table the app shows (decision 2026-11-05): a row that IS a
+    Tasmanian label (`ship` = its labels.json row) takes that label's name,
+    genus and family — the Understorey Network guide she opens is the
+    reference, so the APC spelling (Bossiaea cinerea for UN's B. cordifolia,
+    Callistemon pallidus for Melaleuca pallida, …) must not appear beside
+    it, and genus sums inside Tasmania stay under today's genera. Its UN
+    profile (`un`) comes along; the APC name is kept as `apc_name` when it
+    differs. Other rows are unchanged. Returns (new rows, {field: changes})."""
+    out, changed = [], {"name": 0, "genus": 0, "family": 0}
+    for l in au_labels:
+        l = dict(l)
+        j = l.get("ship", -1)
+        if j is not None and j >= 0:
+            t = tas_labels[j]
+            for k in ("name", "genus", "family"):
+                if t.get(k) and t[k] != l.get(k):
+                    changed[k] += 1
+                    if k == "name":
+                        l["apc_name"] = l.get("name")
+                    l[k] = t[k]
+            if t.get("un"):
+                l["un"] = t["un"]
+        out.append(l)
+    return out, changed
+
+
+def cmd_au_labels(a):
+    """ship/au-labels.json + labels.json → the display table with the
+    Tasmanian names on ship rows (`tas_named_labels`), written to --out
+    (default cache/plantid/australia/au-labels-named.json; NOT into ship/:
+    the staged pack and the Swift fixtures still use au-labels.json as is)."""
+    j = json.load(open(os.path.join(SHIP, "au-labels.json")))
+    tas = json.load(open(os.path.join(SHIP, "labels.json")))["labels"]
+    j["labels"], changed = tas_named_labels(j["labels"], tas)
+    j["note"] = j.get("note", "") + "; ship rows carry the Tasmanian label's name/genus/family (apc_name = the APC name)"
+    out = a.out or os.path.join(CACHE, "australia", "au-labels-named.json")
+    json.dump(j, open(out + ".part", "w"), ensure_ascii=False, separators=(",", ":"))
+    os.replace(out + ".part", out)
+    print(f"au labels with Tasmanian names: changed {changed} → {out}")
+
+
+COMMON = os.path.join(CACHE, "australia", "common")
+INAT_TAXA = "https://api.inaturalist.org/v1/taxa/"
+AUSTRALIA_PLACE = 6744  # iNaturalist place id: preferred names as used in Australia
+
+
+def cmd_au_common(a):
+    """English common names for the Australia-wide classes that are NOT
+    Tasmanian labels (ship rows keep their Understorey Network names, shown
+    through `un`): iNaturalist's preferred_common_name (locale en, place
+    Australia) of each class's taxon ids, first id with a name wins. Facts
+    only — the name string, nothing else. GET /v1/taxa/<≤30 ids>, ~1 req/s,
+    one cache file per batch (resumable), User-Agent izzymap-plantid-eval/1.
+    Writes `common` into ship/au-labels.json and its hash into pipeline.json."""
+    import urllib.request
+    os.makedirs(COMMON, exist_ok=True)
+    path = os.path.join(SHIP, "au-labels.json")
+    j = json.load(open(path))
+    lab = j["labels"]
+    ids = sorted({t for l in lab if l.get("ship", -1) < 0 for t in l.get("inat") or []})
+    batches = [ids[i:i + 30] for i in range(0, len(ids), 30)]
+    names, fetched = {}, 0
+    t0 = time.time()
+    for b in batches:
+        f = os.path.join(COMMON, f"{b[0]}-{b[-1]}-{len(b)}.json")
+        if not os.path.exists(f):
+            url = INAT_TAXA + ",".join(map(str, b)) + f"?locale=en&preferred_place_id={AUSTRALIA_PLACE}&per_page=30"
+            for attempt in range(5):
+                try:
+                    r = urllib.request.urlopen(urllib.request.Request(
+                        url, headers={"User-Agent": "izzymap-plantid-eval/1", "Accept": "application/json"}), timeout=60)
+                    d = json.load(r)
+                    break
+                except Exception as e:  # 429 / transient: back off
+                    print(f"  {b[0]}…: {e}; retry", flush=True)
+                    time.sleep(10 * (attempt + 1))
+            else:
+                sys.exit(f"iNaturalist taxa batch {b[0]}… failed 5 times (cache keeps the rest; re-run)")
+            got = {str(x["id"]): x.get("preferred_common_name") for x in d.get("results", [])}
+            json.dump({str(t): got.get(str(t)) for t in b}, open(f + ".part", "w"))
+            os.replace(f + ".part", f)
+            fetched += 1
+            if fetched % 50 == 0:
+                print(f"  {fetched} batches fetched ({time.time() - t0:.0f} s)", flush=True)
+            time.sleep(1.0)
+        names.update(json.load(open(f)))
+    n = 0
+    for l in lab:
+        l.pop("common", None)
+        if l.get("ship", -1) >= 0:
+            continue
+        for t in l.get("inat") or []:
+            c = names.get(str(t))
+            if c and c.strip():
+                l["common"] = " ".join(c.split())
+                n += 1
+                break
+    other = sum(1 for l in lab if l.get("ship", -1) < 0)
+    json.dump(j, open(path + ".part", "w"), ensure_ascii=False, separators=(",", ":"))
+    os.replace(path + ".part", path)
+    pipe = json.load(open(os.path.join(SHIP, "pipeline.json")))
+    pipe["files"]["au-labels.json"] = {"bytes": size_of(path), "sha256": sha256(path)}
+    json.dump(pipe, open(os.path.join(SHIP, "pipeline.json"), "w"), indent=1, ensure_ascii=False)
+    print(f"common names: {n:,} of {other:,} non-Tasmanian classes ({len(ids):,} taxon ids, {len(batches)} batches, "
+          f"{fetched} fetched now) → {path}")
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -1542,12 +1649,15 @@ def main():
     p.add_argument("--repeat", type=int, default=2)
     p = sub.add_parser("report")
     p.add_argument("--bank", default="bank-fp16.bin")
+    p = sub.add_parser("au-common")
+    p = sub.add_parser("au-labels")
+    p.add_argument("--out")
     p = sub.add_parser("au")
     p.add_argument("--observers", default=os.path.join(CACHE, "meta", "observers.csv.gz"))
     a = ap.parse_args()
     {"data": cmd_data, "encoders": cmd_encoders, "embed": cmd_embed, "fp32ref": cmd_fp32ref,
      "bench": cmd_bench, "benchall": cmd_benchall, "report": cmd_report, "fixture": cmd_fixture,
-     "au": cmd_au}[a.cmd](a)
+     "au": cmd_au, "au-common": cmd_au_common, "au-labels": cmd_au_labels}[a.cmd](a)
 
 
 if __name__ == "__main__":

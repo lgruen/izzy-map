@@ -22,7 +22,10 @@ finish() { echo "== end $(date -u +%FT%TZ) ($1)"; gcloud storage cp "$W/run.log"
 for i in $(seq 90); do nvidia-smi >/dev/null 2>&1 && break; sleep 10; done
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || finish "no GPU"
 export HOME=/root PATH=/root/.local/bin:$PATH
-command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+# (a boot cut short during the install once left an EMPTY uv file, which runs as an
+# empty shell script: exit 0, no output — so test what it prints, not its exit code)
+uv --version 2>/dev/null | grep -q "^uv " || { rm -f /root/.local/bin/uv /root/.local/bin/uvx
+  curl -LsSf https://astral.sh/uv/install.sh | sh; }
 E="uv run --python 3.12 --with torch==2.7.* --with torchvision==0.22.* --with open_clip_torch
    --with pyarrow --with pillow --with numpy<2.3 python3 -u"
 code() { gcloud storage cp "$B/code/code.tgz" . --quiet && rm -rf code && mkdir code && tar -C code -xzf code.tgz; }
@@ -30,7 +33,7 @@ code || finish "no code"
 # the model from GCS (copied there from the laptop's HF cache): an HF download cut
 # by a preemption left a corrupt cache once; offline from here on
 HFM=/root/.cache/huggingface/hub/models--imageomics--bioclip-2.5-vith14
-if [ ! -f "$W/model-ok" ]; then
+if [[ $MODE == *embed* ]] && [ ! -f "$W/model-ok" ]; then
   rm -rf "$HFM"; mkdir -p "$HFM"
   gcloud storage cp -r "$B/model/refs" "$B/model/snapshots" "$HFM/" --quiet || finish "no model"
   touch "$W/model-ok"
@@ -49,5 +52,14 @@ if [[ $MODE == *train* ]]; then
   gcloud storage rsync "$B/emb0" emb0 --quiet && gcloud storage rsync "$B/emb" emb --quiet \
     || finish "embedding sync failed"
   $E code/train_australia.py vm-train --bucket "$B" --work "$W" || finish "train failed"
+fi
+if [[ $MODE == *v2* ]]; then  # train_v2.py: single-model sweep on precomputed arrays
+  gcloud storage cp "$B/v2/data.npz" . --quiet || finish "no v2 data"
+  echo "uv: $(command -v uv) $(uv --version)"
+  $E -c "import torch, numpy, sys; print('env ok', sys.executable, torch.__version__, torch.cuda.is_available())"
+  $E -c "print('env ok')" | grep -q "env ok" || { echo "uv env broken → uv cache clean"; uv cache clean; \
+    $E -c "import torch; print('env ok after clean', torch.__version__)"; }
+  $E code/train_v2.py vm --bucket "$B" --work "$W"; rc=$?
+  echo "train_v2 exit $rc"; [ $rc = 0 ] || finish "v2 failed"
 fi
 finish ok

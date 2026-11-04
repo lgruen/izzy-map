@@ -678,6 +678,300 @@ the five `au-*` names in `asset_packs.json` AND `Packs.swift`
 (`packPaths`), and the app scorer port — not done here. The previous ship
 files are in `ship/tas-2026-11-04/`.
 
+## Single model (v2): one trained classifier
+
+Code `train_v2.py` (design in its docstring). Data (`v2 data`, 24 s): 598,115
+train photos (plan train ∪ the Tasmanian run's 82,649; 15,770 classes with
+photos of 22,122), AU-val 17,055 + A-val 3,677 photos for early stopping /
+selection; zero-shot scale s0 = 50 (val NLL). **Measured locally:** one epoch
+on a 5 % sample = 2.7 s on the M4 (MPS) → ~55 s per full epoch → ~27 min per
+30-epoch run, ×15 runs ≈ 7 h → cloud. **Bound (written before launch):** one
+SPOT L4, 9.4 s/epoch (measured 2026-11-04 for the same 598k × 1024 → 22,122
+matmul) + ~1 s val per epoch → ≤ 5.2 min per 30-epoch run; 9 sweep runs (τ ∈
+{0.5, 1, 1.5} × L2-SP wd ∈ {0.01, 0.1, 1}) + 6 one-change runs (random init,
+plain CE, no L2-SP, 25 % / 50 % data, genus sharing) ≈ 70 min + ~10 min boot
+≈ 1.4 h ≈ $0.7 VM + disk $0.03 + egress (15 heads × 45 MB ≈ 0.7 GB) $0.08 ≈
+**$0.8**; `--max-run-duration=3h` cap (≤ $1.6 per boot). Resumable per run
+(each head uploaded to `v2/runs/` as it finishes, finished runs skipped).
+
+## Reference photos
+
+One offline photo per Australia-wide label, so a result without an
+Understorey Network profile still shows something to compare against.
+`build_refphotos.py` (`select → fetch → encode`, or `all`; env in its
+docstring; measured 2026-11-05 on the M4):
+
+- **select** (7 s warm; the first run scans `meta/photos.csv.gz` once for
+  original sizes, 126 s → `refphotos/dims.parquet`). Classes with training
+  photos (plan `train.parquet` ∪ the Tasmanian `sets/train.parquet`: pool
+  observers, first CC0/BY/BY-NC photo, no shared photo — 598,119 embedded):
+  the 5 photos whose BioCLIP 2.5 embedding is nearest the class mean (a
+  typical view), then original ≥ 500 px and not a panorama, CC0/PD > CC BY >
+  CC BY-NC, original ≥ 1000 px, nearer the mean. 70 % of picks are the
+  nearest photo itself. **Text-only classes** (6,354, no training photo): any
+  research-grade observation in the snapshot, any observer role, anywhere,
+  with a CC0/PD/BY/BY-NC photo — 557 classes have one (mostly val/test
+  observers, whose non-evaluation photos are fine to show; the plan only
+  excluded them from training). No embedding to judge these by, so: the
+  observer's lead photo, unshared, Australian, licence, size — weaker (a
+  hand holding a sprig shows up). Never an evaluation photo (plan
+  `eval.parquet`, `C.parquet`, `sets/test.parquet`; asserted for training
+  photos). Each class keeps ranked candidates; a photo gone upstream falls
+  through to the next.
+- **fetch**: the 500 px "medium" from the iNat open-data bucket, 48
+  keep-alive workers → `refphotos/src/` (resumable). 16,325 photos, 2.09 GB
+  in 116 s (140/s, 18 MB/s), none gone upstream.
+- **encode**: sRGB (ICC converted), long edge ≤ 512 (the medium is ≤ 500 px
+  — never upscaled), AVIF speed 6. Sweep on random picks (mean KB per photo ×
+  16,325): q45 16 KB / 264 MB, q50 18–19 / 292–315, **q55 21–23 / 344–371**,
+  q60 28 / 452; q45 smears fine foliage at 2×, q55 ≈ q60 by eye → **q55**.
+  5.6 min on 10 cores.
+
+Result: **16,325 of 22,122 labels** (15,768 from training photos + 557 from
+the snapshot); 5,797 text-only classes have no usable research-grade photo
+in the 2026-10 snapshot (4,616 of the 6,354 had an iNat name at all) — the
+app shows none for them. Licences: 9,791 CC BY-NC, 5,706 CC BY, 828 CC0;
+3,309 observers. Staging (gitignored) `cache/plantid/refphotos/pack/
+refphotos/`: `<slug>.avif` (slug of the au-labels name, e.g.
+`eucalyptus-globulus.avif`) 356 MB, `index.json` 5.0 MB (name → u, file,
+w, h, licence, observer name as iNat shows it + login, ready-made
+`attribution` "© name, CC BY-NC, via iNaturalist" (CC0: "name, CC0 (no
+rights reserved), via iNaturalist"), photo id, observation uuid, ext; URL
+templates for the photo page, observation and source), `credits.json`
+0.27 MB → **0.362 GB** as a pack (one `refphotos/` directory entry; not yet
+in `asset_packs.json` / `Packs.swift`). The app must show `attribution`
+next to each photo; BY-NC = non-commercial only (IzzyMap is private).
+Resizing/re-encoding is an adaptation, allowed by CC0/BY/BY-NC (no ND/SA
+photo is ever selected).
+
+### Single model (v2): results (2026-11-05)
+
+Run: 18 heads on one SPOT L4 (us-east1-c, ~45 min of VM incl. three boots lost
+to a broken `uv` — an interrupted install left an EMPTY binary that "runs" as
+an empty shell script with exit 0; `vm_au.sh` now checks its output) ≈ $0.6;
+VM and disk deleted. 10.3 s/epoch measured. Eval `eval_v2.py` (8 min, M4):
+everything chosen on AU-val **per species** (class-balanced); report sets
+untouched. 19 duplicate classes (5 sharing an iNat taxon + 14 `photo_flow:
+merge` from `names/apc_inat_map.json`) are merged at evaluation (twin column
+masked, truths remapped; `train_v2.class_merges` asserts unique taxon ids and
+names; the data step applies it for the next training run).
+
+**Recipe (final):** head init = s0 · centred text (s0 = 50 by val NLL), logit-
+adjusted CE τ = 1 (balanced softmax), AdamW lr 1e-3, decoupled decay toward the
+text init wd 0.01, warmup 1 epoch + cosine over **12** epochs (best epoch 9),
+no kNN/prototypes, prior = sqrt-flattened counts, σ 10 km, α 16, λ 0.75 (×
+p_bal, Bayes), T 1.65 (class-balanced val NLL), ladder 0.55 / 0.55 (val:
+stated-wrong 6.5 % per species), one path for all of Australia.
+
+Per species / natural mix (top-1, top-5), genus per species, conf. wrong per
+species — full table incl. every ablation in `australia/v2/eval.md`:
+
+| model | A top-1 | A top-5 | C-main top-1 | C-main top-5 | C-euc top-1 | C-euc top-5 | AU-test top-1 | AU-test top-5 | AU-test euc top-1 | AU-test euc top-5 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **v2 single model** | 85.4 / 93.6 | 96.1 / 99.0 | **77.0** / 92.0 | **91.8** / 98.0 | 55.9 / 71.1 | 81.7 / 91.7 | **78.1** / **92.8** | **90.8** / 98.4 | **58.7 / 77.3** | 82.4 / 93.7 |
+| gated hybrid (staged) | **87.1 / 94.7** | 96.7 / 99.0 | 70.7 / 90.9 | 88.9 / 97.2 | 52.8 / 66.0 | 80.6 / 93.8 | 72.5 / 90.3 | 88.6 / 97.5 | 55.1 / 74.0 | 83.2 / 92.4 |
+| z1 zero-shot + prior | 79.7 / 86.7 | 92.9 / 94.3 | 70.3 / 90.6 | 86.4 / 96.3 | 57.4 / 66.2 | 81.9 / 93.0 | 70.4 / 88.9 | 86.8 / 96.2 | 56.1 / 70.2 | 81.8 / 91.0 |
+
+- **Tasmania regresses:** A-test natural 93.6 vs 94.7 (paired vs the gated
+  hybrid: 173 lost, 105 gained; per species 85.4 vs 87.1). The Tasmanian
+  specialist (Tasmania-first training photos, 82k-photo kNN bank, 2.5 km
+  prior) still earns ~1 pt there; prototypes/kNN did NOT help the single
+  model (val per species 0.883 → 0.874 at ω 0.25). A Tas-specific path stays
+  justified until more data closes it — Leo's call.
+- **Ablations (vs the same-schedule base, AU-test per species):** random init
+  75.8 vs 77.4 (1–9-photo bucket 43.6 vs 47.3); plain CE 73.9; post-hoc logit
+  adjustment on plain CE (τ' 1.5 on val) 78.0 — as good as the balanced loss
+  (better on eucalypts: 60.6 vs 57.0, worse on A 83.8 vs 84.7); L2-SP pull wd 0
+  vs 0.01: no difference (77.3 vs 77.4) — text init + early stopping do the
+  work; genus sharing (γ 0.5): 77.4 (C-euc 54.6 vs 52.4, within noise); no
+  location prior 74.5 (C-euc 40.9!); prior kinds count / log1p / sqrt /
+  presence within 0.2 pt on val; on test, count is best overall (78.8) and
+  worst on eucalypts (C-euc 52.0 vs 55.9): range-like priors suit the rarer
+  species.
+- **Diagnostics** (`australia/v2/curves.png`, `reliability.png`,
+  `data_size.png`): train loss → 0.03 (memorises), val loss bottoms at epoch
+  ~10 (0.74 with the 12-epoch cosine vs 0.82 with 30); AU-test per species by
+  training photos: 0 → 0.6 %, 1–9 → 49.3, 10–49 → 77.4, 50–100 → 89.9 (gated
+  hybrid 0 / 39.5 / 70.0 / 86.5); per-class fit acc ≈ 0.35 + 0.29·log10(n);
+  data-size curve (25 / 50 / 100 % of each class): AU-test per species 74.8 /
+  76.1 / 77.4 — about +1.3 pt per doubling, not flat; ECE per species 0.115 →
+  0.023, natural 0.029 → 0.021 after T. Ladder on test: stated-wrong per
+  species 8.7 % (AU-test), 9.9 (C-main), 13.3 (C-euc) — above the val target.
+- **Caveat (bug, fixed afterwards in `train_v2.py`):** early stopping compared
+  the per-species val top-1 against the stored *mixed* objective, so the 30-
+  epoch runs stopped by patience at ~epoch 16 and the kept epoch was within
+  ~0.4 pt of the true best (final run: epoch 9 of 12, 0.810 vs best 0.811).
+  The stage-1 ranking margins (≥ 0.7 pt) and the ablation directions are
+  larger than that; the 12- vs 30-epoch schedule comparison is confounded.
+- **Tail data** (`tail_data.py`, `australia/v2/tail_data.json`): classes with
+  1–9 training photos (6,534) use 22,946 photos; the same observations hold
+  53,893 more usable photos (×2.3, but same plant), SA/ND-only observations
+  add 3,020 (+13 %), the held-out val/test observers 12,318 observations. The
+  6,352 photo-less classes have almost nothing in the snapshot (1 pool obs,
+  1,116 held-out obs, 1,073 SA/ND photos). The snapshot contains CC0/BY/BY-NC
+  AND SA/NC-SA/ND/NC-ND photos (2.2M NC-SA, 2.0M SA, 1.7M NC-ND, 0.35M ND of
+  119M), never all-rights-reserved; iNat API sample of 50 tail AU species
+  (≤ 1 req/s): 13.4 % of research-grade AU observations with photos are ARR
+  only, 8.9 % SA/ND only.
+- **Encoder fine-tuning (not run; estimate):** measured ViT-H/14 inference on
+  the L4 101–109 photos/s fp16; fwd + bwd ≈ 3× → ~35 photos/s (estimate), so
+  3 epochs over 598k photos ≈ 14 h ≈ $7 SPOT per run (+ re-fetching 90 GB of
+  photos per epoch, or a 150 GB disk), a minimal 3-run sweep ≈ $25 and ~2
+  days, then a new Core ML export + w8 validation. Judgement: unlikely to pay
+  off now — the head already memorises the training set, the gains left are
+  in the tail where a 632M-parameter encoder would overfit 1–9 photos and can
+  erode the BioCLIP text alignment the photo-less classes rely on; more photos
+  per tail class (+1.3 pt per doubling) is the better lever. Revisit (LoRA /
+  last blocks) after the data expansion.
+
+### Single model (v2): Tasmania gap, ladder, error analysis (2026-11-05)
+
+**Corrected headline** (early-stopping fix; run `v2fix-e12`, 12-epoch cosine,
+best epoch 12, val per species 0.8105, trained locally on the M4, 17 min):
+A 85.3 / 93.4 (per species / natural), C-main 77.4 / 91.3 (top-5 91.3),
+C-euc 56.1 / 69.7 (top-5 80.4), AU-test 78.2 / 92.7 (top-5 91.0), AU-test
+eucalypts 58.0 / 76.7 (top-5 81.7); A paired vs the gated hybrid −173 / +96.
+
+**Why Tasmania drops** (`tas_gap.py`, A-test natural top-1, weights on A-val
+only; NB: the shipped Tasmanian prior is iNat-based too — pool-observer
+records on 2.5 km cells — not ALA):
+
+| | top-1 nat. | per sp. | vs shipped (lost / gained) |
+|---|---|---|---|
+| shipped Tasmanian scorer (head ⊕ 82k-photo bank + Tas prior) | 94.6 | 87.0 | – |
+| Tasmanian head ⊕ bank, no prior | 91.4 | 85.7 | −219 / +84 |
+| v2 head, no prior, 22,122 classes | 87.0 | 81.7 | −482 / +102 |
+| v2 head, no prior, only the 2,675 | 90.8 | 85.4 | −283 / +126 |
+| v2 (head + AU prior) | 93.4 | 85.3 | −177 / +112 |
+| v2, only the 2,675 | 93.8 | 86.0 | −152 / +115 |
+| v2 head + the Tasmanian prior (2,675) | 93.7 | 83.1 | −202 / +89 |
+| Tasmanian head ⊕ bank + v2 prior | 93.7 | 84.1 | −140 / +55 |
+| F: prior strength re-tuned in Tas. (λ 1.5) | 93.0 | 81.0 | −270 / +103 |
+| F: prior σ 5 km | 93.2 | 84.1 | −209 / +97 |
+| F: + ALA lift (nearby.bin, 1,727 UN species, σ 5) | 94.0 | 86.7 | −150 / +129 |
+| F: + Tasmanian-bank kNN (ω .25) inside Tasmania | 94.2 | 87.0 | −115 / +110 |
+| F: Tasmanian photos ×3 in training (head) | 93.5 | 85.4 | −163 / +110 |
+| **F: Tas ×3 head + Tasmanian-bank kNN (ω .5) inside Tasmania** | **94.5** | **86.9** | **−100 / +102** |
+
+Reading: it is the HEAD side, not the prior — the 19k extra classes cost ~0.5
+pt (v2 vs v2 on the 2,675) and the missing dense Tasmanian photo bank ~0.7
+pt; the Tasmanian prior does not help the v2 head (it was tuned with its own
+head). Only 41k of the 598k training photos were taken in Tasmania. A kNN
+term over the Tasmanian bank, used where that bank is dense (the Tasmania
+box), plus Tasmanian photos ×3 in training closes the gap (94.5 vs 94.6,
+paired −100 / +102); the ×3 weighting leaves the mainland unchanged
+(AU-test 78.1 / 92.7, C-euc 55.4, C-main 77.7). That keeps the 85 MB int8
+bank in the pack but drops the separate Tasmanian head, prior and the hybrid.
+
+**National ALA prior (estimate, not pulled):** the biocache facet query of
+build_records.py nationally (ABSENT, generalised/sensitive, uncertainty > 1 km,
+fossils out; AU box), 20 species measured: median 0.8 s, max 2.2 s per
+species, responses up to 3.4 MB → 22,122 species ≈ 11 h at 1 request/s, ~4 h
+with 3 workers (build_records' setting), a few GB of JSON. ALA holds 16.6 ×
+iNat's research-grade AU records for 10 random natives (11,445 vs 688) and
+3.5 × for the 10 most recorded — far more for exactly the rare species. In
+Tasmania the ALA lift alone gave +0.6 pt natural / +1.4 per species; its
+effect on AU-test / C-euc is not measured (expected largest for tail species
+and eucalypts — an expectation, not a result).
+
+**Ladder:** the val → test gap in "stated but wrong" (val 6.5 %, test 8.7 – 13.3
+% per species at 0.55) is a class-mix gap: per-species val classes are 76 %
+well-photographed (50–100 photos) vs 52 % on AU-test and 32 % over all
+species with an AU record, and stated-wrong on val is 23 % / 7.6 % / 4.6 % for
+classes with 1–9 / 10–49 / 50–100 photos. Re-weighting val to the label-free
+mix of all species with an AU record gives species 0.80 / genus 0.55: test
+stated-wrong per species 3.6 % (AU-test), 4.3 (C-main), 3.0 (C-euc), 6.5 (A),
+but species answers fall (AU-test 80 → 66 % per species; the rest mostly
+become genus answers, 2–4 % of them wrong). A threshold per training-count
+bucket of the NAMED class would keep more species answers — not built.
+
+**Error analysis** (`error_sheets.py`; sheets `australia/v2/errors/sheet-*.png`,
+cases in `cases.json`; looked at one by one). 74 "wrong but sure" (p ≥ 0.80,
+wrong species; AU-test 30 incl. 10 eucalypts, C-main 15, C-euc 9 = all of
+them, A 20): close congener the photo does show (c) 20; not identifiable from
+this photo — bark, distant canopy, sterile sprig (b) 17 (9 of the 19
+eucalypts); true species has 0–9 training photos (g) 18; truth not in the
+label set — Tasmanian garden weeds / hybrids / mosses (f) 7 (all A); photo
+problem — habitat scene, far-off plant, the plant isn't the subject (e) 6;
+prior flipped a right image answer (d) 4; label looks wrong (a) 2. Across
+categories 19 / 74 were PRIOR-INFLATED: the image alone said < 0.5, the prior
+lifted a wrong, locally common congener to ≥ 0.8 (e.g. #47 E. exilis →
+gittinsii 0.12 → 0.82; #33 Grevillea tetragonoloba → hookeriana 0.42 →
+0.82). 30 of Tasmania's 173 lost photos: close congeners (c) 17 (orchids
+Thelymitra / Caladenia / Prasophyllum / Corunastylis, Leptecophylla,
+Westringia, Pomaderris …), prior flips (d) 5, not identifiable (b) 4, photo
+problems (e) 2, label (a) 1, other 1; 17 of the 30 were low-confidence
+(p < 0.55, i.e. not stated as species anyway).
+Implications: (g) more photos for tail classes + a stricter species threshold
+for named classes with few photos; (b)/(c) UX: when the top answers share a
+genus and are close, show the genus plus the 2–3 candidates instead of one
+species; (d)/prior inflation: don't let the prior alone create confidence —
+e.g. state a species only if the image-only p of that species is ≥ ~0.3, or
+temper λ for classes the image doesn't support; (e) photo guidance ("the
+flower or leaves, close"); (f) the planned cultivated/weed data; (a) nothing.
+Examples: `errors/sheet-05.png` #47 (prior-inflated tail eucalypt),
+`sheet-03.png` #25 (ironbark bark only), `sheet-00.png` #7 (orchid photo shows
+its host tree), `sheet-07.png` #61 (arum lilies in a paperbark scene),
+`sheet-08.png` #65 (prior flips a right Ranunculus), `sheet-09.png` #78
+(Corunastylis congeners, Tasmania lost).
+
+### Single model (v2): ladder v3 and the final-run recipe (2026-11-05)
+
+**Ladder v3** (`ladder_v3.py`, AU-val re-weighted to the label-free mix of all
+species with an Australian record): species threshold per training-count
+bucket of the NAMED class, chosen greedily to ≤ 7 % stated-wrong per species
+→ 0.50 (0 photos), 0.50 (1–9), 0.65 (10–49), 0.85 (50+); image-only support
+floor f searched over {0 … 0.4} → **0** (no gain on val); close-congener rule
+(genus + top-3 when the top two share a genus and p2 ≥ r·p1) → **r 0.3**; genus
+threshold 0.60. The wrong confident answers mostly NAME a well-photographed
+class (rare truths are named as common congeners), hence the high threshold
+for the 50+ bucket. Test, per species (natural mix in the last column):
+
+| set | ladder | species | species right | stated wrong | genus (wrong) | not sure | natural: species / stated wrong |
+|---|---|---|---|---|---|---|---|
+| A-test | v3 | 73.1 | 66.7 | 6.3 | 17.5 (3.6) | 9.4 | 83.5 / 1.6 |
+| A-test | 0.80/0.55 | 74.1 | 67.5 | 6.5 | 17.2 (3.5) | 8.7 | 85.0 / 1.7 |
+| C-main | v3 | 67.1 | 62.9 | 4.2 | 22.0 (1.9) | 10.9 | 79.8 / 0.9 |
+| C-main | 0.80/0.55 | 65.7 | 61.4 | 4.3 | 24.8 (2.2) | 9.5 | 81.2 / 1.2 |
+| C-euc | v3 | 36.1 | 33.1 | 3.0 | 58.3 (1.5) | 5.6 | 41.8 / 0.5 |
+| C-euc | 0.80/0.55 | 33.9 | 30.9 | 3.0 | 61.7 (2.0) | 4.4 | 45.7 / 0.5 |
+| AU-test | v3 | 68.3 | 64.3 | 3.9 | 21.0 (1.5) | 10.7 | 82.3 / 1.1 |
+| AU-test | 0.80/0.55 | 66.0 | 62.4 | 3.6 | 24.7 (2.1) | 9.3 | 84.2 / 1.3 |
+| AU-test euc | v3 | 37.0 | 33.5 | 3.5 | 56.3 (1.7) | 6.7 | 46.7 / 2.3 |
+| AU-test euc | 0.80/0.55 | 33.2 | 30.4 | 2.8 | 61.9 (2.6) | 4.9 | 51.2 / 2.2 |
+
+**Final run** (waiting for the extras' embeddings; nothing run yet):
+
+```bash
+X=pipeline/cache/plantid/extra; D=pipeline/cache/plantid/australia/v2/data-final.npz
+E="uv run --python 3.12 --with torch==2.7.* --with torchvision==0.22.* --with open_clip_torch \
+   --with numpy<2.3 --with scipy --with pyarrow --with pillow --with duckdb --with matplotlib python3 -I"
+V2DATA=$D $E pipeline/plantid/train_v2.py data --extra $X/extra_photos.parquet \
+    --extra-emb <dir of the extras' shard-*.npz> --reassign $X/reassign_train.parquet
+V2DATA=$D $E pipeline/plantid/train_v2.py local \
+    '{"name": "final-v3", "tau": 1.0, "wd": 0.01, "epochs": 12, "tas_weight": 3.0}'
+V2DATA=$D FINAL=final-v3 $E pipeline/plantid/eval_v2.py      # all report sets
+V2DATA=$D $E pipeline/plantid/tas_gap.py final-v3            # A: D5 = without, F4 = with the Tasmania-box bank kNN
+V2DATA=$D $E pipeline/plantid/ladder_v3.py final-v3
+```
+
+Recipe = v2fix (text init s0 50, logit-adjusted CE τ 1, AdamW lr 1e-3, decay to
+the text init 0.01, 12-epoch cosine, per-species early stopping) + Tasmanian
+photos ×3 + the 260,501 extras (`add_extra`: any CC licence, de-duplicated
+against training by photo id, Tasmania flag from lat/lon, embeddings looked up
+by photo id under `--extra-emb`) + the 81 reassignments + the 19 class merges
+(applied in `data`). Training time, measured on the current 598k photos: 87 s
+per epoch on the M4 (MPS, 1,045 s for 12 epochs incl. val); with the extras
+(×1.44 photos) ≈ 25 min locally — local, no cloud needed (L4: 10.3 s/epoch
+measured → ~3 min, but boot + a 1.9 GB upload cost more than they save).
+
+**Prior from any occurrence table** (`prior_v2.py build [--counts T.parquet[:w]
+…] --name N`): tables of (lat, lon or cy, cx, u, n) summed onto the 0.05°
+grid, written raw (√ applied at scoring); `V2PRIOR=…/prior-N.bin` switches
+eval_v2 / ladder_v3 / tas_gap to it. The default (iNat) rebuild is identical
+to `ship/au-prior.bin` (rowptr, classes and counts checked). An ALA pull
+(build_records' facet method, nationally) would write (lat, lon, u, n) rows.
+
 ## Licences
 
 Only photos under CC0 / PD / CC BY / CC BY-NC are fetched (iNat's
