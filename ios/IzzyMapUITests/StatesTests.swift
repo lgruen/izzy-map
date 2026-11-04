@@ -140,6 +140,14 @@ final class StatesTests: XCTestCase {
                              "-storageScroll", "areas"], hobart11, 5, nil),
             ("storage-pack-failed", ["-fakePacks", "vector,topo=failed,relief,plantid=paused", "-openLayers", "YES",
                                      "-openStorage", "YES"], hobart11, 5, nil),
+            // Storage (2026-11-04 redesign): the chip's target row, and the
+            // settled screen (core folded; failed / downloading / paused)
+            ("storage-plantid-row", ["-fakePacks", "mixed", "-fakePackSeconds", "900", "-openLayers", "YES",
+                                     "-openStorage", "YES", "-storageScroll", "pack-plantid"], hobart11, 4, nil),
+            ("storage-settled", ["-fakePacks", "settled", "-fakePackSeconds", "900", "-openLayers", "YES",
+                                 "-openStorage", "YES"], hobart11, 4, nil),
+            ("plantid-model-unpublished", ["-fakePacks", "vector,topo,relief,plantid=unpublished",
+                                           "-debugPlantID", "YES"], hobart11, 5, nil),
             ("plantid-model-missing", ["-fakePacks", "vector,topo,relief", "-debugPlantID", "YES"], hobart11, 5, nil),
             ("plantid-model-arriving", ["-fakePacks", "vector,topo,relief,plantid=downloading:0.42",
                                         "-fakePackSeconds", "900", "-debugPlantID", "YES"], hobart11, 5, nil),

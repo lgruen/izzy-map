@@ -489,27 +489,92 @@ or PhotosPicker   │ photo, full bleed  │     │┌────┐ Eucalyptu
  be compared against it. No traffic-light colours.
 ```
 
-Storage:
+Storage (reordered 2026-11-04 after Leo's first real-device pass):
 
 ```
 ╭──────────────────────────────╮
-│ Storage                    ✓ │
-│ ▮▮▮▮▮▮▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯▯ │ one bar: IzzyMap / other / free
-│ IzzyMap 6.1 GB, 41 GB free   │
-│ On this iPhone               │
-│  Vegetation, geology…  0.39 GB│ (installs with the app)
-│  Topographic           2.04 GB│
-│ Available                    │
-│  Aerial photos   [Download 1.93 GB]
-│  2025–26 season  downloading 62 %  ✕
-│ Field guide extras           │
-│  F2F descriptions   37 MB  ✓ │
-│  Plant photos      152 MB  [Download]
-│ Detailed areas               │
-│  Mount Field, z17    410 MB  │
-│  [ ⬚ Download an area… ]     │
+│ ‹ Storage                  ✓ │
+│ IzzyMap uses 4.46 GB         │
+│ 378 GB free on this iPhone   │
+│ ███▨▨⁙⁙≡≡                    │ ONE bar: 4 fills + empty free space
+│ ■ Core maps 3.73 GB  ▨ Extra │ key swatches = the bar's own fills
+│ ⁙ Plant identification 727 MB│
+│ Detailed areas               │ what she comes back for, first
+│ [ ⬚ Download an area… ]      │ ink capsule (same words/glyph as Layers)
+│ ▣ Mount Field  ✓ On this     │ locator plate · state · Show on map ›
+│   iPhone · 410 MB      🗑    │
+│ Core maps & plant ID         │
+│ ▣ Vegetation, topographic,   │ all four here: ONE folded row …
+│   relief, plant ID           │
+│   ✓ On this iPhone · 4.46 GB ⌄│ … tap → the four rows
+│ Extra maps                   │
+│ ▣ Aerial photos              │
+│   Downloading 62 % · 1.20 of │ words + a bar ONLY while it arrives
+│   1.93 GB            [Stop]  │
+│   ▬▬▬▬▬▬▬▬▬▬▬───────         │
+│ ▣ Paper map  3.24 GB  [Get]  │ a size is a figure, never a bar
+│ Photos by season …           │
+│ Field guide …                │
 ╰──────────────────────────────╯
 ```
+
+- **Order = what she comes back for.** Once the core packs are in, the
+  reason to open Storage is a *detailed area* (Leo: "probably the one
+  feature you'd want to come for on this page"), so they sit right under
+  the gauge with a prominent ink "Download an area…" capsule — the same
+  words and `square.dashed` glyph as the Layers row, which stays as the
+  entry from the map. Then the core packs, extra maps, seasons, field
+  guide. The empty areas state stays the drawing of a dashed frame on
+  Mount Field.
+- **Core packs fold.** Vegetation/geology/pre-1750, topo, relief and plant
+  identification arrive with the app (plant ID is a core row like the
+  others — it was missing from the screen until 2026-11-04, so the chip
+  opened Storage and the model wasn't there). While ALL four are simply on
+  the device they fold into one row ("✓ On this iPhone · 4.46 GB", a
+  chevron unfolds them); while any is arriving, updating, stuck or not
+  published the four rows show by themselves. Footer: "These arrive with
+  the app and stay up to date by themselves — plant identification too."
+- **Every element means one thing.** (The first version drew each pack's
+  size as a bar on one shared scale — the paper map the giant — filled ink
+  when on the device. Leo read them as stuck progress bars: "They don't
+  move, so are the downloads done or not?" And light grey meant "rest of
+  the scale" on the rows but "Field guide" in the gauge key.) Now:
+  - a row's **status line** says its state in words, with the state's
+    glyph in front where it has one (`StateSymbol`: ✓ on the device,
+    didn't finish, needs reception): "On this iPhone · 2.04 GB",
+    "1.93 GB" + Get, "Downloading 62 % · 1.20 of 1.93 GB", "On this
+    iPhone · updating 40 %", "Waiting for a connection · …", "Paused by
+    iOS · …" + Resume, "Didn't finish · …" + Retry, "Not published yet ·
+    …" (no button: "It downloads by itself once it's published").
+  - a **progress bar** (system linear, ink tint) appears ONLY while bytes
+    arrive (download or update, fraction known) and goes when they stop.
+    Nothing else on the screen is a bar; sizes are figures.
+  - the **right-hand slot holds only real controls** — Get / Retry /
+    Stop / Resume capsules, the trash; a core pack downloading has none
+    (the system owns it). No disabled rings, no still rings: a ring that
+    doesn't move reads as stuck progress. Detailed areas and field-guide
+    batches follow the same rules (Stop capsule + bar while running).
+  - the **gauge is the one picture of space**: IzzyMap's categories then
+    free space as the empty remainder, everything else on the device left
+    out (capacity in words). Four fills told apart by FORM as well as tone,
+    all in ink so they hold in light and dark: solid = core maps, diagonal
+    hatch = extra maps (incl. seasons), dots = plant identification,
+    horizontal rules = field guide & detailed areas (one segment, named for
+    what's in it). Each filled block keeps a 1 pt ink edge; each is at
+    least 16 pt wide so its fill can be read (on a 512 GB phone IzzyMap is
+    a sliver — the figures carry the exact sizes). The key's swatches are
+    the same view as the segments. No grey anywhere means a category.
+  - coverage thumbnails (seasons) stay printed plates: ink = on the
+    device, grey = not yet — a state of the map, never progress.
+- **Targets.** `AppModel.openStorage(at:)` takes a section (`core`,
+  `areas`) or a pack row (`StorageTarget.row`): the plant-ID chip opens
+  Storage on the Plant identification row (unfolding the core section),
+  centred and washed in ink @ 10 % for ~1.6 s.
+- **Diagnostics (hidden, Release too):** long-press the gauge (or "Model &
+  training photos" on Identify): per pack, the system's view
+  (`assetPackIsAvailableLocally`, `localStatus`, local version), ours,
+  the raw errors (domain, code), catalogue refreshes, and where every
+  expected file resolves (`url(for:)`, size, readable); Copy Diagnostics.
 
 States (copy is the design; designed end to end in M7, 2026-11-04 —
 screenshots of each in `StatesTests.testStateShots`):
@@ -529,7 +594,12 @@ screenshots of each in `StatesTests.testStateShots`):
   locality areas that run out to mid-river in estuaries, a jagged line
   across the Derwent by z11, where the vegetation's own edges draw the land). One glass chip
   at the top, **"Maps arriving · 62 %"** with an ink ring (bytes-weighted
-  over the core packs), opens Storage; "Maps arrive when online" /
+  over the core packs that are DOWNLOADING and report progress — never
+  installed, waiting, failed or unpublished ones: on 2026-11-04 "Plant ID
+  arriving · 83 %" was the maps already here over maps + a model that
+  wasn't on the server), opens Storage (only the model missing: on its
+  row); "Plant ID not here yet" while asked for and not started (a tap
+  asks again); a pack the App Store doesn't offer raises no chip; "Maps arrive when online" /
   "paused by iOS" while nothing moves; "Maps didn't finish · Retry"
   retries, then opens Storage. It goes when the last core pack is in (a
   `.success` tap). No banner, no sentence about gigabytes.
@@ -549,7 +619,9 @@ screenshots of each in `StatesTests.testStateShots`):
   the description" / the data sheet ("not on this iPhone yet — needs
   reception"); a base map not downloaded ("Needs reception" on its Layers
   tile instead of "Streams online"); plant ID's model (download glyph and
-  size, or the reception glyph while paused offline).
+  size, or the reception glyph while paused offline; "isn't published for
+  this version yet" + Check Again — never a Get — while the App Store
+  doesn't offer the pack).
 - **Empty.** Search: "No places match "Mt Welington". Try a street, suburb
   or peak name." A community with no plant lists: one line by group ("No
   plant lists for cleared or built land", "… water, sand or bare rock") —

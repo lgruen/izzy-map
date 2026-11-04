@@ -30,14 +30,15 @@ struct FirstLaunchTests {
         #expect(CoreArrival.of(states: none, sizes: sizes, resolved: true, canFetch: false, online: true) == nil)
     }
 
-    /// The fraction is bytes-weighted over all core packs; installed ones
-    /// count whole (vector 400 + half of topo's 2000 of 4400 = 31 %).
+    /// The fraction is bytes-weighted over the packs that are DOWNLOADING
+    /// only (topo half-way at 2000 + relief at 0.1 of 1300 = 1130 of 3300 =
+    /// 34 %): installed, waiting and failed packs never fold in.
     @Test func arrivingIsWeightedByBytes() throws {
-        let s = states([.vector: .installed, .topo: .downloading(0.5)])
+        let s = states([.vector: .installed, .topo: .downloading(0.5), .relief: .downloading(0.1)])
         let a = try #require(CoreArrival.of(states: s, sizes: sizes, resolved: true, canFetch: true, online: true))
-        guard case let .arriving(f) = a.phase else { Issue.record("\(a.phase)"); return }
-        #expect(abs(f - 1400.0 / 4400) < 1e-9)
-        #expect(a.text == "Maps arriving · 31\u{00A0}%")
+        guard case let .arriving(f?) = a.phase else { Issue.record("\(a.phase)"); return }
+        #expect(abs(f - 1130.0 / 3300) < 1e-9)
+        #expect(a.text == "Maps arriving · 34\u{00A0}%")
         #expect(a.missing == [.topo, .relief, .plantid])
         #expect(a.spoken.hasPrefix("The topographic map, relief shading"))
     }
@@ -57,11 +58,42 @@ struct FirstLaunchTests {
         let model = try #require(CoreArrival.of(states: states([.vector: .installed, .topo: .installed, .relief: .installed,
                                                                 .plantid: .downloading(0.5)]),
                                                 sizes: sizes, resolved: true, canFetch: true, online: true))
-        #expect(model.text.hasPrefix("Plant ID arriving"))
-        // something still moving wins over a failure elsewhere
+        // its OWN progress: the maps already here don't count
+        #expect(model.text == "Plant ID arriving · 50\u{00A0}%")
+        // something still moving wins over a failure elsewhere; no figure
+        // until a download reports one
         let mixed = states([.vector: .installed, .topo: .failed("x"), .relief: .downloading(nil)])
-        #expect(CoreArrival.of(states: mixed, sizes: sizes, resolved: true, canFetch: true, online: true)?.phase
-            == .arriving(400.0 / 4400))
+        let moving = CoreArrival.of(states: mixed, sizes: sizes, resolved: true, canFetch: true, online: true)
+        #expect(moving?.phase == .arriving(nil) && moving?.text == "Maps arriving")
+    }
+
+    /// Leo's iPhone, 2026-11-04: maps in, plant ID not on the server — the
+    /// chip read "Plant ID arriving · 83 %" (the maps' share of the core
+    /// bytes) and never moved. Nothing reporting progress shows no figure,
+    /// and a pack the App Store doesn't offer raises no chip at all.
+    @Test func noPhantomPercentages() throws {
+        let maps = [Pack.vector: PackState.installed, .topo: .installed, .relief: .installed]
+        var asked = maps
+        asked[.plantid] = .notInstalled
+        let queued = try #require(CoreArrival.of(states: states(asked), sizes: sizes, resolved: true, canFetch: true, online: true))
+        #expect(queued.phase == .queued && queued.text == "Plant ID not here yet")
+        var unpublished = maps
+        unpublished[.plantid] = .unpublished
+        #expect(CoreArrival.of(states: states(unpublished), sizes: sizes, resolved: true, canFetch: true, online: true) == nil)
+        // the model failing: its own words and a Retry, no figure
+        var failed = maps
+        failed[.plantid] = .failed("No asset pack with the ID “plantid” was found.")
+        let retry = try #require(CoreArrival.of(states: states(failed), sizes: sizes, resolved: true, canFetch: true, online: true))
+        #expect(retry.phase == .failed && retry.text == "Plant ID didn’t finish · Retry")
+        // the model downloading: ITS progress (40 %), not 83 % + its share
+        var moving = maps
+        moving[.plantid] = .downloading(0.4)
+        #expect(CoreArrival.of(states: states(moving), sizes: sizes, resolved: true, canFetch: true, online: true)?.text
+            == "Plant ID arriving · 40\u{00A0}%")
+        // a failed map beside a downloading model: only the download counts
+        var both = states([.vector: .installed, .relief: .installed, .topo: .failed("x"), .plantid: .downloading(0.4)])
+        both[.aerial] = .downloading(0.9)
+        #expect(CoreArrival.of(states: both, sizes: sizes, resolved: true, canFetch: true, online: true)?.phase == .arriving(0.4))
     }
 
     /// Seen once: OK, opening Layers or Identify, or a map tap dismiss it

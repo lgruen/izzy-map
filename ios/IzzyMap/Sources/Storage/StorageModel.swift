@@ -87,6 +87,11 @@ final class StorageModel {
         for pack in Pack.allCases where packs.state(pack).isInstalled {
             bytes[pack] = PackSizes.installed(pack, location: packs.location)
         }
+        // plant ID's files aren't archives: the folder they're read from
+        if bytes[.plantid] != nil, case let .files(folder)? = PlantIDSession.source(packs: packs),
+           let size = PackSizes.folder(folder) {
+            bytes[.plantid] = size
+        }
         packBytes = bytes
     }
 
@@ -110,14 +115,17 @@ final class StorageModel {
                          update: packs.updates[pack], online: Connectivity.shared.online)
     }
 
-    /// The largest pack: the shared scale of every size bar.
-    var largestPack: Int { Pack.allCases.map { bytes($0) }.max() ?? 1 }
+    /// Every core pack (maps and plant ID) is on the device and nothing
+    /// is arriving for them: the section can fold into one summary row.
+    var coreAllHere: Bool { Pack.StorageSection.maps.packs.allSatisfy { status($0) == .onDevice } }
+
+    /// What the core packs take on the device.
+    var coreBytes: Int { Pack.StorageSection.maps.packs.reduce(0) { $0 + bytes($1) } }
 
     var gauge: StorageGauge {
         var parts: [StorageGauge.Category: Int64] = [:]
         for (pack, b) in packBytes {
-            let category: StorageGauge.Category = pack.storageSection == .maps ? .maps : .moreMaps
-            parts[category, default: 0] += Int64(b)
+            parts[pack.gaugeCategory, default: 0] += Int64(b)
         }
         // what a running batch has stored so far counts as it arrives
         parts[.extras] = Int64(extrasStatus.values.reduce(0) { $0 + $1.bytesPresent })

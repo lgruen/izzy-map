@@ -521,7 +521,7 @@ final class AppModel {
         areaDraft = nil
         map.framedBox = nil
         map.draftRect = nil
-        openStorage(at: "areas")
+        openStorage(at: StorageTarget.areas)
     }
 
     // MARK: Location

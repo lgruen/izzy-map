@@ -155,6 +155,24 @@ option; simulator problems on 27.1).
   background by themselves. Even an essential pack can be missing after a
   network dropout until the app calls `ensureLocalAvailability` — `PackStore`
   does that for every essential/prefetch pack at launch.
+- **Catalogue refresh (2026-11-04, from the 27.2 SDK headers):** the
+  deprecated `assetPack(withID:)` "may attempt to get the latest asset-pack
+  information from the server … To force the system to get the latest
+  information from the server unconditionally, send `checkForUpdates`"
+  (which also starts updates and removes packs the server dropped). After
+  Leo uploaded `plantid` to a build installed before it existed, "Get the
+  model" failed with "No asset pack with the ID “plantid” was found" — a
+  stale on-device catalogue is the inference (not confirmed). `PackStore`
+  therefore calls `checkForUpdates()` once and retries on any not-found
+  (`BAManagedErrorCodeAssetPackNotFound` = 0, or our own lookup's
+  `assetPackNotFound`), and once at launch when the manifest lacks a pack
+  the app expects; a pack still absent is `.unpublished` ("isn't published
+  for this version yet", no Get). Directories inside packs ARE addressable:
+  the header says `url(for:)` "supports retrieving entire directories —
+  including packages" and that all packs share one namespace with
+  subdirectories, so `plantid/PlantEncoder-w8.mlmodelc/` needs no
+  repackaging. Hidden Diagnostics (long-press the Storage gauge or "Model
+  & training photos") shows the system's and the app's view of every pack.
 - **Upload** [G]: `xcrun altool --upload-asset-pack <id>.aar --apple-id
   <numeric app id>` (+ `--api-key`/`--api-issuer`, `--wait`), or
   Transporter / the ASC API — separately from builds. Each upload is a new

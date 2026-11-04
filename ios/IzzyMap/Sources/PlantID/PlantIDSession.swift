@@ -67,7 +67,7 @@ final class PlantIDSession {
         }
         // a developer run with `-dataDir`: the pack as build_packs.py staged it
         if case let .debugDirectory(data) = packs.mode {
-            let staged = data.appending(path: "packs/stage-plantid/\(PlantIDFiles.folder)", directoryHint: .isDirectory)
+            let staged = PlantIDFiles.staged(in: data)
             if FileManager.default.fileExists(atPath: staged.appending(path: PlantIDFiles.head).path(percentEncoded: false)) {
                 return .files(staged)
             }

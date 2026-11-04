@@ -54,18 +54,28 @@ final class StorageTests: XCTestCase {
         openStorage(app)
         XCTAssertTrue(app.descendants(matching: .any)["storage-gauge"].waitForExistence(timeout: patience(5)))
         // core packs show as on the device, without a control
-        XCTAssertTrue(app.staticTexts["pack-topo-status"].label.hasPrefix("On this"))
+        let topo = app.staticTexts["pack-topo-status"]
+        reveal(topo, in: app)
+        XCTAssertTrue(topo.label.hasPrefix("On this"))
         XCTAssertFalse(app.buttons["pack-topo-remove"].exists)
+        // plant ID has its row, with what it weighs and a Get (it isn't here)
+        let plantID = app.buttons["pack-plantid-get"]
+        reveal(plantID, in: app)
+        XCTAssertTrue(plantID.exists)
 
         let get = app.buttons["pack-tasmap-get"]
         reveal(get, in: app)
         XCTAssertTrue(get.isHittable)
         get.tap()
-        // one tap: progress at once, then on the device
-        XCTAssertTrue(app.buttons["pack-tasmap-progress"].waitForExistence(timeout: patience(2)))
+        // one tap: a progress bar and the words at once, then on the device
+        // — and the bar goes when it's done
+        let bar = app.descendants(matching: .any)["pack-tasmap-progress"]
+        XCTAssertTrue(bar.waitForExistence(timeout: patience(2)))
+        XCTAssertTrue(app.staticTexts["pack-tasmap-status"].label.hasPrefix("Downloading"))
         let remove = app.buttons["pack-tasmap-remove"]
         XCTAssertTrue(remove.waitForExistence(timeout: patience(10)))
         XCTAssertTrue(app.staticTexts["pack-tasmap-status"].label.hasPrefix("On this"))
+        XCTAssertFalse(bar.exists, "no bar once it's here")
 
         // Remove asks first, then it's a Get again
         remove.tap()
@@ -85,7 +95,7 @@ final class StorageTests: XCTestCase {
         let get = app.buttons["pack-tasmap-get"]
         reveal(get, in: app)
         get.tap()
-        let ring = app.buttons["pack-tasmap-progress"]
+        let ring = app.buttons["pack-tasmap-stop"]
         XCTAssertTrue(ring.waitForExistence(timeout: patience(2)))
         ring.tap()
         let stop = app.buttons["Stop Download"]
@@ -109,11 +119,52 @@ final class StorageTests: XCTestCase {
         reveal(all, in: app)
         all.tap()
         // every missing season downloads; once all are here the row goes away
-        XCTAssertTrue(app.buttons["pack-season-2020-progress"].waitForExistence(timeout: patience(3))
+        XCTAssertTrue(app.descendants(matching: .any)["pack-season-2020-progress"].waitForExistence(timeout: patience(3))
             || app.buttons["pack-season-2020-remove"].exists)
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: all)
         XCTAssertEqual(XCTWaiter().wait(for: [gone], timeout: patience(12)), .completed)
         // (the bottom season: still on screen in the iPad's shorter form sheet)
         XCTAssertTrue(app.buttons["pack-season-2020-remove"].waitForExistence(timeout: patience(2)))
+    }
+
+    /// The plant ID chip opens Storage on the plant identification row
+    /// (Leo, 2026-11-04: it opened Storage and the model wasn't listed).
+    @MainActor
+    func testPlantIDChipOpensItsRow() {
+        let app = offlineApp(["-fakePacks", "vector,topo,relief,plantid=downloading:0.83", "-fakePackSeconds", "600"])
+        app.launch()
+        let chip = app.buttons["maps-arriving"]
+        XCTAssertTrue(chip.waitForExistence(timeout: patience(15)))
+        XCTAssertTrue(chip.label.contains("plant identification model"), chip.label)
+        XCTAssertTrue(chip.label.contains("83 percent"), chip.label)
+        chip.tap()
+        XCTAssertTrue(app.navigationBars["Storage"].waitForExistence(timeout: patience(5)))
+        let status = app.staticTexts["pack-plantid-status"]
+        XCTAssertTrue(eventually(patience(5)) { status.exists && status.isHittable }, "scrolled to the plant ID row")
+        XCTAssertTrue(status.label.hasPrefix("Downloading"), status.label)
+        XCTAssertTrue(app.descendants(matching: .any)["pack-plantid-progress"].exists)
+        // a core pack downloading has no Stop: the system owns it
+        XCTAssertFalse(app.buttons["pack-plantid-stop"].exists)
+    }
+
+    /// All core packs here: one folded row that unfolds to the four.
+    @MainActor
+    func testSettledCorePacksFold() {
+        let app = launch(packs: "vector,topo,relief,plantid")
+        openStorage(app)
+        let summary = app.descendants(matching: .any)["core-summary"]
+        reveal(summary, in: app)
+        XCTAssertTrue(summary.exists)
+        XCTAssertFalse(app.staticTexts["pack-topo-status"].exists)
+        // tap its words (inside the row's button: XCUITest exposes a plain
+        // List-row button oddly, and gives sheet lists odd frames)
+        let words = app.staticTexts["core-summary-status"]
+        XCTAssertTrue(words.exists && words.label.hasPrefix("On this"), words.label)
+        words.tap()
+        // the four rows unfold under it (maybe below the fold)
+        let plantID = app.staticTexts["pack-plantid-status"]
+        reveal(plantID, in: app)
+        XCTAssertTrue(plantID.exists)
+        XCTAssertTrue(plantID.label.hasPrefix("On this"), plantID.label)
     }
 }

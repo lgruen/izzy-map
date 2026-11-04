@@ -9,6 +9,8 @@ nonisolated enum PlantIDRoute: Hashable, Sendable {
     /// A label without a UN profile: name, family, the iNaturalist link.
     case noProfile(label: Int)
     case credits
+    /// The hidden pack Diagnostics (long-press "Model & training photos").
+    case diagnostics
 }
 
 /// Identify a plant (docs/NATIVE_PLAN.md §4, DESIGN.md "Plant ID"): take
@@ -69,7 +71,8 @@ struct PlantIDView: View {
     @ViewBuilder private var content: some View {
         switch session.step {
         case .capture:
-            PlantIDCapture(session: session, packs: packs, hasSource: source != nil) { path.append(.credits) }
+            PlantIDCapture(session: session, packs: packs, hasSource: source != nil,
+                           showCredits: { path.append(.credits) }, showDiagnostics: { path.append(.diagnostics) })
         case .framing, .identifying:
             PlantIDFraming(session: session, packs: packs, hasSource: source != nil)
         case .result:
@@ -105,6 +108,8 @@ struct PlantIDView: View {
             }
         case .credits:
             PlantIDCreditsView(source: source)
+        case .diagnostics:
+            PackDiagnosticsView(packs: packs)
         }
     }
 
@@ -138,6 +143,7 @@ struct PlantIDCapture: View {
     let packs: PackStore
     let hasSource: Bool
     let showCredits: () -> Void
+    var showDiagnostics: () -> Void = {}
     @State private var pick: PhotosPickerItem?
     @State private var showCamera = false
     @State private var loading = false
@@ -196,6 +202,8 @@ struct PlantIDCapture: View {
                         .font(.footnote)
                 }
                 .foregroundStyle(DesignColor.secondaryInk)
+                // hidden: what the system and the app think of each pack
+                .simultaneousGesture(LongPressGesture(minimumDuration: 1.2).onEnded { _ in showDiagnostics() })
                 .accessibilityIdentifier("plant-id-credits")
             }
             .padding(.horizontal, 24)
@@ -324,6 +332,15 @@ struct PlantIDModelStatus: View {
                 Button("Resume") { packs.resume(.plantid) }
                     .buttonStyle(.bordered)
                     .tint(DesignColor.ink)
+            case .unpublished:
+                // the catalogue on the device may predate the upload: a tap
+                // asks the server again (PackStore refreshes it on "not found")
+                if packs.canFetch {
+                    Button("Check Again") { packs.fetch(.plantid) }
+                        .buttonStyle(.bordered)
+                        .tint(DesignColor.ink)
+                        .accessibilityIdentifier("plant-id-check-again")
+                }
             case .installed:
                 EmptyView()
             }
@@ -346,16 +363,19 @@ struct PlantIDModelStatus: View {
         case .paused: Connectivity.shared.online ? "pause.circle" : StateSymbol.offline
         case .failed: StateSymbol.failed
         case .notInstalled: StateSymbol.get
+        case .unpublished: "clock"
         }
     }
 
     private func headline(_ s: PackState) -> String {
         switch s {
+        case let .downloading(f?): "Getting the identification model · \(StorageText.percent(f))"
         case .downloading: "Getting the identification model…"
         case .paused: "The model download is paused"
         case .failed: "The model download didn’t finish"
         case .installed: "The identification model is on this \(DeviceNoun.current)"
         case .notInstalled: "The identification model isn’t on this \(DeviceNoun.current) yet"
+        case .unpublished: "The identification model isn’t published for this version yet"
         }
     }
 
@@ -365,6 +385,7 @@ struct PlantIDModelStatus: View {
         case .paused: Connectivity.shared.online ? "iOS paused it; it carries on by itself." : "It carries on by itself when there’s reception."
         case let .failed(why): why
         case .installed: ""
+        case .unpublished: "It will download by itself once it’s published."
         case .notInstalled: packs.canFetch
             ? "Identification runs on the \(DeviceNoun.current), so it needs its model once, over Wi-Fi."
             : "This build can’t download it."

@@ -27,6 +27,17 @@ nonisolated enum PackSizes {
         .season2026: 425_931_912,
     ]
 
+    /// The regular files under `url`, summed (nil when it isn't a folder).
+    static func folder(_ url: URL, fileManager: FileManager = .default) -> Int? {
+        guard let e = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return nil }
+        var total = 0
+        for case let file as URL in e {
+            let v = try? file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            if v?.isRegularFile == true { total += v?.fileSize ?? 0 }
+        }
+        return total > 0 ? total : nil
+    }
+
     /// Bytes on the device: the archives' file sizes where they are
     /// readable, else the nominal size.
     static func installed(_ pack: Pack, location: DataLocation, fileManager: FileManager = .default) -> Int {
@@ -47,6 +58,15 @@ extension Pack {
         case .vector, .topo, .relief, .plantid: .maps
         case .aerial, .tasmap: .moreMaps
         default: .seasons
+        }
+    }
+
+    /// Its share of the Storage gauge.
+    nonisolated var gaugeCategory: StorageGauge.Category {
+        switch self {
+        case .vector, .topo, .relief: .maps
+        case .plantid: .plantID
+        default: .moreMaps
         }
     }
 
@@ -84,10 +104,19 @@ extension Pack {
         season?.isIncomplete == true ? "Still being flown — more areas appear over time." : nil
     }
 
-    /// The Storage screen shows plant ID only once it exists (milestone 6).
-    nonisolated func isListed(_ state: PackState) -> Bool {
-        self != .plantid || state != .notInstalled
+}
+
+extension Pack.StorageSection {
+    /// Its packs, in the order the screen lists them (seasons newest first).
+    nonisolated var packs: [Pack] {
+        switch self {
+        case .maps: [.vector, .topo, .relief, .plantid]
+        case .moreMaps: [.aerial, .tasmap]
+        case .seasons: Season.all.reversed().map(\.archive.pack)
+        }
     }
+
+    nonisolated static let all: [Pack.StorageSection] = [.maps, .moreMaps, .seasons]
 }
 
 /// What a pack's row shows and offers.
@@ -114,6 +143,8 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
     case arriving
     /// Nothing can fetch it here (a developer's `-dataDir` folder without it).
     case unavailable
+    /// The App Store doesn't offer it yet (not published for this build).
+    case unpublished
 
     static func of(_ state: PackState, pack: Pack, canFetch: Bool, resolved: Bool = true,
                    update: Double? = nil, online: Bool = true) -> PackRowStatus {
@@ -122,6 +153,7 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
         case let .downloading(f): return .downloading(f)
         case .paused: return .paused(online ? .system : .offline)
         case .failed: return canFetch ? .failed : .unavailable
+        case .unpublished: return .unpublished
         case .notInstalled:
             guard resolved else { return .checking }
             guard canFetch else { return .unavailable }
@@ -142,34 +174,62 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
 
     var isPaused: Bool { if case .paused = self { true } else { false } }
 
-    /// The bar fill: 1 on the device, the fraction while downloading.
-    var fill: Double {
+    /// The row's progress bar: shown ONLY while bytes are arriving (a
+    /// download, or an update of an installed pack) and the fraction is
+    /// known; it goes when they stop. Nothing else on a row is a bar —
+    /// sizes are figures, and the gauge is the one picture of space.
+    var progress: Double? {
         switch self {
-        case .onDevice, .updating: 1
-        case let .downloading(f): f ?? 0
-        default: 0
+        case let .downloading(f): f
+        case let .updating(f): f
+        default: nil
+        }
+    }
+
+    /// The state's glyph in the status line (the app's one icon language,
+    /// `StateSymbol`): a state, never a control — controls sit at the
+    /// row's end.
+    var symbol: String? {
+        switch self {
+        case .onDevice, .updating: StateSymbol.onDevice
+        case .failed: StateSymbol.failed
+        case .paused(.offline): StateSymbol.offline
+        default: nil
         }
     }
 
     /// The row's status line. Figures never break inside ("438 of 706 MB"
-    /// holds together; lines wrap only at " · "); the ring carries the
-    /// percentage, so the line doesn't repeat it.
+    /// holds together; lines wrap only at " · ").
     func text(bytes: Int, device: String) -> String {
         let size = StorageText.size(bytes)
         switch self {
         case .checking: return "Checking…"
         case .onDevice: return "On this \(device) · \(size)"
         case let .updating(f):
-            return "Updating\u{00A0}\(StorageText.percent(f)) · \(size)"
+            return "On this \(device) · updating\u{00A0}\(StorageText.percent(f))"
         case .get: return size
-        case let .downloading(f?): return StorageText.fraction(Int(Double(bytes) * f), of: bytes)
+        case let .downloading(f?):
+            return "Downloading\u{00A0}\(StorageText.percent(f)) · \(StorageText.fraction(Int(Double(bytes) * f), of: bytes))"
         case .downloading(nil): return "Waiting to start · \(size)"
         case .paused(.offline): return "Waiting for a connection · \(size)"
-        case .paused(.system): return "Paused by iOS · resumes on its own · \(size)"
+        case .paused(.system): return "Paused by iOS · \(size)"
         case .failed: return "Didn't finish · \(size)"
         case .arriving: return "Arrives with the app · \(size)"
         case .unavailable: return "Not in the developer data folder"
+        case .unpublished: return "Not published yet · \(size)"
         }
+    }
+}
+
+/// Where Storage opens scrolled to (`AppModel.openStorage(at:)`): a section,
+/// or one pack's row, which is briefly highlighted.
+nonisolated enum StorageTarget {
+    static let core = "core"
+    static let areas = "areas"
+    static func row(_ pack: Pack) -> String { "pack-\(pack.rawValue)" }
+    /// The pack whose row `target` names.
+    static func pack(_ target: String) -> Pack? {
+        target.hasPrefix("pack-") ? Pack(rawValue: String(target.dropFirst(5))) : nil
     }
 }
 
@@ -186,7 +246,13 @@ nonisolated enum StorageText {
 
     /// "62 %" (rounded down: 100 % only when it's all there).
     static func percent(_ fraction: Double) -> String {
-        "\(Int((min(max(fraction, 0), 1) * 100).rounded(.down)))\u{00A0}%"
+        "\(percentValue(fraction))\u{00A0}%"
+    }
+
+    /// Whole percent, rounded down (100 only when it's all there), with a
+    /// hair of slack so 0.83 reads 83, not 82 (0.83 × 100 = 82.999…).
+    static func percentValue(_ fraction: Double) -> Int {
+        Int((min(max(fraction, 0), 1) * 100 + 1e-6).rounded(.down))
     }
 
     /// "6.6 of 30 MB", "1.20 of 1.93 GB": the part in the whole's unit, with
@@ -212,18 +278,27 @@ nonisolated enum StorageText {
 /// by category, then the device's free space — the room it can still grow
 /// into. Everything else on the device stays out of the bar (on a 128 GB
 /// phone it would shrink IzzyMap's categories to slivers); the capacity is
-/// said in words.
+/// said in words. It is the screen's ONE picture of space: four fills, each
+/// with one meaning (`GaugeFill`), and free space the empty remainder.
 nonisolated struct StorageGauge: Equatable, Sendable {
+    /// Where bytes come from. The field guide and detailed areas share one
+    /// segment (both are fetched by the device for a place or a topic).
     nonisolated enum Category: String, CaseIterable, Sendable {
-        case maps, moreMaps, extras, areas
+        case maps, moreMaps, plantID, extras, areas
         var title: String {
             switch self {
             case .maps: "Core maps"
             case .moreMaps: "Extra maps"
+            case .plantID: "Plant identification"
             case .extras: "Field guide"
             case .areas: "Detailed areas"
             }
         }
+
+        /// The segment it is drawn in.
+        var segment: Category { self == .areas ? .extras : self }
+        /// The four segments, in bar order.
+        static let segments: [Category] = [.maps, .moreMaps, .plantID, .extras]
     }
 
     nonisolated struct Segment: Equatable, Sendable, Identifiable {
@@ -233,10 +308,12 @@ nonisolated struct StorageGauge: Equatable, Sendable {
         }
         let kind: Kind
         let bytes: Int64
+        /// The key's words ("Field guide & areas" when both have bytes).
+        let title: String
         var id: Kind { kind }
     }
 
-    /// IzzyMap's categories with any bytes, in `Category` order, then free.
+    /// IzzyMap's categories with any bytes, in `Category.segments` order, then free.
     let segments: [Segment]
     let izzyBytes: Int64
     let freeBytes: Int64?
@@ -247,13 +324,16 @@ nonisolated struct StorageGauge: Equatable, Sendable {
     init(parts: [Category: Int64], capacity: Int64?, free: Int64?) {
         var segments: [Segment] = []
         var izzy: Int64 = 0
-        for category in Category.allCases {
-            let bytes = max(0, parts[category] ?? 0)
+        for segment in Category.segments {
+            let members = Category.allCases.filter { $0.segment == segment && max(0, parts[$0] ?? 0) > 0 }
+            let bytes = members.reduce(Int64(0)) { $0 + max(0, parts[$1] ?? 0) }
             izzy += bytes
-            if bytes > 0 { segments.append(Segment(kind: .izzy(category), bytes: bytes)) }
+            guard bytes > 0 else { continue }
+            let title = members.count > 1 ? "Field guide & areas" : members[0].title
+            segments.append(Segment(kind: .izzy(segment), bytes: bytes, title: title))
         }
         let free = free.map { max(0, $0) }
-        if let free, free > 0 { segments.append(Segment(kind: .free, bytes: free)) }
+        if let free, free > 0 { segments.append(Segment(kind: .free, bytes: free, title: "Free")) }
         self.segments = segments
         izzyBytes = izzy
         freeBytes = free

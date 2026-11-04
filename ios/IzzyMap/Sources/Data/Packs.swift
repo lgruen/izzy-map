@@ -81,6 +81,12 @@ nonisolated enum PlantIDFiles {
     static let credits = "credits.json"
     static let photoCredits = "credits-photos.tsv.gz"
 
+    /// Where build_packs.py stages the pack under a developer's `data/`
+    /// (a DEBUG `-dataDir` run reads the model there).
+    static func staged(in data: URL) -> URL {
+        data.appending(path: "packs/stage-plantid/\(folder)", directoryHint: .isDirectory)
+    }
+
     static let packPaths = [
         "plantid/PlantEncoder-w8.mlmodelc/",
         "plantid/head.bin",
@@ -113,6 +119,10 @@ nonisolated enum PackState: Equatable, Sendable {
     case installed
     /// The last attempt failed (message for the row); a tap retries.
     case failed(String)
+    /// The App Store doesn't offer it (yet): absent from the server's
+    /// manifest, or a fetch answered "no such asset pack". Nothing to tap —
+    /// a core pack downloads by itself once it is published.
+    case unpublished
 
     var isInstalled: Bool { self == .installed }
 }

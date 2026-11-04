@@ -16,6 +16,20 @@ struct DetailedAreasSection: View {
 
     var body: some View {
         Section {
+            // the section's point, first: frame a place on the map (the same
+            // words and glyph as the Layers entry)
+            Button { model.startFraming() } label: {
+                Label("Download an area…", systemImage: "square.dashed")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(DesignColor.ink, in: .capsule)
+                    .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .hoverEffect(.highlight)
+            .padding(.vertical, 4)
+            .accessibilityIdentifier("storage-download-area")
             if let error = store.loadError {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(error).foregroundStyle(DesignColor.secondaryInk)
@@ -39,14 +53,8 @@ struct DetailedAreasSection: View {
                         pause: { Task { await store.pause(area.id) } },
                         delete: { deleting = area })
             }
-            Button { model.startFraming() } label: {
-                Label("Download an area…", systemImage: "square.dashed")
-                    .foregroundStyle(DesignColor.ink)
-                    .frame(minHeight: 44)
-            }
-            .accessibilityIdentifier("storage-download-area")
         } header: {
-            Text("Detailed areas").panelHeader().id("areas")
+            Text("Detailed areas").panelHeader().id(StorageTarget.areas)
         } footer: {
             Text("A place in full detail, to 0.4 m: fetched by this \(DeviceNoun.current) from theLIST for your own use. It draws over the statewide maps. A download carries on while IzzyMap is closed; if the signal goes, Resume picks up where it stopped.")
                 .foregroundStyle(DesignColor.secondaryInk)
@@ -105,11 +113,13 @@ private struct AreaRow: View {
                     .font(.subheadline)
                     .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(AreaText.status(area, status, running: running, device: DeviceNoun.current))
-                    .font(.subheadline).monospacedDigit()
-                    .foregroundStyle(DesignColor.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("area-\(area.id)-status")
+                StatusLine(symbol: status == .complete ? StateSymbol.onDevice : nil,
+                           text: AreaText.status(area, status, running: running, device: DeviceNoun.current),
+                           identifier: "area-\(area.id)-status")
+                if case let .downloading(f) = status {
+                    RowProgress(fraction: f, identifier: "area-\(area.id)-progress")
+                        .padding(.vertical, 2)
+                }
                 ForEach(AreaText.notes(area, status), id: \.self) { note in
                     Text(note)
                         .font(.footnote)
@@ -142,13 +152,12 @@ private struct AreaRow: View {
 
     @ViewBuilder private var control: some View {
         switch status {
-        case let .downloading(f):
-            ring(f, symbol: "stop.fill", action: pause)
+        case .downloading:
+            GetButton(title: "Stop", action: pause)
                 .accessibilityLabel("Stop downloading \(area.name)")
-                .accessibilityValue("\(Int(f * 100)) percent")
                 .accessibilityIdentifier("area-\(area.id)-stop")
         case .waiting:
-            ring(0, symbol: "stop.fill", action: pause)
+            GetButton(title: "Stop", action: pause)
                 .accessibilityLabel("Don't download \(area.name)")
                 .accessibilityIdentifier("area-\(area.id)-stop")
         case .incomplete:
@@ -174,21 +183,6 @@ private struct AreaRow: View {
         .hoverEffect(.highlight)
         .accessibilityLabel("Delete \(area.name)")
         .accessibilityIdentifier("area-\(area.id)-delete")
-    }
-
-    private func ring(_ fraction: Double, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                ProgressRing(fraction: fraction, lineWidth: 2.5)
-                Image(systemName: symbol).font(.system(size: 9, weight: .bold))
-            }
-            .foregroundStyle(DesignColor.ink)
-            .frame(width: 28, height: 28)
-            .frame(width: 44, height: 44)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .hoverEffect(.highlight)
     }
 }
 

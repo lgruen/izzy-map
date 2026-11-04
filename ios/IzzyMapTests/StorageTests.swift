@@ -20,7 +20,10 @@ struct StorageTests {
         #expect(PackRowStatus.of(.paused, pack: .tasmap, canFetch: true, online: false) == .paused(.offline))
         // a new version arriving for an installed pack is an update, not a download
         #expect(PackRowStatus.of(.installed, pack: .topo, canFetch: true, update: 0.4) == .updating(0.4))
-        #expect(!PackRowStatus.updating(0.4).isBusy && PackRowStatus.updating(0.4).fill == 1)
+        #expect(!PackRowStatus.updating(0.4).isBusy && PackRowStatus.updating(0.4).progress == 0.4)
+        // not offered by the App Store: no Get, an honest line
+        #expect(PackRowStatus.of(.unpublished, pack: .plantid, canFetch: true) == .unpublished)
+        #expect(!PackRowStatus.unpublished.offersGet)
         #expect(PackRowStatus.of(.failed("x"), pack: .tasmap, canFetch: true) == .failed)
         // a developer folder can't fetch anything
         #expect(PackRowStatus.of(.notInstalled, pack: .aerial, canFetch: false) == .unavailable)
@@ -34,17 +37,23 @@ struct StorageTests {
         let gb = 1_929_244_001
         #expect(PackRowStatus.onDevice.text(bytes: gb, device: "iPhone") == "On this iPhone · 1.93\u{00A0}GB")
         #expect(PackRowStatus.get.text(bytes: gb, device: "iPhone") == "1.93\u{00A0}GB")
-        // the ring carries the percentage; the figure never breaks inside
+        // the line says what is happening, in words; figures never break inside
         #expect(PackRowStatus.downloading(0.62).text(bytes: gb, device: "iPhone")
-            == "1.20\u{00A0}of\u{00A0}1.93\u{00A0}GB")
+            == "Downloading\u{00A0}62\u{00A0}% · 1.20\u{00A0}of\u{00A0}1.93\u{00A0}GB")
         #expect(PackRowStatus.downloading(nil).text(bytes: gb, device: "iPad").hasPrefix("Waiting"))
-        #expect(PackRowStatus.updating(0.4).text(bytes: gb, device: "iPhone") == "Updating\u{00A0}40\u{00A0}% · 1.93\u{00A0}GB")
+        #expect(PackRowStatus.updating(0.4).text(bytes: gb, device: "iPhone") == "On this iPhone · updating\u{00A0}40\u{00A0}%")
+        #expect(PackRowStatus.unpublished.text(bytes: gb, device: "iPhone").hasPrefix("Not published yet"))
         // the pause says why, never "continues by itself" beside a button
         #expect(PackRowStatus.paused(.offline).text(bytes: gb, device: "iPhone").hasPrefix("Waiting for a connection"))
         #expect(PackRowStatus.paused(.system).text(bytes: gb, device: "iPhone").hasPrefix("Paused by iOS"))
-        #expect(PackRowStatus.downloading(0.5).fill == 0.5)
-        #expect(PackRowStatus.onDevice.fill == 1)
-        #expect(PackRowStatus.get.fill == 0)
+        // a progress bar ONLY while bytes arrive — never a size, never "done"
+        #expect(PackRowStatus.downloading(0.5).progress == 0.5)
+        #expect(PackRowStatus.downloading(nil).progress == nil)
+        #expect(PackRowStatus.onDevice.progress == nil && PackRowStatus.get.progress == nil)
+        #expect(PackRowStatus.paused(.system).progress == nil && PackRowStatus.failed.progress == nil)
+        // the state glyph: the app's icon language, in the line
+        #expect(PackRowStatus.onDevice.symbol == StateSymbol.onDevice && PackRowStatus.failed.symbol == StateSymbol.failed)
+        #expect(PackRowStatus.get.symbol == nil && PackRowStatus.downloading(0.3).symbol == nil)
         #expect(PackRowStatus.get.offersGet && PackRowStatus.failed.offersGet && PackRowStatus.arriving.offersGet)
         #expect(!PackRowStatus.onDevice.offersGet && PackRowStatus.paused(.system).isBusy)
     }
@@ -74,11 +83,36 @@ struct StorageTests {
         #expect(Pack.season2024.storageTitle == "2023–24 photos")
         // only the season still being flown carries the note
         #expect(Pack.allCases.filter { $0.storageNote != nil } == [.season2026])
-        // plant ID is listed once it exists (milestone 6)
-        #expect(!Pack.plantid.isListed(.notInstalled) && Pack.plantid.isListed(.installed))
+    }
+
+    /// Every pack has exactly one row on the screen (plant ID was missing
+    /// until 2026-11-04: it opened Storage and wasn't there).
+    @Test func everyPackIsListedOnce() {
+        let listed = Pack.StorageSection.all.flatMap(\.packs)
+        #expect(listed.count == Pack.allCases.count)
+        #expect(Set(listed) == Set(Pack.allCases))
+        #expect(Pack.StorageSection.maps.packs.contains(.plantid))
+        #expect(Pack.StorageSection.all.allSatisfy { section in section.packs.allSatisfy { $0.storageSection == section } })
+        // seasons newest first
+        #expect(Pack.StorageSection.seasons.packs.first == .season2026)
+        #expect(StorageTarget.pack(StorageTarget.row(.plantid)) == .plantid && StorageTarget.pack(StorageTarget.areas) == nil)
     }
 
     // MARK: Gauge
+
+    /// Four categories, four fills: plant ID its own; field guide and
+    /// detailed areas share one segment, named for what's in it.
+    @Test func gaugeCategoriesFollowThePacks() {
+        #expect(Pack.vector.gaugeCategory == .maps && Pack.relief.gaugeCategory == .maps)
+        #expect(Pack.plantid.gaugeCategory == .plantID)
+        #expect(Pack.tasmap.gaugeCategory == .moreMaps && Pack.season2021.gaugeCategory == .moreMaps)
+        let both = StorageGauge(parts: [.maps: 10, .plantID: 5, .extras: 3, .areas: 2], capacity: nil, free: 100)
+        #expect(both.segments.map(\.kind) == [.izzy(.maps), .izzy(.plantID), .izzy(.extras), .free])
+        #expect(both.segments.map(\.title) == ["Core maps", "Plant identification", "Field guide & areas", "Free"])
+        #expect(both.segments[2].bytes == 5)
+        let areasOnly = StorageGauge(parts: [.areas: 2], capacity: nil, free: nil)
+        #expect(areasOnly.segments.map(\.title) == ["Detailed areas"])
+    }
 
     @Test func gaugeIsIzzyMapThenFree() {
         let gauge = StorageGauge(parts: [.maps: 3_000, .moreMaps: 2_000, .extras: 0], capacity: 100_000, free: 15_000)
@@ -193,6 +227,8 @@ struct StorageTests {
         #expect(fake.states[.aerial] == .notInstalled)
         let mixed = FakePacks(spec: "mixed")
         #expect(mixed.states[.aerial] == .installed && mixed.states[.season2025] == .downloading(0.62))
+        #expect(mixed.states[.plantid] == .downloading(0.83))
+        #expect(FakePacks(spec: "plantid=unpublished").states[.plantid] == .unpublished)
         // an update keeps the pack installed
         #expect(mixed.states[.topo] == .installed && mixed.updates[.topo] == 0.4)
     }
@@ -211,11 +247,27 @@ struct StorageTests {
         // no directory: sizes are the nominal ones, and they reach the gauge
         #expect(model.bytes(.aerial) == PackSizes.nominal[.aerial])
         #expect(model.gauge.segments.first { $0.kind == .izzy(.moreMaps) }?.bytes == Int64(PackSizes.nominal[.aerial]!))
+        #expect(!model.coreAllHere)
         await store.remove(.aerial)
         #expect(model.status(.aerial) == .get)
         // core packs aren't removable
         await store.remove(.vector)
         #expect(model.status(.vector) == .onDevice)
+    }
+
+    /// The core section folds into one row only while all four are simply
+    /// here; plant ID's bytes are its own gauge segment.
+    @Test func coreFoldsOnlyWhenSettled() {
+        let settled = StorageModel(packs: PackStore(fake: FakePacks(spec: "vector,topo,relief,plantid")), trees: nil)
+        settled.refreshPacks()
+        #expect(settled.coreAllHere)
+        #expect(settled.coreBytes == [Pack.vector, .topo, .relief, .plantid].reduce(0) { $0 + PackSizes.nominal[$1]! })
+        #expect(settled.gauge.segments.first { $0.kind == .izzy(.plantID) }?.bytes == Int64(PackSizes.nominal[.plantid]!))
+        let mixed = StorageModel(packs: PackStore(fake: FakePacks(spec: "mixed")), trees: nil)
+        #expect(!mixed.coreAllHere)
+        #expect(mixed.status(.plantid) == .downloading(0.83))
+        // an update unfolds it too
+        #expect(!StorageModel(packs: PackStore(fake: FakePacks(spec: "vector,topo=updating:0.2,relief,plantid")), trees: nil).coreAllHere)
     }
 
     @Test func stopDuringADownloadStaysStopped() async throws {

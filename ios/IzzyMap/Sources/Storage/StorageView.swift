@@ -1,14 +1,15 @@
 import IzzyKit
 import SwiftUI
 
-/// Offline maps and storage (NATIVE_PLAN §4 "Storage", DESIGN.md "Storage",
-/// UX_VISUAL_REVIEW §3.14): what IzzyMap keeps on the device, as pictures
-/// first — one stacked bar of what it uses next to the device's free
-/// space; every pack with its coverage and a size bar on one shared scale
-/// (the paper map visibly the giant); the field-guide extras with an
-/// "x of y" fill. Core packs arrive by themselves; every other pack and
-/// each extra is one tap to get and one to remove. Pushed from Layers (the
-/// sheet's / popover's NavigationStack); Escape closes the whole modal.
+/// Offline maps and storage (NATIVE_PLAN §4 "Storage", DESIGN.md "Storage"),
+/// ordered by what she comes back for: the gauge (the ONE picture of space),
+/// detailed areas (the thing to do once everything else is in), the core
+/// maps and plant ID (folded into one row while all are here), extra maps,
+/// seasons, the field guide. Every row says its STATE in words — "On this
+/// iPhone · 2.04 GB", "Downloading 62 % · …" — and shows a progress bar only
+/// while bytes are arriving; sizes are figures, never bars. Pushed from
+/// Layers (the sheet's / popover's NavigationStack); Escape closes the
+/// whole modal.
 struct StorageView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: AppModel
@@ -21,6 +22,12 @@ struct StorageView: View {
     @State private var spaceRequest: PackSpaceRequest?
     @State private var removal: Removal?
     @State private var footprints = FootprintStore.shared
+    /// The core section unfolded by hand (it unfolds by itself while any
+    /// core pack isn't simply on the device).
+    @State private var coreExpanded = false
+    /// The row `scrollTo` named, ringed for a moment.
+    @State private var highlighted: String?
+    @State private var showsDiagnostics = false
 
     init(model: AppModel, done: (() -> Void)? = nil, scrollTo: String? = nil) {
         self.model = model
@@ -42,8 +49,17 @@ struct StorageView: View {
                     let target = scrollTo
                     #endif
                     guard let target else { return }
+                    let row = StorageTarget.pack(target)
+                    if let row, row.storageSection == .maps { coreExpanded = true }
                     try? await Task.sleep(for: .milliseconds(600))
-                    withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(target, anchor: .top) }
+                    // a row's identity is its ForEach's (the pack's id)
+                    withAnimation(reduceMotion ? nil : .default) {
+                        if let row { proxy.scrollTo(row.id, anchor: .center) } else { proxy.scrollTo(target, anchor: .top) }
+                    }
+                    guard row != nil else { return }
+                    withAnimation(.easeIn(duration: 0.2)) { highlighted = target }
+                    try? await Task.sleep(for: .seconds(1.6))
+                    withAnimation(.easeOut(duration: 0.8)) { highlighted = nil }
                 }
         }
     }
@@ -72,23 +88,20 @@ struct StorageView: View {
         List {
             Section {
                 StorageGaugeView(gauge: storage.gauge)
+                    // hidden: what the system and the app think of each pack
+                    .onLongPressGesture(minimumDuration: 1.2) { showsDiagnostics = true }
             }
             .panelRows()
 
-            Section {
-                ForEach(Pack.allCases.filter { $0.storageSection == .maps && $0.isListed(packs.state($0)) }) { pack in
-                    packRow(pack)
-                }
-            } header: {
-                Text("Core maps").panelHeader()
-            } footer: {
-                Text("These arrive with the app and stay up to date by themselves.")
-                    .foregroundStyle(DesignColor.secondaryInk)
-            }
-            .panelRows()
+            // what she comes back for once the rest is in
+            DetailedAreasSection(model: model)
+                .panelRows()
+
+            coreSection
+                .panelRows()
 
             Section {
-                ForEach([Pack.aerial, .tasmap]) { packRow($0) }
+                ForEach(Pack.StorageSection.moreMaps.packs) { packRow($0) }
             } header: {
                 Text("Extra maps").panelHeader().id("more")
             } footer: {
@@ -98,7 +111,7 @@ struct StorageView: View {
             .panelRows()
 
             Section {
-                ForEach(Season.all.reversed(), id: \.year) { packRow($0.archive.pack) }
+                ForEach(Pack.StorageSection.seasons.packs) { packRow($0) }
                 allSeasonsRow
             } header: {
                 Text("Photos by season").panelHeader().id("seasons")
@@ -119,9 +132,6 @@ struct StorageView: View {
                     .foregroundStyle(DesignColor.secondaryInk)
             }
             .panelRows()
-
-            DetailedAreasSection(model: model)
-                .panelRows()
         }
         .panelListSurface()
         .listSectionSpacing(.compact)
@@ -156,28 +166,65 @@ struct StorageView: View {
         }
         // "pack installed" plays from the map's status slot (MapStatusStack),
         // which is always there — here it would play twice
+        .sheet(isPresented: $showsDiagnostics) {
+            NavigationStack {
+                PackDiagnosticsView(packs: packs)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done", systemImage: "checkmark") { showsDiagnostics = false }
+                        }
+                    }
+            }
+        }
         .accessibilityIdentifier("storage")
     }
 
     // MARK: Packs
 
+    /// The packs that arrive with the app. All here and settled: one row
+    /// ("On this iPhone · 4.46 GB ✓") that unfolds to the four; anything
+    /// arriving, updating or stuck: the four rows, each with its state.
+    private var coreSection: some View {
+        let folds = storage.coreAllHere
+        return Section {
+            if folds {
+                CoreSummaryRow(bytes: storage.coreBytes, expanded: coreExpanded, thumbnail: { thumbnail(.vector) }) {
+                    withAnimation(reduceMotion ? nil : .snappy) { coreExpanded.toggle() }
+                }
+            }
+            if !folds || coreExpanded {
+                ForEach(Pack.StorageSection.maps.packs) { packRow($0) }
+            }
+        } header: {
+            Text("Core maps & plant ID").panelHeader().id(StorageTarget.core)
+        } footer: {
+            Text("These arrive with the app and stay up to date by themselves — plant identification too.")
+                .foregroundStyle(DesignColor.secondaryInk)
+        }
+    }
+
     private func packRow(_ pack: Pack) -> some View {
-        PackRow(pack: pack, status: storage.status(pack), bytes: storage.bytes(pack), scale: storage.largestPack,
-                canRemove: packs.canFetch, thumbnail: { thumbnail(pack) },
-                get: { spaceRequest = packs.get([pack], title: pack.storageTitle) },
-                resume: { packs.resume(pack) },
-                remove: { removal = storage.status(pack).isBusy ? .stop(pack) : .pack(pack) })
+        let id = StorageTarget.row(pack)
+        return PackRow(pack: pack, status: storage.status(pack), bytes: storage.bytes(pack),
+                       canRemove: packs.canFetch, thumbnail: { thumbnail(pack) },
+                       get: { spaceRequest = packs.get([pack], title: pack.storageTitle) },
+                       resume: { packs.resume(pack) },
+                       remove: { removal = storage.status(pack).isBusy ? .stop(pack) : .pack(pack) })
+            .background {
+                Rectangle().fill(DesignColor.ink.opacity(highlighted == id ? 0.1 : 0))
+                    .padding(.horizontal, -20).padding(.vertical, -8)
+            }
     }
 
     @ViewBuilder private func thumbnail(_ pack: Pack) -> some View {
-        let status = storage.status(pack)
         if pack.storageSection != .seasons {
             // statewide: the Layers tile's picture (coverage would be all ink)
             LayerThumb(model: model, pack: pack)
         } else {
-            let progress: Double? = if case let .downloading(f) = status { f ?? 0 } else { nil }
+            // ink = on the device, grey = not (yet); the row's bar is the
+            // one progress indicator
             CoverageThumbnail(outline: footprints.outline, footprint: footprints.footprint(pack),
-                              installed: status == .onDevice, progress: progress)
+                              installed: packs.state(pack).isInstalled)
         }
     }
 
@@ -274,10 +321,13 @@ enum StorageMetrics {
 
 // MARK: - Gauge
 
-/// One bar: IzzyMap's categories in ink tones, then free space empty —
-/// then the key under it.
+/// One bar: IzzyMap's four categories, each in its own fill, then free
+/// space empty — then the key under it, its swatches the same fills.
 struct StorageGaugeView: View {
     let gauge: StorageGauge
+    /// A segment is at least this wide, so its fill can be told apart (on a
+    /// 512 GB phone IzzyMap is a sliver; the figures say the exact sizes).
+    static let minimumSegment: CGFloat = 16
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -294,25 +344,29 @@ struct StorageGaugeView: View {
                 }
             }
             GeometryReader { proxy in
-                let gap: CGFloat = 1.5
+                let gap: CGFloat = 2
                 let n = gauge.segments.count
-                let widths = gauge.widths(in: max(0, proxy.size.width - gap * CGFloat(max(0, n - 1))))
+                let widths = gauge.widths(in: max(0, proxy.size.width - gap * CGFloat(max(0, n - 1))),
+                                          minimum: Self.minimumSegment)
                 HStack(spacing: gap) {
                     ForEach(Array(gauge.segments.enumerated()), id: \.element.id) { i, segment in
-                        GaugeSwatch(kind: segment.kind)
+                        GaugeFill(kind: segment.kind)
                             .frame(width: widths[i])
                     }
                 }
             }
-            .frame(height: 16)
+            .frame(height: 18)
             .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .leading)], alignment: .leading, spacing: 6) {
+            .accessibilityHidden(true)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 12, alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(gauge.segments) { segment in
                     HStack(spacing: 6) {
-                        GaugeSwatch(kind: segment.kind)
-                            .frame(width: 12, height: 12)
-                            .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
-                        Text(segment.kind.title)
+                        GaugeFill(kind: segment.kind)
+                            .frame(width: 14, height: 14)
+                            .overlay {
+                                if segment.kind == .free { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
+                            }
+                        Text(segment.title)
                             .foregroundStyle(DesignColor.ink)
                         Text(StorageText.size(Int(segment.bytes)))
                             .monospacedDigit()
@@ -329,41 +383,150 @@ struct StorageGaugeView: View {
     }
 }
 
-extension StorageGauge.Segment.Kind {
-    var title: String {
-        switch self {
-        case let .izzy(c): c.title
-        case .free: "Free"
-        }
-    }
-}
-
-/// A segment's fill: ink tones for IzzyMap (darkest = the core maps),
-/// nothing for free space.
-private struct GaugeSwatch: View {
+/// A gauge segment's fill — the same view in the bar and in the key, so a
+/// swatch IS its segment. Four fills, four meanings, told apart by FORM as
+/// well as tone (solid, diagonal hatch, dots, horizontal rules — all in ink,
+/// so they hold in light and dark); free space is the empty remainder. No
+/// grey anywhere: on this screen nothing else may look like a category.
+struct GaugeFill: View {
     let kind: StorageGauge.Segment.Kind
 
     var body: some View {
         switch kind {
-        case let .izzy(category):
-            Rectangle().fill(DesignColor.ink.opacity(Self.ink[category] ?? 1))
         case .free:
             Rectangle().fill(Color.clear)
+        case let .izzy(category):
+            Canvas { ctx, size in
+                let r = CGRect(origin: .zero, size: size)
+                switch category {
+                case .maps:
+                    ctx.fill(Path(r), with: .foreground)
+                case .moreMaps:
+                    var p = Path()
+                    let pitch: CGFloat = 4
+                    var x = -size.height
+                    while x < size.width {
+                        p.move(to: CGPoint(x: x, y: size.height))
+                        p.addLine(to: CGPoint(x: x + size.height, y: 0))
+                        x += pitch
+                    }
+                    ctx.stroke(p, with: .foreground, lineWidth: 1.4)
+                case .plantID:
+                    var p = Path()
+                    let pitch: CGFloat = 3.5
+                    var row = 0
+                    var y = pitch / 2
+                    while y < size.height {
+                        var x = (row.isMultiple(of: 2) ? pitch / 2 : pitch)
+                        while x < size.width {
+                            p.addEllipse(in: CGRect(x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2))
+                            x += pitch
+                        }
+                        y += pitch
+                        row += 1
+                    }
+                    ctx.fill(p, with: .foreground)
+                case .extras, .areas:
+                    var p = Path()
+                    var y: CGFloat = 2
+                    while y < size.height {
+                        p.move(to: CGPoint(x: 0, y: y))
+                        p.addLine(to: CGPoint(x: size.width, y: y))
+                        y += 4
+                    }
+                    ctx.stroke(p, with: .foreground, lineWidth: 1.2)
+                }
+                // every filled block keeps an ink edge, so a sparse fill
+                // still reads as one block beside the empty free space
+                ctx.stroke(Path(r.insetBy(dx: 0.5, dy: 0.5)), with: .foreground, lineWidth: 1)
+            }
+            .foregroundStyle(DesignColor.ink)
+            .clipped()
         }
     }
-
-    static let ink: [StorageGauge.Category: Double] = [.maps: 1, .moreMaps: 0.6, .extras: 0.36, .areas: 0.2]
 }
 
 // MARK: - Rows
 
-/// One pack: its picture, name, status, a size bar on the shared scale,
-/// and one control (Get / progress / remove).
+/// A row's state in words, with the state's glyph in front when it has one
+/// (on the device, didn't finish, needs reception) — a state, not a button.
+struct StatusLine: View {
+    let symbol: String?
+    let text: String
+    let identifier: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+            }
+            Text(text)
+                .monospacedDigit()
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier)
+        }
+        .font(.subheadline)
+        .foregroundStyle(DesignColor.secondaryInk)
+    }
+}
+
+/// A download's progress: shown only while bytes arrive, gone when done.
+struct RowProgress: View {
+    let fraction: Double
+    let identifier: String
+
+    var body: some View {
+        ProgressView(value: min(max(fraction, 0), 1))
+            .tint(DesignColor.ink)
+            .accessibilityIdentifier(identifier)
+    }
+}
+
+/// The core packs folded into one line while all are here: tap to see the four.
+private struct CoreSummaryRow<Thumb: View>: View {
+    let bytes: Int
+    let expanded: Bool
+    @ViewBuilder let thumbnail: () -> Thumb
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 12) {
+                thumbnail()
+                    .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Vegetation, topo, relief, plant ID")
+                        .foregroundStyle(DesignColor.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    StatusLine(symbol: StateSymbol.onDevice, text: "On this \(DeviceNoun.current) · \(StorageText.size(bytes))",
+                               identifier: "core-summary-status")
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(DesignColor.secondaryInk)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+                    .frame(width: 28, height: 44)
+            }
+            .padding(.vertical, 4)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.highlight)
+        .accessibilityLabel("Core maps and plant identification, on this \(DeviceNoun.current), \(StorageText.size(bytes))")
+        .accessibilityHint(expanded ? "Hides the four packs" : "Shows the four packs")
+        .accessibilityIdentifier("core-summary")
+    }
+}
+
+/// One pack: its picture, name, one status line, its one control (if it
+/// has one), and a progress bar while it arrives.
 private struct PackRow<Thumb: View>: View {
     let pack: Pack
     let status: PackRowStatus
     let bytes: Int
-    let scale: Int
     let canRemove: Bool
     @ViewBuilder let thumbnail: () -> Thumb
     let get: () -> Void
@@ -373,38 +536,42 @@ private struct PackRow<Thumb: View>: View {
     /// A download under way that Stop can end (swipe, VoiceOver action).
     private var canStop: Bool { status.isBusy && pack.isRemovable && canRemove }
 
+    private var note: String? {
+        if status == .unpublished {
+            return pack.isRemovable ? "You can get it once it's published." : "It downloads by itself once it's published."
+        }
+        return pack.storageNote
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             thumbnail()
                 .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(pack.storageTitle)
                             .foregroundStyle(DesignColor.ink)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(status.text(bytes: bytes, device: DeviceNoun.current))
-                            .font(.subheadline).monospacedDigit()
-                            .foregroundStyle(DesignColor.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("pack-\(pack.rawValue)-status")
+                        StatusLine(symbol: status.symbol, text: status.text(bytes: bytes, device: DeviceNoun.current),
+                                   identifier: "pack-\(pack.rawValue)-status")
                     }
                     Spacer(minLength: 0)
                     PackControl(pack: pack, status: status, canRemove: canRemove, get: get, resume: resume, remove: remove)
                 }
-                // under the text AND the control: every row's track is the
-                // same width, so the scale is one scale down the screen
-                SizeBar(extent: Double(bytes) / Double(max(1, scale)), fill: status.fill)
-                if let note = pack.storageNote {
+                if let fraction = status.progress {
+                    RowProgress(fraction: fraction, identifier: "pack-\(pack.rawValue)-progress")
+                }
+                if let note {
                     Text(note)
                         .font(.footnote)
                         .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 2)
                 }
             }
         }
         .padding(.vertical, 4)
+        .frame(minHeight: StorageMetrics.thumbHeight + 8)
         .accessibilityElement(children: .contain)
         .swipeActions(edge: .trailing) {
             if canStop {
@@ -417,7 +584,8 @@ private struct PackRow<Thumb: View>: View {
     }
 }
 
-/// The row's single control.
+/// The row's single control — only real controls live here (Get, Retry,
+/// Stop, Resume, remove); states are words and glyphs in the status line.
 private struct PackControl: View {
     let pack: Pack
     let status: PackRowStatus
@@ -437,27 +605,15 @@ private struct PackControl: View {
             GetButton(title: "Retry", action: get)
                 .accessibilityLabel("Try \(pack.storageTitle) again")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-get")
-        case let .downloading(f):
-            ringButton(fraction: f, symbol: pack.isRemovable ? "stop.fill" : nil, action: remove)
-                .disabled(!pack.isRemovable)
-                .accessibilityLabel(pack.isRemovable ? "Stop downloading \(pack.storageTitle)" : "Downloading")
-                .accessibilityValue(f.map { "\(Int($0 * 100)) percent" } ?? "")
-                .accessibilityIdentifier("pack-\(pack.rawValue)-progress")
+        case .downloading where pack.isRemovable && canRemove:
+            GetButton(title: "Stop", action: remove)
+                .accessibilityLabel("Stop downloading \(pack.storageTitle)")
+                .accessibilityIdentifier("pack-\(pack.rawValue)-stop")
         case .paused:
-            // a still ring, and the action it offers: carry on (Stop is
-            // the row's swipe / VoiceOver action)
-            ringButton(fraction: 0, symbol: "arrow.down", action: resume)
+            // Stop stays the row's swipe / VoiceOver action
+            GetButton(title: "Resume", action: resume)
                 .accessibilityLabel("Resume \(pack.storageTitle)")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-resume")
-        case let .updating(f):
-            // the installed version keeps serving: nothing to stop
-            ProgressRing(fraction: f, lineWidth: 2.5)
-                .frame(width: 28, height: 28)
-                .frame(width: 44, height: 44)
-                .accessibilityElement()
-                .accessibilityLabel("Updating")
-                .accessibilityValue("\(Int(f * 100)) percent")
-                .accessibilityIdentifier("pack-\(pack.rawValue)-updating")
         case .onDevice where pack.isRemovable && canRemove:
             Button(action: remove) {
                 Image(systemName: "trash")
@@ -470,34 +626,9 @@ private struct PackControl: View {
             .hoverEffect(.highlight)
             .accessibilityLabel("Remove \(pack.storageTitle)")
             .accessibilityIdentifier("pack-\(pack.rawValue)-remove")
-        case .onDevice:
-            Image(systemName: "checkmark.circle")
-                .foregroundStyle(DesignColor.secondaryInk)
-                .frame(width: 44, height: 44)
-                .accessibilityLabel("On this \(DeviceNoun.current)")
-        case .checking:
-            ProgressView().frame(width: 44, height: 44)
-        case .unavailable:
+        case .checking, .downloading, .updating, .onDevice, .unavailable, .unpublished:
             EmptyView()
         }
-    }
-
-    /// Progress ring with the tap's glyph in it.
-    private func ringButton(fraction: Double?, symbol: String?, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                ProgressRing(fraction: fraction, lineWidth: 2.5)
-                if let symbol {
-                    Image(systemName: symbol).font(.system(size: 9, weight: .bold))
-                }
-            }
-            .foregroundStyle(DesignColor.ink)
-            .frame(width: 28, height: 28)
-            .frame(width: 44, height: 44)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .hoverEffect(.highlight)
     }
 }
 
@@ -522,32 +653,6 @@ struct GetButton: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.highlight)
-    }
-}
-
-/// A size on ONE shared scale, visible on every row: a faint full-width
-/// track is the largest pack (the paper map, 3.24 GB); the item's own
-/// length on it is grey, and the part on the device is ink. Tiny items
-/// stay tiny — that's the truth of 30 MB beside 3 GB.
-struct SizeBar: View {
-    /// The item's length as a share of the track (the largest item = 1).
-    let extent: Double
-    /// How much of the item is on the device.
-    let fill: Double
-
-    var body: some View {
-        GeometryReader { proxy in
-            let length = max(2, proxy.size.width * min(1, max(0, extent)))
-            ZStack(alignment: .leading) {
-                Rectangle().fill(DesignColor.ink.opacity(0.08))
-                Rectangle().fill(DesignColor.ink.opacity(0.28))
-                    .frame(width: length)
-                Rectangle().fill(DesignColor.ink)
-                    .frame(width: length * min(1, max(0, fill)))
-            }
-        }
-        .frame(height: 4)
-        .accessibilityHidden(true)
     }
 }
 
@@ -655,8 +760,8 @@ extension ExtraKind {
     }
 }
 
-/// One extra: what it is, how much of it is here (a fill bar of its own
-/// total), and one tap to get, stop, resume or delete.
+/// One extra: what it is, its state in words (a progress bar only while a
+/// batch runs), and one tap to get, stop, resume or delete.
 private struct ExtraRow: View {
     let kind: ExtraKind
     let storage: StorageModel
@@ -682,19 +787,15 @@ private struct ExtraRow: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(kind.storageTitle).foregroundStyle(DesignColor.ink)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(statusText)
-                            .font(.subheadline).monospacedDigit()
-                            .foregroundStyle(DesignColor.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("extra-\(kind.rawValue)-status")
+                        StatusLine(symbol: allHere ? StateSymbol.onDevice : nil, text: statusText,
+                                   identifier: "extra-\(kind.rawValue)-status")
                     }
                     Spacer(minLength: 0)
                     control
                 }
-                if let batch, batch.totalBytes > 0 {
-                    // the packs' scale: 30 MB beside 3.24 GB is a sliver
-                    SizeBar(extent: Double(batch.totalBytes) / Double(max(1, storage.largestPack)),
-                            fill: Double(batch.bytesPresent) / Double(batch.totalBytes))
+                if isRunning, let batch, batch.totalBytes > 0 {
+                    RowProgress(fraction: Double(batch.bytesPresent) / Double(batch.totalBytes),
+                                identifier: "extra-\(kind.rawValue)-progress")
                 }
                 ForEach(notes, id: \.self) { note in
                     Text(note)
@@ -708,11 +809,17 @@ private struct ExtraRow: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var allHere: Bool {
+        guard let batch, !items.isEmpty, !isRunning else { return false }
+        return batch.done > 0 && batch.todo.isEmpty
+    }
+
     private var statusText: String {
         guard let batch, !items.isEmpty else { return "Loading…" }
         let total = StorageText.size(batch.totalBytes)
         if isRunning {
-            return "\(kind.noun.capitalized) \(min(batch.done + 1, items.count).formatted()) of \(items.count.formatted()) · \(StorageText.fraction(batch.bytesPresent, of: batch.totalBytes))"
+            let f = Double(batch.bytesPresent) / Double(max(1, batch.totalBytes))
+            return "Downloading\u{00A0}\(StorageText.percent(f)) · \(StorageText.fraction(batch.bytesPresent, of: batch.totalBytes))"
         }
         if case let .stopped(stop) = batch.phase, stop != .cancelled { return batch.statusText }
         if batch.done == 0 { return "\(kind.count(items.count)) · \(total)" }
@@ -731,18 +838,7 @@ private struct ExtraRow: View {
     @ViewBuilder private var control: some View {
         if let batch, !items.isEmpty {
             if isRunning {
-                Button { storage.extras.cancel(kind) } label: {
-                    ZStack {
-                        ProgressRing(fraction: Double(batch.done) / Double(max(1, items.count)), lineWidth: 2.5)
-                        Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold))
-                    }
-                    .foregroundStyle(DesignColor.ink)
-                    .frame(width: 28, height: 28)
-                    .frame(width: 44, height: 44)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .hoverEffect(.highlight)
+                GetButton(title: "Stop") { storage.extras.cancel(kind) }
                 .accessibilityLabel("Stop getting \(kind.storageTitle.lowercased())")
                 .accessibilityIdentifier("extra-\(kind.rawValue)-stop")
             } else {

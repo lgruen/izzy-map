@@ -68,6 +68,14 @@ final class PackStore {
     @ObservationIgnored private var stopped: Set<Pack> = []
     @ObservationIgnored private var statusTask: Task<Void, Never>?
     @ObservationIgnored private var manifest: [Pack: AssetPack] = [:]
+    /// The server's manifest was read (`manifest` is then the whole list).
+    private(set) var manifestLoaded = false
+    /// Why the manifest couldn't be read (Diagnostics).
+    private(set) var manifestError: String?
+    /// Each pack's recent fetch errors, raw (Diagnostics).
+    private(set) var lastErrors: [Pack: [String]] = [:]
+    /// Catalogue refreshes this launch (Diagnostics).
+    private(set) var catalogueLog: [String] = []
     /// Set at launch when the process can't use Background Assets (no app
     /// group in its signature): no packs, and the manager is never touched.
     private(set) var backgroundAssetsUnavailable = false
@@ -111,13 +119,13 @@ final class PackStore {
             // (exercises the style and thumbnail hooks without Background Assets)
             let delay = defaults.double(forKey: "dataDirArrivesAfter")
             guard delay > 0 else {
-                return PackStore(mode: .debugDirectory(dir), location: location, states: states(for: location))
+                return PackStore(mode: .debugDirectory(dir), location: location, states: debugStates(location, dir: dir))
             }
             let empty = DataLocation(origin: .debugDirectory(dir), archives: [:])
             let store = PackStore(mode: .debugDirectory(dir), location: empty, states: states(for: empty))
             Task { [weak store] in
                 try? await Task.sleep(for: .seconds(delay))
-                store?.states = states(for: location)
+                store?.states = debugStates(location, dir: dir)
                 store?.publish(location)
             }
             return store
@@ -149,6 +157,13 @@ final class PackStore {
     }
 
     func state(_ pack: Pack) -> PackState { states[pack] ?? .notInstalled }
+
+    /// The server's version of each pack it offers (Diagnostics).
+    var manifestVersions: [Pack: Int] { manifest.mapValues(\.version) }
+
+    /// Whether this store talks to Background Assets (Diagnostics may then
+    /// ask the system about each pack).
+    var usesBackgroundAssets: Bool { managesPacks }
 
     /// Whether `fetch`/`remove` do anything here (Background Assets, or the
     /// DEBUG fake). A developer's `-dataDir` folder is read as it is.
@@ -218,8 +233,19 @@ final class PackStore {
             // (it initialises the manager off the main thread)
             while self?.isResolved == false { try? await Task.sleep(for: .milliseconds(50)) }
             do {
-                guard let assetPack = try await self?.assetPack(pack) else { return }
-                try await Self.ensureLocalAvailability(of: assetPack)
+                do {
+                    try await self?.fetchOnce(pack)
+                } catch where Self.isNotFound(error) {
+                    // "no such pack": the device's catalogue may predate the
+                    // upload. Ask the server once (`checkForUpdates`, the
+                    // documented way to get the latest asset-pack
+                    // information unconditionally), then try again.
+                    guard let self, !Task.isCancelled, self.fetchTokens[pack] == token else { return }
+                    self.noteError(pack, error, stage: "first try")
+                    await self.refreshCatalogue(reason: "\(pack.rawValue) not found")
+                    guard !Task.isCancelled, self.fetchTokens[pack] == token else { return }
+                    try await self.fetchOnce(pack)
+                }
                 Self.logger.info("\(pack.rawValue, privacy: .public): available locally")
                 guard !Task.isCancelled, let self, self.fetchTokens[pack] == token else { return }
                 await self.refresh()
@@ -233,7 +259,8 @@ final class PackStore {
                 // stopped or superseded: whoever did that owns the state now
                 guard !Task.isCancelled, let self, self.fetchTokens[pack] == token else { return }
                 Self.logger.error("\(pack.rawValue, privacy: .public): fetch failed: \(String(describing: error), privacy: .public)")
-                self.states[pack] = .failed(error.localizedDescription)
+                self.noteError(pack, error, stage: "fetch")
+                self.states[pack] = Self.isNotFound(error) ? .unpublished : .failed(error.localizedDescription)
             }
             guard let self, self.fetchTokens[pack] == token else { return }
             self.fetches[pack] = nil
@@ -241,7 +268,52 @@ final class PackStore {
         }
     }
 
+    /// One attempt: the pack from the catalogue, then the system's download.
+    private func fetchOnce(_ pack: Pack) async throws {
+        let assetPack: AssetPack
+        do {
+            assetPack = try await self.assetPack(pack)
+        } catch {
+            lastErrors[pack, default: []].append("catalogue lookup: \(Self.describe(error))")
+            throw error
+        }
+        try await Self.ensureLocalAvailability(of: assetPack)
+    }
+
+    /// The server's latest asset-pack information (`checkForUpdates`: it
+    /// also starts updates and drops packs the server removed — the system
+    /// does both by itself periodically anyway), then the manifest again.
+    private func refreshCatalogue(reason: String) async {
+        do {
+            let (updating, removed) = try await AssetPackManager.shared.checkForUpdates()
+            catalogueLog.append("\(Date.now.formatted(date: .omitted, time: .standard)) checkForUpdates (\(reason)): updating \(updating.sorted()), removed \(removed.sorted())")
+        } catch {
+            catalogueLog.append("\(Date.now.formatted(date: .omitted, time: .standard)) checkForUpdates (\(reason)) failed: \(Self.describe(error))")
+        }
+        manifest = [:]
+        await loadManifest()
+    }
+
+    private func noteError(_ pack: Pack, _ error: any Error, stage: String) {
+        lastErrors[pack, default: []].append("\(stage): \(Self.describe(error))")
+        if lastErrors[pack]!.count > 6 { lastErrors[pack]!.removeFirst() }
+    }
+
+    /// "BAManagedErrorDomain 0: No asset pack …" (Diagnostics).
+    nonisolated static func describe(_ error: any Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain) \(ns.code): \(ns.localizedDescription) [\(String(describing: error))]"
+    }
+
     nonisolated static let unreadable = "The download finished, but its files couldn't be opened."
+
+    /// "No such asset pack" from Background Assets (the Swift error, or the
+    /// bridged `BAManagedErrorCodeAssetPackNotFound`, code 0).
+    nonisolated static func isNotFound(_ error: any Error) -> Bool {
+        if let managed = error as? ManagedBackgroundAssetsError, case .assetPackNotFound = managed { return true }
+        let ns = error as NSError
+        return ns.domain.contains("BAManaged") && ns.code == 0
+    }
 
     /// Removes an on-demand pack. Its archives leave the style FIRST, so
     /// MapLibre and the season probes let go of the files, then the system
@@ -291,6 +363,11 @@ final class PackStore {
             #endif
             await self?.loadManifest()
             guard let self else { return }
+            // a pack we expect but the catalogue doesn't list: the device's
+            // copy may predate an upload — ask the server once
+            if self.manifestLoaded, let unknown = Pack.allCases.first(where: { self.manifest[$0] == nil }) {
+                await self.refreshCatalogue(reason: "launch: \(unknown.rawValue) not in the catalogue")
+            }
             // Core packs are the system's job, but "network dropouts or other
             // uncommon issues can prevent the system from downloading [even
             // an essential pack] until you call ensureLocalAvailability"
@@ -331,7 +408,8 @@ final class PackStore {
             }
         case let .failed(assetPack, error):
             Self.logger.error("\(assetPack.id, privacy: .public): download failed: \(String(describing: error), privacy: .public)")
-            set(assetPack, .failed(error.localizedDescription))
+            if let pack = Pack(rawValue: assetPack.id) { noteError(pack, error, stage: "status stream") }
+            set(assetPack, Self.isNotFound(error) ? .unpublished : .failed(error.localizedDescription))
         @unknown default:
             await refresh()
         }
@@ -363,17 +441,30 @@ final class PackStore {
 
     /// Re-reads which packs are on the device (off the main thread).
     private func refresh() async {
-        let (location, installed, plantID) = await Self.resolveInstalledOffMain()
-        plantIDDirectory = plantID
+        let found = await Self.resolveInstalledOffMain()
+        plantIDDirectory = found.plantID
         for pack in Pack.allCases {
-            if installed.contains(pack) {
+            if found.installed.contains(pack) {
                 states[pack] = .installed
+            } else if found.systemLocal.contains(pack) {
+                // the system has it, but its files don't resolve: say so (a
+                // Retry; Diagnostics shows each path), never "not here · Get"
+                if fetchTokens[pack] == nil, !stopped.contains(pack) { states[pack] = .failed(Self.unreadable) }
+                updates[pack] = nil
             } else if states[pack] == .installed {
                 states[pack] = .notInstalled
                 updates[pack] = nil
             }
         }
-        publish(location)
+        publish(found.location)
+        // a download the system runs by itself (a prefetch pack after the
+        // install) shows as one even before its first status event
+        if #available(iOS 26.4, *) {
+            for pack in Pack.allCases where states[pack] == .notInstalled && !stopped.contains(pack) {
+                let status = await AssetPackManager.shared.localStatus(ofAssetPackWithID: pack.rawValue)
+                if status.contains(.downloading), states[pack] == .notInstalled { states[pack] = .downloading(nil) }
+            }
+        }
     }
 
     private func loadManifest() async {
@@ -392,9 +483,25 @@ final class PackStore {
                 manifest[pack] = assetPack
                 downloadSizes[pack] = assetPack.downloadSize
             }
+            manifestLoaded = true
+            manifestError = nil
             Self.logger.info("manifest: \(packs.map { "\($0.id) v\($0.version) \($0.downloadSize)" }.sorted(), privacy: .public)")
+            // what the server doesn't offer can't arrive: an honest state,
+            // not "arriving" for ever or a Get that can't work
+            for pack in Pack.allCases {
+                switch (manifest[pack] != nil, states[pack] ?? .notInstalled) {
+                case (false, .notInstalled), (false, .failed):
+                    Self.logger.notice("\(pack.rawValue, privacy: .public): not in the server's manifest")
+                    states[pack] = .unpublished
+                case (true, .unpublished):
+                    // published since: one tap (or the launch fetch) gets it
+                    states[pack] = .notInstalled
+                default: break
+                }
+            }
         } catch {
             // offline, or no packs uploaded yet: sizes stay unknown
+            manifestError = String(describing: error)
             Self.logger.notice("manifest unavailable: \(String(describing: error), privacy: .public)")
         }
     }
@@ -425,7 +532,17 @@ final class PackStore {
 
     // MARK: Resolving files
 
-    @concurrent nonisolated private static func resolveInstalledOffMain() async -> (DataLocation, Set<Pack>, URL?) {
+    /// What `resolveInstalled` found.
+    nonisolated struct Resolution: Sendable {
+        var location: DataLocation
+        /// On the device with every file readable.
+        var installed: Set<Pack>
+        /// The system says it's on the device (`assetPackIsAvailableLocally`).
+        var systemLocal: Set<Pack>
+        var plantID: URL?
+    }
+
+    @concurrent nonisolated private static func resolveInstalledOffMain() async -> Resolution {
         resolveInstalled()
     }
 
@@ -442,14 +559,16 @@ final class PackStore {
     /// files itself (MapLibre's `pmtiles://file://`); its URL must not be
     /// persisted beyond this process. A pack counts as installed only when
     /// every one of its archives is readable.
-    nonisolated private static func resolveInstalled(fileManager: FileManager = .default) -> (DataLocation, Set<Pack>, URL?) {
+    nonisolated private static func resolveInstalled(fileManager: FileManager = .default) -> Resolution {
         let manager = AssetPackManager.shared
         var archives: [Archive: URL] = [:]
         var installed: Set<Pack> = []
+        var systemLocal: Set<Pack> = []
         var plantID: URL?
         for pack in Pack.allCases {
             if #available(iOS 26.4, *) {
                 guard manager.assetPackIsAvailableLocally(withID: pack.rawValue) else { continue }
+                systemLocal.insert(pack)
             }
             var found: [Archive: URL] = [:]
             for archive in pack.archives {
@@ -467,7 +586,8 @@ final class PackStore {
             installed.insert(pack)
             if pack == .plantid { plantID = folder }
         }
-        return (DataLocation(origin: .assetPacks, archives: archives), installed, plantID)
+        return Resolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: installed,
+                          systemLocal: systemLocal, plantID: plantID)
     }
 
     /// The one folder holding all of a pack's `otherFiles`, when every one
@@ -509,6 +629,17 @@ final class PackStore {
         return folder
     }
 
+    #if DEBUG
+    /// A developer's `data/` folder: its archives, and plant ID as
+    /// build_packs.py staged it (`PlantIDSession.source` reads it there).
+    private static func debugStates(_ location: DataLocation, dir: URL) -> [Pack: PackState] {
+        var states = states(for: location)
+        let head = PlantIDFiles.staged(in: dir).appending(path: PlantIDFiles.head)
+        if FileManager.default.fileExists(atPath: head.path(percentEncoded: false)) { states[.plantid] = .installed }
+        return states
+    }
+    #endif
+
     private static func states(for location: DataLocation) -> [Pack: PackState] {
         Dictionary(uniqueKeysWithValues: Pack.allCases.map { pack in
             let have = !pack.archives.isEmpty && pack.archives.allSatisfy { location.url(for: $0) != nil }
@@ -524,12 +655,15 @@ final class PackStore {
 /// has no packs in tests or a plain simulator run). Launch argument
 /// `-fakePacks <spec>`: comma-separated `pack[=state]`, state one of
 /// `installed` (the default), `downloading:<0…1>`, `paused`, `failed`,
-/// `updating:<0…1>` (installed, a new version arriving); every other pack
-/// is not installed. `mixed` is a preset for screenshots.
+/// `unpublished`, `updating:<0…1>` (installed, a new version arriving);
+/// every other pack is not installed. Presets for screenshots: `mixed`
+/// (core packs arriving/updating — plant ID at 83 %), `settled` (every core
+/// pack here: the folded summary row; extras in their other states).
 /// A fetch "downloads" over `-fakePackSeconds` (default 4 s).
 nonisolated struct FakePacks: Sendable {
     static let key = "fakePacks"
-    static let mixed = "vector,topo=updating:0.4,relief,aerial,season-2023,season-2024,season-2025=downloading:0.62,season-2026=paused"
+    static let mixed = "vector,topo=updating:0.4,relief,plantid=downloading:0.83,aerial,season-2023,season-2024,season-2025=downloading:0.62,season-2026=paused"
+    static let settled = "vector,topo,relief,plantid,aerial=failed,tasmap=downloading:0.41,season-2024,season-2025=paused"
 
     var states: [Pack: PackState]
     var updates: [Pack: Double] = [:]
@@ -537,7 +671,7 @@ nonisolated struct FakePacks: Sendable {
     var seconds: Double
 
     init(spec: String, directory: URL? = nil, seconds: Double = 4) {
-        let spec = spec == "mixed" ? Self.mixed : spec
+        let spec = spec == "mixed" ? Self.mixed : spec == "settled" ? Self.settled : spec
         var states = Dictionary(uniqueKeysWithValues: Pack.allCases.map { ($0, PackState.notInstalled) })
         var updates: [Pack: Double] = [:]
         for part in spec.split(separator: ",") {
@@ -546,6 +680,7 @@ nonisolated struct FakePacks: Sendable {
             let value = pair.count > 1 ? pair[1] : "installed"
             switch value {
             case "paused": states[pack] = .paused
+            case "unpublished": states[pack] = .unpublished
             case "failed": states[pack] = .failed("The download didn't finish.")
             case let v where v.hasPrefix("updating"):
                 states[pack] = .installed

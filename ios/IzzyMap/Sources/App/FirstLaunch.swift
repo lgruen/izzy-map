@@ -11,9 +11,14 @@ import SwiftUI
 /// drive it.
 nonisolated struct CoreArrival: Equatable, Sendable {
     nonisolated enum Phase: Equatable, Sendable {
-        /// Downloading: the share of the core bytes on the device (installed
-        /// packs count whole).
-        case arriving(Double)
+        /// Downloading: the share of the bytes of the packs that ARE
+        /// downloading and report progress (nil until one does). Packs on
+        /// the device, waiting, failed or unpublished never fold in — on
+        /// 2026-11-04 "Plant ID arriving · 83 %" was the maps already here
+        /// over maps + a model that wasn't downloading at all.
+        case arriving(Double?)
+        /// Asked for, not started: nothing reports progress yet.
+        case queued
         /// Nothing moving: no connection (`offline`), or iOS paused it.
         case waiting(offline: Bool)
         /// A core download failed; a tap retries.
@@ -21,35 +26,40 @@ nonisolated struct CoreArrival: Equatable, Sendable {
     }
 
     let phase: Phase
-    /// The core packs not on the device yet.
+    /// The core packs not on the device yet (the ones the App Store offers).
     let missing: [Pack]
 
     /// The packs it watches: everything that isn't one-tap on demand.
     static let core = Pack.allCases.filter { $0.policy != .onDemand }
 
-    /// nil when there is nothing to say: every core pack is here, the packs
-    /// aren't known yet, or nothing can fetch them (a developer folder).
+    /// nil when there is nothing to say: every core pack is here (or not
+    /// published yet — that can't arrive), the packs aren't known yet, or
+    /// nothing can fetch them (a developer folder).
     static func of(states: [Pack: PackState], sizes: [Pack: Int] = PackSizes.nominal,
                    resolved: Bool, canFetch: Bool, online: Bool) -> CoreArrival? {
         guard resolved, canFetch else { return nil }
-        let missing = core.filter { !(states[$0] ?? .notInstalled).isInstalled }
+        let missing = core.filter {
+            let state = states[$0] ?? .notInstalled
+            return !state.isInstalled && state != .unpublished
+        }
         guard !missing.isEmpty else { return nil }
-        var done = 0.0, total = 0.0, moving = false, failed = false
-        for pack in core {
+        var done = 0.0, total = 0.0, moving = false, measured = false, failed = false
+        for pack in missing {
             let bytes = Double(max(1, sizes[pack] ?? 1))
-            total += bytes
             switch states[pack] ?? .notInstalled {
-            case .installed: done += bytes
-            case let .downloading(f):
+            case let .downloading(f?):
                 moving = true
-                done += bytes * min(max(f ?? 0, 0), 1)
+                measured = true
+                total += bytes
+                done += bytes * min(max(f, 0), 1)
+            case .downloading(nil): moving = true
             case .failed: failed = true
-            case .paused, .notInstalled: break
+            default: break
             }
         }
         let phase: Phase
         if moving {
-            phase = .arriving(total > 0 ? done / total : 0)
+            phase = .arriving(measured && total > 0 ? done / total : nil)
         } else if failed {
             phase = .failed
         } else if !online {
@@ -58,7 +68,7 @@ nonisolated struct CoreArrival: Equatable, Sendable {
             phase = .waiting(offline: false)
         } else {
             // asked for, not started yet (the system queues prefetches)
-            phase = .arriving(total > 0 ? done / total : 0)
+            phase = .queued
         }
         return CoreArrival(phase: phase, missing: missing)
     }
@@ -70,7 +80,9 @@ nonisolated struct CoreArrival: Equatable, Sendable {
     /// The chip's words: short, figures that don't jump about.
     var text: String {
         switch phase {
-        case let .arriving(f): f >= 0.01 ? "\(noun) arriving · \(StorageText.percent(f))" : "\(noun) arriving"
+        case let .arriving(f?) where f >= 0.01: "\(noun) arriving · \(StorageText.percent(f))"
+        case .arriving: "\(noun) arriving"
+        case .queued: "\(noun) not here yet"
         case .waiting(offline: true): "\(noun) arrive\(noun == "Maps" ? "" : "s") when online"
         case .waiting(offline: false): "\(noun) arriving · paused by iOS"
         case .failed: "\(noun) didn’t finish · Retry"
@@ -82,7 +94,8 @@ nonisolated struct CoreArrival: Equatable, Sendable {
         let list = ListFormatter.localizedString(byJoining: missing.map(\.spokenTitle))
         let what = list.prefix(1).uppercased() + list.dropFirst()
         switch phase {
-        case let .arriving(f): return "\(what) arriving, \(Int(f * 100)) percent"
+        case let .arriving(f): return "\(what) arriving" + (f.map { ", \(StorageText.percentValue($0)) percent" } ?? "")
+        case .queued: return "\(what) not here yet"
         case .waiting(offline: true): return "\(what) arrive when there’s a connection"
         case .waiting(offline: false): return "\(what) paused by iOS; it resumes on its own"
         case .failed: return "\(what) didn’t finish downloading"
@@ -134,15 +147,16 @@ struct MapsArrivingChip: View {
         .hoverEffect(.highlight)
         .mapChrome()
         .accessibilityLabel(arrival.spoken)
-        .accessibilityHint(arrival.phase == .failed ? "Tries again and opens Storage" : "Opens Storage")
+        .accessibilityHint(arrival.phase == .failed || arrival.phase == .queued ? "Asks for it again and opens Storage" : "Opens Storage")
         .accessibilityIdentifier("maps-arriving")
     }
 
     @ViewBuilder private var glyph: some View {
         switch arrival.phase {
         case let .arriving(f): ProgressRing(fraction: f, lineWidth: 2.5)
+        case .queued: Image(systemName: StateSymbol.get).font(.footnote.weight(.semibold))
         case .waiting(offline: true): Image(systemName: StateSymbol.offline).font(.footnote.weight(.semibold))
-        case .waiting(offline: false): ProgressRing(fraction: 0, lineWidth: 2.5)
+        case .waiting(offline: false): Image(systemName: "pause.circle").font(.footnote.weight(.semibold))
         case .failed: Image(systemName: StateSymbol.failed).font(.footnote.weight(.semibold))
         }
     }
@@ -207,10 +221,11 @@ struct MapStatusStack: View {
     }
 
     private func open(_ arrival: CoreArrival) {
-        if arrival.phase == .failed {
+        if arrival.phase == .failed || arrival.phase == .queued {
             for pack in arrival.missing where packs.state(pack) != .installed { packs.fetch(pack) }
         }
-        model.openStorage(at: nil)
+        // the plant ID model alone: Storage opens on its row, highlighted
+        model.openStorage(at: arrival.missing == [.plantid] ? StorageTarget.row(.plantid) : StorageTarget.core)
     }
 }
 
@@ -377,7 +392,7 @@ struct WelcomeStore {
 
 /// The glyphs every state uses, so "offline", "not on the device" and "try
 /// again" look the same wherever they appear (docs/DESIGN.md "States").
-enum StateSymbol {
+nonisolated enum StateSymbol {
     /// Needs reception, and there is none: live layers, photos, documents.
     static let offline = "antenna.radiowaves.left.and.right.slash"
     /// Not on the device; one tap gets it (DESIGN.md iconography).

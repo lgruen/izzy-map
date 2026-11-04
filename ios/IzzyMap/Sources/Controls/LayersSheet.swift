@@ -136,7 +136,8 @@ struct LayersSheet: View {
     /// (nil when they are, or when nothing can fetch them here).
     private func download(_ list: [Pack], title: String) -> TileDownload? {
         let store = model.shared.packs
-        let missing = list.filter { !store.state($0).isInstalled }
+        // what the App Store doesn't offer yet can't be got from a tile
+        let missing = list.filter { !store.state($0).isInstalled && store.state($0) != .unpublished }
         guard store.canFetch, store.isResolved, !missing.isEmpty else { return nil }
         let states = missing.map {
             PackRowStatus.of(store.state($0), pack: $0, canFetch: true, online: Connectivity.shared.online)
@@ -145,7 +146,7 @@ struct LayersSheet: View {
         let moving = busy.filter { !$0.isPaused }
         let status: PackRowStatus = if busy.isEmpty { .get }
             else if moving.isEmpty { busy[0] }
-            else { .downloading(moving.map(\.fill).reduce(0, +) / Double(moving.count)) }
+            else { .downloading(moving.map { $0.progress ?? 0 }.reduce(0, +) / Double(moving.count)) }
         // the seasons tile: while some seasons come, the idle ones are still
         // one tap away (the badge keeps its arrow)
         let idle = zip(missing, states).filter { !$0.1.isBusy }.map(\.0)
