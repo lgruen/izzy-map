@@ -11,7 +11,7 @@ name: IzzyMap
 options:
   bundleIdPrefix: org.gruenschloss
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "27.0"
   createIntermediateGroups: true
   developmentLanguage: en
 

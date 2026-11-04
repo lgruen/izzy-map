@@ -64,14 +64,19 @@ final class AreaBackgroundTask {
         }
         let request = BGContinuedProcessingTaskRequest(identifier: id, title: title, subtitle: subtitle)
         request.strategy = .fail
-        do {
-            try BGTaskScheduler.shared.submit(request)
-            awaitingID = id
-            return true
-        } catch {
-            Self.logger.notice("area task not submitted: \(error.localizedDescription, privacy: .public)")
-            return false
+        // iOS 27: submitTaskRequest reports every refusal through its handler
+        // (the old throwing submit is deprecated). Until it answers, the task
+        // counts as awaited; a refusal clears that and the download simply
+        // runs in the foreground.
+        awaitingID = id
+        BGTaskScheduler.shared.submitTaskRequest(request) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor in
+                Self.logger.notice("area task not submitted: \(error.localizedDescription, privacy: .public)")
+                if self?.awaitingID == id { self?.awaitingID = nil }
+            }
         }
+        return true
     }
 
     private func started(_ task: BGContinuedProcessingTask) {

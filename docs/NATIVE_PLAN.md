@@ -21,7 +21,8 @@ Decisions already taken (Leo, 2026-11-03):
   native app was on the devices and was **retired on 2026-11-04** (Leo
   approved; CLAUDE.md "Retired hosting"). Our data now lives in `data/`
   locally and in the Apple-hosted packs.
-- iOS 26 deployment target, built with the iOS 27 SDK (Xcode 27.2).
+- iOS 27 deployment target (raised from 26 on 2026-11-04 — iOS 26 couldn't fetch the
+  plantid pack, which contains a folder), built with the iOS 27 SDK (Xcode 27.2).
 - Devices: partner's iPhone 16e, Leo's iPhone, household iPad Pro 12.9" 4th gen
   (2020, Wi-Fi only — no GPS; runs iPadOS 27). Simulators on iOS 27.2:
   "iPhone 16e (27.2)", "iPad Pro 12.9 4th gen (27.2)".

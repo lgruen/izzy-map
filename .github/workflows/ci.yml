@@ -95,9 +95,9 @@ jobs:
               m = re.search(r"iOS-(\d+)-(\d+)", rt)
               return (int(m[1]), int(m[2])) if m else None
           runtimes = [r for r in simctl("runtimes")["runtimes"]
-                      if r.get("isAvailable") and ver(r["identifier"]) and ver(r["identifier"]) >= (26, 0)]
+                      if r.get("isAvailable") and ver(r["identifier"]) and ver(r["identifier"]) >= (27, 0)]
           if not runtimes:
-              sys.exit("no iOS 26+ simulator runtime")
+              sys.exit("no iOS 27+ simulator runtime")
           devs = simctl("devices", "available")["devices"]
           wanted = [re.compile(r"\b16e\b"), re.compile(r"\b\d+e\b")]
           # Newest runtime that has an e-model iPhone. A point release can be
@@ -122,7 +122,7 @@ jobs:
               if pick is not None:
                   break
           if pick is None:
-              sys.exit("no iPhone e-model simulator or device type on any iOS 26+ runtime")
+              sys.exit("no iPhone e-model simulator or device type on any iOS 27+ runtime")
           print(pick["name"], "on iOS %d.%d" % v, file=sys.stderr)
           print(pick["udid"])
           PY

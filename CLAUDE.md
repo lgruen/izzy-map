@@ -27,8 +27,10 @@ milestones, map-proof results); the design brief and language is
    as a bonus layer above them. A failed live tile must never hide the
    local one underneath.
 3. **Targets: iPhone 16e (partner) and iPad Pro 12.9" 4th gen (2020,
-   Wi-Fi only — no GPS, iPadOS 27)**, plus Leo's iPhone. iOS 26 deployment
-   target, iOS 27 SDK (Xcode 27.2). Layout by **size class**, never by
+   Wi-Fi only — no GPS, iPadOS 27)**, plus Leo's iPhone. iOS 27 deployment
+   target (raised from 26 on 2026-11-04: iOS 26's Background Assets pipeline
+   failed the plantid pack with PipelineNotFound — only pack with a folder —
+   while iOS 27 fetched it; Leo: require 27), iOS 27 SDK (Xcode 27.2). Layout by **size class**, never by
    device model (Split View / Slide Over give compact widths on the iPad).
    Wi-Fi-only iPads have no GPS: say so once, never spin silently. Surface
    storage sizes in the UI. Android is gone with the PWA (Leo, 2026-11).
