@@ -47,8 +47,9 @@ struct StyleBuilderTests {
 
     // MARK: Layer order
 
+    /// Relief is on by default (decided by the user, 2026-11-04).
     @Test func defaultStackIsTopoThenVegetationThenSelection() {
-        #expect(layerIDs(style()) == ["bg", "topo", "topo-live", "tasveg-fill", "tasveg-boundary", "same-community",
+        #expect(layerIDs(style()) == ["bg", "topo", "topo-live", "tasveg-fill", "relief", "tasveg-boundary", "same-community",
                                       "tasveg-label", "tasveg-label-15", "tasveg-label-16", "tasveg-label-17"] + Self.selection)
     }
 
@@ -68,7 +69,9 @@ struct StyleBuilderTests {
     }
 
     @Test func hiddenLayersAndTheirSourcesAreLeftOut() {
-        let s = style()
+        var plain = LayerState.default
+        plain.relief = false
+        let s = style(plain)
         let sources = Set((s["sources"] as? [String: Any])?.keys.map { $0 } ?? [])
         #expect(sources == ["topo", "topo-live", "tasveg", "highlight", "selected"])
         for hidden in ["aerial", "tasmap", "geology", "pre1750", "relief", "trees-points", "season-2026"] {
@@ -538,7 +541,42 @@ struct LayerStateTests {
         #expect(d.season == Season.all.count - 1)
         #expect(d.overlay == .vegetation)
         #expect(d.strength == .light, "decided by the user, 2026-11-03")
-        #expect(!d.relief && !d.trees)
+        #expect(d.relief, "relief on by default, decided by the user 2026-11-04")
+        #expect(!d.reliefTouched && !d.trees)
+    }
+
+    /// Relief went on by default on 2026-11-04. A state stored before then
+    /// (no `reliefTouched` key) gets relief on ONCE; from the first save
+    /// on, the marker is there and her choice — on or off — always wins.
+    @Test func reliefMigratesOnceAndNeverOverridesHerChoice() throws {
+        let defaults = try #require(UserDefaults(suiteName: "izzy-relief-\(UUID().uuidString)"))
+        let store = LayerStore(defaults: defaults)
+        // an install from before: relief off (the old default), no marker
+        let old = #"{"base":"topo","season":"latest","overlay":"geology","strength":"full","relief":false,"trees":true}"#
+        defaults.set(Data(old.utf8), forKey: LayerStore.key)
+        var s = store.load()
+        #expect(s.relief, "turned on once")
+        #expect(!s.reliefTouched)
+        #expect(s.overlay == .geology && s.strength == .full && s.trees, "nothing else changes")
+        // migrating is idempotent until something is saved
+        #expect(store.load() == s)
+        // saving writes the marker: relief stays on
+        store.save(s)
+        let saved = String(decoding: try #require(defaults.data(forKey: LayerStore.key)), as: UTF8.self)
+        #expect(saved.contains(#""reliefTouched":false"#))
+        #expect(store.load().relief)
+        // she turns it off: it stays off for good
+        s.toggleRelief()
+        #expect(!s.relief && s.reliefTouched)
+        store.save(s)
+        #expect(!store.load().relief)
+        #expect(!store.load().relief, "a second launch doesn't migrate again")
+        // a pre-migration state that already had relief on keeps it
+        let on = try JSONDecoder().decode(LayerState.self, from: Data(#"{"relief":true}"#.utf8))
+        #expect(on.relief)
+        // a migrated, untouched off (e.g. a newer build's default) is kept as stored
+        let marked = try JSONDecoder().decode(LayerState.self, from: Data(#"{"relief":false,"reliefTouched":false}"#.utf8))
+        #expect(!marked.relief)
     }
 
     /// A stored state with unknown or out-of-range values clamps field by

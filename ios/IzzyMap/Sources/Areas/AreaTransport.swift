@@ -43,6 +43,8 @@ nonisolated final class LiveAreaTransport: AreaTransport {
     }
 
     func fetch(_ url: URL) async -> AreaFetch {
+        // the app's one network gate (Connectivity.swift)
+        guard NetworkGate.allows(url) else { return .offline }
         do {
             let (data, response) = try await session.data(from: url)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0

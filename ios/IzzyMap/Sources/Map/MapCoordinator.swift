@@ -82,6 +82,7 @@ final class MapCoordinator: NSObject {
         // The app owns attribution (Attribution.swift + its own (i) control):
         // MapLibre's button would list PMTiles metadata, not our credits.
         map.showsAttributionButton = false
+        Self.hideOrnaments(map)
         map.minimumZoomLevel = CameraPolicy.minZoom
         map.maximumZoomLevel = CameraPolicy.maxZoom
         map.maximumScreenBounds = MLNCoordinateBounds(
@@ -145,7 +146,8 @@ final class MapCoordinator: NSObject {
             // the inset change re-centres the map, cancelling a flight in
             // progress: fly it again from where it stopped
             let interrupted = camera.flightUnderWay
-            map.setContentInset(chrome.contentInset, animated: appliedChrome != nil, completionHandler: nil)
+            map.setContentInset(chrome.contentInset, animated: appliedChrome != nil && !UIAccessibility.isReduceMotionEnabled,
+                                completionHandler: nil)
             camera.contentInsetChanged()
             camera.resume(interrupted, on: map)
         }
@@ -161,7 +163,8 @@ final class MapCoordinator: NSObject {
         let wanted = Self.mapMode(tracking)
         guard map.userTrackingMode != wanted else { return }
         if wanted != .none { camera.trackingStarted() }
-        map.setUserTrackingMode(wanted, animated: true, completionHandler: nil)
+        // Reduce Motion: the camera cuts to the position (DESIGN.md "Motion")
+        map.setUserTrackingMode(wanted, animated: !UIAccessibility.isReduceMotionEnabled, completionHandler: nil)
     }
 
     /// A layer change re-sets the whole style: hidden layers and their
@@ -577,6 +580,7 @@ extension MapCoordinator: MLNMapViewDelegate {
         spotlights.styleLoaded(mapView, model: model)
         refreshVisibleSources(mapView)
         model.map.zoom = mapView.zoomLevel
+        Self.hideOrnaments(mapView)
     }
 
     func mapViewRegionIsChanging(_ mapView: MLNMapView) {
@@ -610,7 +614,8 @@ extension MapCoordinator: MLNMapViewDelegate {
         guard !userMovedCamera, Date.now < launchFixDeadline, mapView.userTrackingMode == .none,
               CameraPolicy.contains(latitude: coordinate.latitude, longitude: coordinate.longitude)
         else { return }
-        camera.setCenter(mapView, coordinate, zoom: max(mapView.zoomLevel, CameraPolicy.fixZoom), animated: true)
+        camera.setCenter(mapView, coordinate, zoom: max(mapView.zoomLevel, CameraPolicy.fixZoom),
+                         animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
     /// MapLibre Native 7.0.0 calls this only for `kCLErrorDenied` (other
@@ -645,6 +650,18 @@ extension MapCoordinator: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard let map, let view = touch.view else { return true }
         return !Self.isOrnament(view, in: map)
+    }
+
+    /// MapLibre's own logo and (i) stay out for good: `showsLogoView` /
+    /// `showsAttributionButton = false` hide them on screen, and these
+    /// plain UIView properties keep touches away too. Their accessibility
+    /// is `OrnamentFreeMapView`'s job (MLNMapView vends them itself).
+    /// Re-applied after every style load, in case MapLibre re-shows them.
+    static func hideOrnaments(_ map: MLNMapView) {
+        for view in [map.attributionButton, map.logoView] as [UIView] {
+            view.isHidden = true
+            view.isUserInteractionEnabled = false
+        }
     }
 
     static func isOrnament(_ view: UIView, in map: MLNMapView) -> Bool {

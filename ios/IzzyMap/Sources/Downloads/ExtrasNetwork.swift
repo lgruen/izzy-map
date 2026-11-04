@@ -41,6 +41,7 @@ nonisolated enum ExtrasNetwork {
     /// Redirects are followed only while they stay on the kind's hosts; a
     /// refused redirect (a captive portal's usual move) never stores anything.
     static func fetch(_ url: URL, kind: ExtraKind, session: URLSession) async -> (FetchResult, URL?) {
+        guard NetworkGate.allows(url) else { return (.offline, nil) }
         do {
             let (file, response) = try await session.download(for: URLRequest(url: url), delegate: RedirectGuard(kind: kind))
             let http = response as? HTTPURLResponse
@@ -118,6 +119,11 @@ nonisolated enum StubNetwork {
         UserDefaults.standard.string(forKey: "stubNetwork") == nil ? nil : StubURLProtocol.self
     }
     static var mode: String { UserDefaults.standard.string(forKey: "stubNetwork") ?? "" }
+
+    /// Whether the stub answers `url` itself (no request leaves the app).
+    static func answers(_ url: URL) -> Bool {
+        current != nil && StubURLProtocol.canInit(with: URLRequest(url: url))
+    }
 
     /// A 12-page PDF, each page saying which it is.
     static let pdf: Data = {

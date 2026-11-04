@@ -72,14 +72,23 @@ struct PlantPhotoPlate: View {
                     .transition(.opacity)
             } else {
                 VStack(spacing: 8) {
-                    GrowthFormGlyph(shape: shape, ink: DesignColor.inkSecondary.opacity(0.6))
+                    GrowthFormGlyph(shape: shape, ink: DesignColor.secondaryInk.opacity(0.6))
                         .frame(width: width * 0.22, height: width * 0.22)
                     if settled {
-                        Text("This photo isn’t on the \(DeviceNoun.current) yet. Connect, or get all plant photos in Storage.")
-                            .font(.footnote)
-                            .foregroundStyle(DesignColor.inkSecondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
+                        // the states' one icon language (App/FirstLaunch.swift)
+                        let offline = !Connectivity.shared.online
+                        Label {
+                            Text(offline
+                                 ? "Not on this \(DeviceNoun.current) yet — it needs reception, or get all plant photos in Storage."
+                                 : "This photo didn’t load. It tries again next time; all plant photos are in Storage.")
+                        } icon: {
+                            Image(systemName: offline ? StateSymbol.offline : StateSymbol.failed)
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(DesignColor.secondaryInk)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .accessibilityIdentifier("photo-state")
                     }
                 }
             }

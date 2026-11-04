@@ -1,4 +1,5 @@
-# Data artifacts — large, rebuilt by pipeline/, uploaded to R2 (never committed).
+# Data artifacts — large, rebuilt by pipeline/, shipped as Background Assets
+# packs (never committed).
 # Anchored: an unanchored `data/` also matches ios/IzzyMap/Resources/Data/ on
 # macOS's case-insensitive filesystem (core.ignorecase).
 /data/
@@ -23,11 +24,8 @@ pipeline/work/
 __pycache__/
 
 node_modules/
-dist/
 .DS_Store
 *.log
-test-results/
-playwright-report/
 
 # wrangler local state (account metadata)
 .wrangler/

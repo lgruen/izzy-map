@@ -40,7 +40,7 @@ struct AttributionSheet: View {
                 Section {
                     if credits.isEmpty {
                         Text("Nothing from a data provider is on the map right now.")
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                     }
                     ForEach(credits) { credit in
                         CreditRow(credit: credit)
@@ -58,6 +58,7 @@ struct AttributionSheet: View {
                     .accessibilityIdentifier("acknowledgements-link")
                 } footer: {
                     Text("The software and model inside IzzyMap, with their licences.")
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
                 .panelRows()
                 // TODO(M7): link to About's full credits by licence regime.
@@ -90,9 +91,9 @@ private struct CreditRow: View {
                 Link(credit.licence.name, destination: credit.licence.url)
             }
             .font(.subheadline)
-            .foregroundStyle(DesignColor.inkSecondary)
+            .foregroundStyle(DesignColor.secondaryInk)
             if let terms = credit.terms {
-                Text(terms).font(.footnote).foregroundStyle(DesignColor.inkSecondary)
+                Text(terms).font(.footnote).foregroundStyle(DesignColor.secondaryInk)
             }
         }
         .padding(.vertical, 2)

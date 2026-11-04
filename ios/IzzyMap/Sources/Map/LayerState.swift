@@ -140,8 +140,16 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
     // Light: decided by the user (2026-11-03, DESIGN.md §7) — the topo or
     // photo reads through; a saved choice always wins (it is encoded)
     var strength: Strength = .light
-    /// Relief shading over base and overlay.
-    var relief = false
+    /// Relief shading over base and overlay. On by default — decided by
+    /// the user (2026-11-04, DESIGN.md §7): the biggest "beautiful map"
+    /// lever for browsing.
+    var relief = true
+    /// She turned relief on or off herself (the Layers tile). Persisted as
+    /// the migration marker: a state stored before relief went on by
+    /// default has no such key and gets relief ON once (`init(from:)`);
+    /// every state written since carries it, so her choice is never
+    /// overridden again.
+    var reliefTouched = false
     /// City of Hobart significant trees on top of everything.
     var trees = false
 
@@ -159,20 +167,33 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case base, season, overlay, strength, relief, trees }
+    private enum CodingKeys: String, CodingKey { case base, season, overlay, strength, relief, reliefTouched, trees }
     static let latestToken = "latest"
 
     /// Unknown or missing values fall back to the defaults one field at a
     /// time (a stored state from an older or newer build never fails whole).
     /// `season` is a year or "latest"; a small integer is a pre-M2 slider
     /// index (0…6) and maps to its season.
+    ///
+    /// Relief migration (2026-11-04): no `reliefTouched` key = written by a
+    /// build where relief was off by default, so a stored `false` can't be
+    /// told from "never looked at it" — relief turns on, once. (A stored
+    /// `true` was her own choice and stays.) Re-encoding writes the key, so
+    /// from then on the stored value is authoritative, whatever she picks.
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = LayerState.default
         base = (try? c.decodeIfPresent(BaseMap.self, forKey: .base)) ?? d.base
         overlay = (try? c.decodeIfPresent(Overlay.self, forKey: .overlay)) ?? d.overlay
         strength = (try? c.decodeIfPresent(Strength.self, forKey: .strength)) ?? d.strength
-        relief = (try? c.decodeIfPresent(Bool.self, forKey: .relief)) ?? d.relief
+        if let touched = try? c.decodeIfPresent(Bool.self, forKey: .reliefTouched) {
+            reliefTouched = touched
+            relief = (try? c.decodeIfPresent(Bool.self, forKey: .relief)) ?? d.relief
+        } else {
+            // pre-migration state: on once, untouched
+            reliefTouched = false
+            relief = true
+        }
         trees = (try? c.decodeIfPresent(Bool.self, forKey: .trees)) ?? d.trees
         if let n = try? c.decodeIfPresent(Int.self, forKey: .season) {
             if Season.all.contains(where: { $0.year == n }) {
@@ -190,6 +211,7 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
         try c.encode(overlay, forKey: .overlay)
         try c.encode(strength, forKey: .strength)
         try c.encode(relief, forKey: .relief)
+        try c.encode(reliefTouched, forKey: .reliefTouched)
         try c.encode(trees, forKey: .trees)
     }
 
@@ -217,6 +239,12 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
     }
 
     var seasonClamped: Int { min(max(season, 0), Season.all.count - 1) }
+
+    /// Her own relief toggle (the Layers tile): flips it and marks it hers.
+    mutating func toggleRelief() {
+        relief.toggle()
+        reliefTouched = true
+    }
 }
 
 /// The last layer state, kept in UserDefaults (a few bytes of user state):

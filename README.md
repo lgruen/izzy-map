@@ -1,12 +1,9 @@
 # IzzyMap
 
-> **Being rebuilt as a native SwiftUI app** in `ios/` (plan:
-> `docs/NATIVE_PLAN.md`). The PWA described below was removed from the repo
-> after commit `04ea5d9`; its deployed copy keeps running until the native
-> app is on every device.
-
-Offline Tasmania vegetation map for hiking — a home-screen PWA for iPhone
-and iPad.
+Offline Tasmania vegetation map for hiking — a native SwiftUI app for iPhone
+and iPad (`ios/`), installed through TestFlight. There is no web version any
+more: the earlier PWA was removed from the repo after commit `04ea5d9` and
+its hosting was retired on 2026-11-04 (see `docs/NATIVE_PLAN.md`).
 
 Shows the LIST **Topographic** basemap — or the **Tasmap paper-map scans**,
 or LIST's **aerial photos** (best-available mosaic, or any flying season
@@ -16,34 +13,38 @@ labels). Tap a polygon to see which plant community you're in, with a link
 into the full *From Forest to Fjaeldmark* description — all fully offline
 once set up.
 
-Built for personal use on a single phone. Not affiliated with the Tasmanian
+Built for personal use by one household. Not affiliated with the Tasmanian
 Government.
 
 ## How it works
 
-- **App**: Vite + TypeScript + [MapLibre GL JS](https://maplibre.org/), served
-  from GitHub Pages, installed via Safari's Add to Home Screen.
-- **Vegetation layer**: TASVEG 5.0 polygons converted to vector tiles
-  ([PMTiles](https://protomaps.com/docs/pmtiles)), downloaded once (statewide)
-  into the browser's OPFS storage.
+- **App**: SwiftUI + [MapLibre Native](https://maplibre.org/) (iOS 26+),
+  built and shipped to TestFlight by GitHub Actions.
+- **Map data**: TASVEG 5.0 polygons and the other overlays as vector tiles
+  ([PMTiles](https://protomaps.com/docs/pmtiles)), and the statewide raster
+  packs, delivered as Apple-hosted Background Assets packs — the vector
+  pack comes with the install, topo and relief shading follow in the
+  background, aerial photos, Tasmap scans and each season on demand.
+  Search indexes, plant lists and the tree register are bundled with the
+  app.
 - **Detailed areas**: frame any area in the app and download it at up to
   0.4 m per pixel (aerial, seasons, paper map, topo) straight from LIST
   into device storage; outside downloaded areas the map falls back to the
   statewide packs.
 - **Base maps**: LIST topographic tiles, Tasmap sheet scans and aerial photos
-  are fetched live from LIST tile services when online; offline coverage via
-  statewide raster packs (zoom ≤ 15) downloaded in-app, plus small per-season
-  aerial packs stacked chronologically (newest on top) behind a season
-  slider. Tiles are stored byte-for-byte; see `docs/LICENSING.md`.
+  are fetched live from LIST tile services when online, above the offline
+  statewide packs (zoom ≤ 15); per-season aerial packs stack
+  chronologically (newest on top) behind a season slider. Tiles are stored
+  byte-for-byte; see `docs/LICENSING.md`.
 - **Geology overlay**: MRT's statewide 1:500,000 units as a second vector
   layer, switched with vegetation (one overlay at a time).
 - **Pre-1750 overlay**: the NVIS estimate of vegetation before European
   clearing (Major Vegetation Subgroups, 100 m cells), polygonized into
   vector tiles with per-zoom majority-resampled generalisation.
-- **Community descriptions**: the phone fetches the *From Forest to
-  Fjaeldmark* chapter PDFs from nre.tas.gov.au (via a transparent,
-  non-caching CORS relay — the PDFs are not redistributable and are never
-  committed here or stored on our hosting; see `docs/LICENSING.md`).
+- **Community descriptions**: the device fetches the *From Forest to
+  Fjaeldmark* chapter PDFs itself from nre.tas.gov.au (the PDFs are not
+  redistributable and are never committed here or put in our packs; see
+  `docs/LICENSING.md`).
 - **Search**: place names, streets and street addresses — the LIST
   Nomenclature register, road network, named-feature extents, locality
   areas and address points distilled into two small indexes shipped with
@@ -63,6 +64,8 @@ Government.
   form, height, flowers, fruit, habitat and flowering months. The lists
   work offline; photos show online, or can be downloaded in advance
   (~150 MB) and are never stored on our hosting.
+- **Plant ID**: photograph a plant for an on-device suggestion
+  (BioCLIP 2.5, Core ML), weighted by what is recorded nearby.
 
 See `CLAUDE.md` for the full architecture and maintenance guide.
 
@@ -73,7 +76,7 @@ See `CLAUDE.md` for the full architecture and maintenance guide.
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
 - Hillshade from [theLIST](https://www.thelist.tas.gov.au) © State of
   Tasmania — [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)
-  (drawn by the app as translucent relief shading)
+  (adapted into translucent relief shading)
 - TASVEG 5.0 from [theLIST](https://listdata.thelist.tas.gov.au/opendata/)
   © State of Tasmania —
   [CC BY 3.0 AU](https://creativecommons.org/licenses/by/3.0/au/)

@@ -36,7 +36,7 @@ struct LegendView: View {
                     StrengthPicker(model: model)
                 }
                 if let note {
-                    Text(note).font(.footnote).foregroundStyle(DesignColor.inkSecondary)
+                    Text(note).font(.footnote).foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -126,7 +126,7 @@ private struct SectionHeader: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             Text("\(section.count)").monospacedDigit()
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
         }
         .font(.subheadline.weight(.semibold))
         .foregroundStyle(DesignColor.ink)
@@ -159,6 +159,7 @@ private struct RunRow: View {
                                 .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(spoken(row))
                         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
@@ -261,7 +262,7 @@ private struct ExpandableText: View {
             if truncated || expanded {
                 Image(systemName: expanded ? "chevron.up" : "chevron.down")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
         }
             .contentShape(.rect)

@@ -18,7 +18,7 @@ struct DetailedAreasSection: View {
         Section {
             if let error = store.loadError {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(error).foregroundStyle(DesignColor.inkSecondary)
+                    Text(error).foregroundStyle(DesignColor.secondaryInk)
                     Button("Remove All Detailed Areas", role: .destructive) { removingAll = true }
                         .accessibilityIdentifier("areas-remove-all")
                 }
@@ -27,6 +27,9 @@ struct DetailedAreasSection: View {
                 AreasOverview(outline: outline, areas: store.areas) { model.showArea($0.box) }
                     .frame(height: 150)
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            }
+            if store.areas.isEmpty, store.loadError == nil {
+                NoAreasYet(outline: footprints.outline)
             }
             ForEach(store.areas) { area in
                 AreaRow(area: area, status: store.status(area.id), running: store.running?.areaID == area.id ? store.running?.progress : nil,
@@ -46,7 +49,7 @@ struct DetailedAreasSection: View {
             Text("Detailed areas").panelHeader().id("areas")
         } footer: {
             Text("A place in full detail, to 0.4 m: fetched by this \(DeviceNoun.current) from theLIST for your own use. It draws over the statewide maps. A download carries on while IzzyMap is closed; if the signal goes, Resume picks up where it stopped.")
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
         }
         .confirmationDialog(deleting.map { "Delete \($0.name)?" } ?? "",
                             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
@@ -100,17 +103,17 @@ private struct AreaRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(AreaText.contents(area))
                     .font(.subheadline)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(AreaText.status(area, status, running: running, device: DeviceNoun.current))
                     .font(.subheadline).monospacedDigit()
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("area-\(area.id)-status")
                 ForEach(AreaText.notes(area, status), id: \.self) { note in
                     Text(note)
                         .font(.footnote)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("area-\(area.id)-note")
                 }
@@ -163,7 +166,7 @@ private struct AreaRow: View {
     private var trash: some View {
         Button(action: delete) {
             Image(systemName: "trash")
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .frame(width: 40, height: 44)
                 .contentShape(.rect)
         }
@@ -289,6 +292,52 @@ struct AreaLocator: View {
         .clipped()
         .environment(\.colorScheme, .light)
         .accessibilityHidden(true)
+    }
+}
+
+/// "No detailed areas yet": the state's silhouette with a dashed frame on
+/// Mount Field — what an area is, drawn — and one line of what it does.
+struct NoAreasYet: View {
+    let outline: TasmaniaOutline?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Canvas { ctx, size in
+                guard let outline else { return }
+                let b = outline.bbox
+                let xs = TasmaniaMiniMap.xScale
+                let k = min(size.width / ((b[2] - b[0]) * xs), size.height / (b[3] - b[1])) * 0.9
+                let ox = (size.width - (b[2] - b[0]) * xs * k) / 2, oy = (size.height - (b[3] - b[1]) * k) / 2
+                func pt(_ lon: Double, _ lat: Double) -> CGPoint { CGPoint(x: ox + (lon - b[0]) * xs * k, y: oy + (b[3] - lat) * k) }
+                var land = Path()
+                for ring in outline.rings {
+                    guard let first = ring.first else { continue }
+                    land.move(to: pt(first[0], first[1]))
+                    for p in ring.dropFirst() { land.addLine(to: pt(p[0], p[1])) }
+                    land.closeSubpath()
+                }
+                ctx.fill(land, with: .color(TasmaniaMiniMap.paper))
+                ctx.stroke(land, with: .color(TasmaniaMiniMap.coast), lineWidth: 0.5)
+                // a frame round Mount Field, drawn as framing draws one —
+                // dashed ink — and big enough to read at thumbnail size
+                let a = pt(146.2, -42.45), z = pt(147.0, -42.95)
+                let r = CGRect(x: a.x, y: a.y, width: z.x - a.x, height: z.y - a.y)
+                ctx.fill(Path(r), with: .color(TasmaniaMiniMap.ink.opacity(0.12)))
+                ctx.stroke(Path(r), with: .color(TasmaniaMiniMap.ink), style: StrokeStyle(lineWidth: 1.25, dash: [2.5, 1.5]))
+            }
+            .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)
+            .background(DesignColor.keyPlate)
+            .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
+            .environment(\.colorScheme, .light)
+            .accessibilityHidden(true)
+            Text("No detailed areas yet. Frame a place you know you’ll walk, and it stays sharp offline down to 0.4 m.")
+                .font(.subheadline)
+                .foregroundStyle(DesignColor.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("areas-empty")
     }
 }
 

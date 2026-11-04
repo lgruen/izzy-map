@@ -4,6 +4,7 @@ import SwiftUI
 /// (Maps pattern). The smallest detent fits the header (and a card when one
 /// is shown); the map stays interactive behind it up to medium.
 struct CompactPanelSheet: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var model: AppModel
     /// The sheet's frame in global coordinates (the system places the
     /// floating sheet; the map's bottom ornaments line up with its edges).
@@ -33,7 +34,7 @@ struct CompactPanelSheet: View {
                     .environment(\.panelActions, PanelActions(
                         raise: { if detent == fitDetent { detent = .medium } },
                         scrollTo: { id in
-                            withAnimation(.snappy) { proxy.scrollTo(id, anchor: .top) }
+                            withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo(id, anchor: .top) }
                         },
                         peek: { y in
                             let rounded = y.rounded(.up)

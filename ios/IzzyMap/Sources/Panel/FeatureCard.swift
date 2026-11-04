@@ -132,7 +132,7 @@ struct FeatureCard: View {
         case let .tree(t):
             Text(t.isArea ? "Hobart significant trees" : "Hobart significant tree")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
         }
     }
 
@@ -186,7 +186,7 @@ struct FeatureCard: View {
                         GridRow {
                             Text(row.label)
                                 .font(.subheadline)
-                                .foregroundStyle(DesignColor.inkSecondary)
+                                .foregroundStyle(DesignColor.secondaryInk)
                                 .gridColumnAlignment(.leading)
                             Text(row.value)
                                 .font(.body)
@@ -200,7 +200,7 @@ struct FeatureCard: View {
                 if let note {
                     Text(note)
                         .font(.footnote)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let link {
@@ -281,7 +281,7 @@ struct CloseButton: View {
         Button(action: action) {
             Image(systemName: "xmark")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .frame(width: 32, height: 32)
                 .background(.fill.tertiary, in: .circle)
                 .frame(width: 44, height: 44)

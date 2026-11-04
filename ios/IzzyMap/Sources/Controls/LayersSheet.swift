@@ -2,6 +2,9 @@ import IzzyKit
 import SwiftUI
 import UIKit
 
+/// What the Layers sheet pushes.
+nonisolated enum LayersRoute: Hashable, Sendable { case key, storage }
+
 /// The Layers sheet (iPhone) / popover (iPad): base map, overlay and
 /// strength, "Also show", and the key. Every row says whether its data is on
 /// this device. Changes apply live: the map behind stays visible.
@@ -10,13 +13,13 @@ struct LayersSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// A tile's one-tap pack fetch that won't fit (the space alert).
     @State private var spaceRequest: PackSpaceRequest?
-    /// Storage pushed at once: after an area's Download (`AppModel.opensStorage`),
-    /// or DEBUG `-openStorage YES` (with `-openLayers YES`).
-    #if DEBUG
-    @State private var showsStorage = UserDefaults.standard.bool(forKey: "openStorage")
-    #else
-    @State private var showsStorage = false
-    #endif
+    /// What is pushed in the sheet (Key, Storage): a path, so Escape can
+    /// pop one level (`modalEscape`).
+    @State private var path: [LayersRoute] = []
+    /// Storage opened at once (after an area's Download,
+    /// `AppModel.opensStorage`, or DEBUG `-openStorage YES` with
+    /// `-openLayers YES`) — once per presentation, not on every return.
+    @State private var autoOpened = false
     /// The sheet's detent (iPhone): Storage raises it to large, where the
     /// system sheet turns opaque — a dense list of figures can't stay
     /// legible on glass over a saturated map (DESIGN.md §2).
@@ -34,15 +37,13 @@ struct LayersSheet: View {
     private var inPopover: Bool { model.isPresenting(.layers, in: .card) }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 baseSection.panelRows()
                 overlaySection.panelRows()
                 alsoShowSection.panelRows()
                 Section {
-                    NavigationLink {
-                        LegendView(model: model)
-                    } label: {
+                    NavigationLink(value: LayersRoute.key) {
                         Label("Key", systemImage: "list.bullet.rectangle")
                     }
                     .accessibilityIdentifier("legend-link")
@@ -57,14 +58,25 @@ struct LayersSheet: View {
                 .panelRows()
             }
             .panelListSurface()
-            .navigationDestination(isPresented: Binding(get: { showsStorage && !inPopover },
-                                                        set: { showsStorage = $0 })) { storage }
+            .navigationDestination(for: LayersRoute.self) { route in
+                switch route {
+                case .key: LegendView(model: model)
+                case .storage: storage
+                }
+            }
             .onAppear {
+                guard !autoOpened else { return }
+                var opens = model.opensStorage
+                #if DEBUG
+                opens = opens || UserDefaults.standard.bool(forKey: "openStorage")
+                #endif
+                guard opens else { return }
+                autoOpened = true
                 if model.opensStorage {
                     model.opensStorage = false
-                    storageTarget = "areas"
-                    showsStorage = true
+                    storageTarget = model.storageOpenTarget
                 }
+                if inPopover { storageSheet = true } else { path = [.storage] }
             }
             .navigationTitle("Layers")
             .navigationBarTitleDisplayMode(.inline)
@@ -73,6 +85,10 @@ struct LayersSheet: View {
                     Button("Done", systemImage: "checkmark") { dismiss() }
                 }
             }
+        }
+        // Escape: Storage (pushed, or the iPad's own sheet) / Key → Layers
+        .modalEscape(model, depth: path.count + (storageSheet ? 1 : 0)) {
+            if storageSheet { storageSheet = false } else if !path.isEmpty { path.removeLast() }
         }
         .presentationDetents([.medium, .large], selection: $detent)
         .sheet(isPresented: storageSheetShown) {
@@ -96,13 +112,14 @@ struct LayersSheet: View {
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.forward")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
         } else {
-            NavigationLink { storage } label: { label }
+            NavigationLink(value: LayersRoute.storage) { label }
         }
     }
 
@@ -112,8 +129,7 @@ struct LayersSheet: View {
     }
 
     private var storageSheetShown: Binding<Bool> {
-        Binding(get: { storageSheet || (showsStorage && inPopover) },
-                set: { if !$0 { storageSheet = false; showsStorage = false } })
+        Binding(get: { storageSheet }, set: { if !$0 { storageSheet = false } })
     }
 
     /// The download badge for a tile whose packs aren't all on the device
@@ -171,20 +187,23 @@ struct LayersSheet: View {
         } header: {
             Text("Base map").panelHeader()
         } footer: {
-            Text(model.layers.base.hint).foregroundStyle(DesignColor.inkSecondary)
+            Text(model.layers.base.hint).foregroundStyle(DesignColor.secondaryInk)
         }
     }
 
     /// Status shows only what's NOT on the device: a pack on the device is
     /// the normal case and needs no words (no "On iPhone" × 8).
+    /// Not on the device: it streams while online; offline it says what it
+    /// needs, in the states' words ("needs reception", App/FirstLaunch.swift).
     private func status(_ base: BaseMap) -> String? {
+        let streams = Connectivity.shared.online ? "Streams online" : "Needs reception"
         if let archive = base.archive {
-            return model.data.url(for: archive) != nil ? nil : "Streams online"
+            return model.data.url(for: archive) != nil ? nil : streams
         }
         let local = Season.all.filter { model.data.url(for: $0.archive) != nil }.count
         switch local {
         case Season.all.count: return nil
-        case 0: return "Streams online"
+        case 0: return streams
         default: return "\(local) of \(Season.all.count) on \(DeviceNoun.current)"
         }
     }
@@ -209,7 +228,7 @@ struct LayersSheet: View {
         } header: {
             Text("Overlay").panelHeader()
         } footer: {
-            Text(model.layers.overlay.hint).foregroundStyle(DesignColor.inkSecondary)
+            Text(model.layers.overlay.hint).foregroundStyle(DesignColor.secondaryInk)
         }
     }
 
@@ -227,7 +246,7 @@ struct LayersSheet: View {
                           status: model.data.url(for: .relief) != nil ? nil : "Not downloaded",
                           symbol: "mountain.2", isOn: model.layers.relief,
                           download: download([.relief], title: "Relief shading")) {
-                    model.layers.relief.toggle()
+                    model.layers.toggleRelief()
                 }
                 .accessibilityHint("Shades ridges and valleys over any map")
                 .accessibilityIdentifier("relief-row")
@@ -284,7 +303,7 @@ struct LayerTile: View {
                     Rectangle().fill(.fill.tertiary)
                     Image(systemName: symbol)
                         .font(.title3)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                     if let image {
                         Image(uiImage: image)
                             .resizable()
@@ -316,7 +335,7 @@ struct LayerTile: View {
                 if let status = download?.text ?? status {
                     Text(status)
                         .font(.caption2)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -324,6 +343,8 @@ struct LayerTile: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        // iPad trackpad: the pointer lifts the tile it is over
+        .hoverEffect(.highlight)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text((download?.text ?? status).map { "\(title), \($0)" } ?? title))
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
@@ -443,7 +464,7 @@ private struct SeasonControl: View {
             SeasonCaption(model: model, map: model.map, shownHere: $shownHere)
             if seasons[cutoff].isIncomplete {
                 Text("This season is still being flown — more areas appear over time.")
-                    .font(.footnote).foregroundStyle(DesignColor.inkSecondary)
+                    .font(.footnote).foregroundStyle(DesignColor.secondaryInk)
             }
         }
         .padding(.vertical, 4)
@@ -481,7 +502,7 @@ private struct SeasonTrack: View {
                         .position(x: (x(0) + x(index)) / 2, y: mid)
                     ForEach(0 ..< count, id: \.self) { i in
                         Rectangle()
-                            .fill(i <= index ? DesignColor.ink : DesignColor.inkSecondary)
+                            .fill(i <= index ? DesignColor.ink : DesignColor.secondaryInk)
                             .frame(width: 1.5, height: 10)
                             .position(x: x(i), y: mid)
                     }
@@ -515,7 +536,7 @@ private struct SeasonTrack: View {
                 Text(labels.last ?? "")
             }
             .font(.caption2.monospacedDigit())
-            .foregroundStyle(DesignColor.inkSecondary)
+            .foregroundStyle(DesignColor.secondaryInk)
         }
         .accessibilityRepresentation {
             Slider(value: Binding(get: { Double(index) }, set: { index = Int($0.rounded()) }),
@@ -548,7 +569,7 @@ private struct SeasonCaption: View {
                       zoom: map.zoom, idle: map.isIdle)
         Text(text ?? " ")
             .font(.footnote)
-            .foregroundStyle(DesignColor.inkSecondary)
+            .foregroundStyle(DesignColor.secondaryInk)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("season-caption")
             .task(id: key) {

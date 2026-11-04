@@ -54,7 +54,7 @@ struct WhereElse: View {
                 }
                 Text(MiniMapCredits.presence)
                     .font(.caption2)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .contain)

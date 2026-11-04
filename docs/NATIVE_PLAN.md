@@ -16,9 +16,11 @@ Decisions already taken (Leo, 2026-11-03):
 - CI is **GitHub Actions**, modelled on the Trio "browser build" (fastlane +
   match + App Store Connect API key; the six secrets and the private
   `lgruen/Match-Secrets` repo can be reused).
-- The web app is **deleted** from the repo now. The deployed Pages site, R2
-  bucket and `izzy-f2f` Worker keep running until the native app is on both
-  devices (so nobody is stranded), then get torn down (ask first).
+- The web app is **deleted** from the repo now. Its hosting — the Pages
+  site, the R2 bucket and the CORS relay Worker — kept running until the
+  native app was on the devices and was **retired on 2026-11-04** (Leo
+  approved; CLAUDE.md "Retired hosting"). Our data now lives in `data/`
+  locally and in the Apple-hosted packs.
 - iOS 26 deployment target, built with the iOS 27 SDK (Xcode 27.2).
 - Devices: partner's iPhone 16e, Leo's iPhone, household iPad Pro 12.9" 4th gen
   (2020, Wi-Fi only — no GPS; runs iPadOS 27). Simulators on iOS 27.2:
@@ -65,16 +67,16 @@ Decisions already taken (Leo, 2026-11-03):
   community/geology/pre-1750 tables, trees, plants, records, nearby grid,
   F2F page index, glyphs (~15 MB).
 - Packs hold our PMTiles **byte-for-byte**, so the CC BY-NC-ND imagery stays
-  verbatim, attributed and non-commercial, the same as on R2 today.
+  verbatim, attributed and non-commercial, as they were on R2.
   Updating a pack (e.g. the still-incomplete 2025–26 season) = re-upload;
   devices update in the background, so there is no Update button. Packs are
   built with `xcrun ba-package` and uploaded **locally** with `altool`
-  (`pipeline/upload_packs.sh`, like `upload_r2.sh`), never from CI.
+  (`pipeline/upload_packs.sh`), never from CI.
 - **Licensed extras** (all rights reserved, LICENSING.md §2) are never packs,
   committed or hosted: F2F chapters (~37 MB, nre.tas.gov.au), plant photos
   (~152 MB, Understorey Network), tree data sheets (~446 MB, arcgis.com).
   The device fetches them directly. No CORS natively, so **the relay Worker
-  goes away**. Each is a one-tap row using a background `URLSession`, which
+  went away** (deleted 2026-11-04). Each is a one-tap row using a background `URLSession`, which
   keeps going when the app is closed. The rules carry over: gone = 4xx;
   captive portal = magic-byte check plus "n gone in a row"; a space
   preflight; resume skips files already present. A tap on a single sheet,
@@ -339,9 +341,10 @@ option; simulator problems on 27.1).
     card → search pin.
   - ⌘F search, ⌘L locate, ⌘1–4 bases.
   - Hover effects on controls.
-- **Accessibility.** Dynamic Type everywhere (the web app's fixed-px text is
-  gone), VoiceOver labels on every map control and card, Reduce
-  Transparency and Increase Contrast via the system glass.
+- **Accessibility: scope (Leo, 2026-11-04).** Private app: no VoiceOver/extended accessibility work; legibility at default sizes + iPad keyboard usability matter (Leo, 2026-11-04).
+  Text uses system styles (no fixed px); system glass handles Reduce
+  Transparency / Increase Contrast; no VoiceOver, AX-size or Reduce-Motion
+  rounds.
 - **Visual identity, spent in one place:** the map's official colours carry
   it. The chrome is the system's (SF, glass, sheets). Botanical names follow
   the taxonomist's convention: italic, set in New York, with rank words
@@ -386,7 +389,8 @@ option; simulator problems on 27.1).
 ## 7. Repo changes
 
 - Delete `app/`, `probe/`, `pipeline/f2f-proxy/` (code), the Pages and
-  Playwright workflows, and R2-manifest logic in `upload_r2.sh`.
+  Playwright workflows, and the R2 upload/CORS scripts (done 2026-11-04
+  with the hosting; `run_pulls.sh` now chains build → `build_packs.py`).
 - Keep `pipeline/` (the build scripts and generated tables are the data
   source for both).
 - Rewrite CLAUDE.md for the native app: non-negotiables (licensing incl.
@@ -412,7 +416,10 @@ option; simulator problems on 27.1).
 6. **Plant ID.** Artefact export, prior, capture → frame → results UI.
 7. **Design polish (dedicated phase).** The main user is a landscape
    architect with a keen eye for design, so the bar is "looks amazing", not
-   "follows the HIG".
+   "follows the HIG". Round-2 decisions (relief on by default, lists stay
+   lists, habitat colour boxes, map stays light, elevations approved,
+   places to wander later) and the designed states: DESIGN.md §3 "States"
+   and §8 (2026-11-04).
    - **Design brief and language** (drafted at the end of milestone 1 and
      applied throughout, so polish is never bolted on): a type scale
      (SF for chrome, italic New York for botanical names), spacing and
@@ -433,14 +440,15 @@ option; simulator problems on 27.1).
      the maps", errors, first launch.
    - **A screenshot matrix reviewed by fresh-eyes design critics:**
      iPhone 16e and iPad Pro 12.9" portrait and landscape, light and dark,
-     default and accessibility Dynamic Type sizes.
+     default text size (accessibility sizes out of scope, 2026-11-04).
    - **A real app icon** (layered, iOS 27 style) instead of the
      placeholder.
    - **Her own review:** a TestFlight build goes to her for feedback, and
      her notes become a final polish round.
-8. **iPad, keyboard, accessibility pass; CI to TestFlight.** Install on
+8. **iPad and keyboard pass (no extended accessibility work — private
+   app, Leo 2026-11-04); CI to TestFlight.** Install on
    Leo's and the partner's phones and the iPad; then retire Pages, R2 and
-   the Worker (ask first).
+   the Worker (done 2026-11-04).
 
 Milestones 3, 4 and the pipeline halves of 5 and 6 can run in parallel once
 milestone 2's shell exists. CI to TestFlight (milestone 8) can be pulled
@@ -488,3 +496,31 @@ place (2026-11-03).
 - proj4 (→ a UTM formula).
 - Per-tile canvas hillshade (→ pre-rendered pack).
 - The manifest-bytes Update button (→ pack versioning).
+
+## 11. Future ideas (not planned)
+
+- **Places to wander** — "later", decided by the user (2026-11-04). A short,
+  static, data-derived list in the empty search state (never a feed: no
+  "new" dot, no daily change), each item with a locator glyph (the
+  Tasmania silhouette with a dot) that flies there and, for a community,
+  starts "Show on map". The round-2 mocks had three concepts:
+  - **Smallest communities** — the rarest TASVEG codes by statewide area,
+    each opening on its largest patch. *Data: already bundled* —
+    `where_patches.json` (`ha`, patch count, the 20 largest patches with
+    label points and boxes); rank by `ha`, skip codes that are not
+    vegetation (water, sand, urban).
+  - **Species-rich spots** — the ~1 km cells with the most species on
+    record, each opening "Recorded near here". *Data: bundled* —
+    `nearby.bin` (species per 0.01° cell). Needs care: it measures survey
+    effort as much as richness (Mount Wellington and the Hobart Rivulet
+    would win), so rank by species per site and require a minimum number
+    of sites, and title it "Most recorded" unless a fairer measure holds.
+  - **Today vs pre-1750** — where the modelled pre-European vegetation now
+    lies under cleared or built land (TASVEG "Modified land" over a native
+    NVIS class), as "cleared since 1750" hotspots. *Data: new pipeline
+    work* — a crosswalk of the 37 Tasmanian NVIS MVS classes to TASVEG
+    groups, an overlay of the pre-1750 raster with TASVEG's modified-land
+    codes (FAG, FUR, FPL, …) summed per ~5 km cell, and a small bundled
+    list of the top cells with hectares; both sources are CC BY (credit in
+    About). The card should say "modelled" on the pre-1750 side.
+

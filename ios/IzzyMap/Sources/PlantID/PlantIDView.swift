@@ -46,6 +46,8 @@ struct PlantIDView: View {
                     destination(route)
                 }
         }
+        // Escape: plant sheet / credits → the suggestions, then closes
+        .modalEscape(model, depth: path.count) { if !path.isEmpty { path.removeLast() } }
         .onAppear { session.use(source) }
         .onChange(of: source) { _, new in session.use(new) }
         // not while the camera covers Identify: that is still Identify
@@ -79,6 +81,7 @@ struct PlantIDView: View {
                 Label("Couldn’t identify this photo", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message)
+                    .foregroundStyle(DesignColor.secondaryInk)
             } actions: {
                 Button("Try Again") { session.identify() }
                     .buttonStyle(.borderedProminent)
@@ -155,7 +158,7 @@ struct PlantIDCapture: View {
                         .accessibilityAddTraits(.isHeader)
                     Text("Photograph one plant — a leaf, a flower or the whole shrub. IzzyMap suggests what it is, on this \(DeviceNoun.current), offline.")
                         .font(.body)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 420)
                 }
@@ -182,7 +185,7 @@ struct PlantIDCapture: View {
                 if let error = session.photoError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.footnote)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
                 if !hasSource {
                     PlantIDModelStatus(packs: packs)
@@ -192,7 +195,7 @@ struct PlantIDCapture: View {
                     Label("Model & training photos", systemImage: "info.circle")
                         .font(.footnote)
                 }
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .accessibilityIdentifier("plant-id-credits")
             }
             .padding(.horizontal, 24)
@@ -288,12 +291,13 @@ struct PlantIDModelStatus: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DesignColor.ink)
             } icon: {
-                Image(systemName: "leaf")
-                    .foregroundStyle(DesignColor.inkSecondary)
+                // the states' one icon language (App/FirstLaunch.swift)
+                Image(systemName: symbol(state))
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             Text(detail(state))
                 .font(.footnote)
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             switch state {
             case let .downloading(f):
@@ -336,6 +340,15 @@ struct PlantIDModelStatus: View {
         return bytes > 0 ? "Get the model · \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))" : "Get the model"
     }
 
+    private func symbol(_ s: PackState) -> String {
+        switch s {
+        case .downloading, .installed: "leaf"
+        case .paused: Connectivity.shared.online ? "pause.circle" : StateSymbol.offline
+        case .failed: StateSymbol.failed
+        case .notInstalled: StateSymbol.get
+        }
+    }
+
     private func headline(_ s: PackState) -> String {
         switch s {
         case .downloading: "Getting the identification model…"
@@ -349,7 +362,7 @@ struct PlantIDModelStatus: View {
     private func detail(_ s: PackState) -> String {
         switch s {
         case .downloading: "You can take or choose the photo now; Identify works once it’s in."
-        case .paused: "It carries on by itself when there’s a network."
+        case .paused: Connectivity.shared.online ? "iOS paused it; it carries on by itself." : "It carries on by itself when there’s reception."
         case let .failed(why): why
         case .installed: ""
         case .notInstalled: packs.canFetch
@@ -375,7 +388,7 @@ struct PlantIDNoProfile: View {
                 if let family = label.family {
                     Text(family)
                         .font(.subheadline)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
                 Text("No Understorey Network profile")
                     .font(.headline)
@@ -383,7 +396,7 @@ struct PlantIDNoProfile: View {
                     .padding(.top, 8)
                 Text("IzzyMap’s plant pages come from the Understorey Network Tasmania database, which has no page for this species. Many of these are mosses, liverworts, weeds or names the database spells differently.")
                     .font(.body)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if let id = label.inat, let url = URL(string: "https://www.inaturalist.org/taxa/\(id)") {
                     Link(destination: url) {

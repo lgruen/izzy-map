@@ -144,9 +144,9 @@ licence · priority (P1 must / P2 should / P3 nice) · milestone.
   - A **mini bloom strip** (12 × 3 pt cells, current month ticked) only when
     `flowering` exists (56 % of plants). It is quiet enough not to clutter,
     and it lets her scan "what's flowering now" down a list.
-  - Add a **Palette** view toggle (List | Palette) on each list: a 3-column
-    photo grid with the name under each, the community as a planting board.
-    The choice persists.
+  - ~~Add a **Palette** view toggle (List | Palette) on each list~~ —
+    **decided by the user (2026-11-04): the plant lists stay lists**, no
+    photo grid.
   - The group list ("pinkberry · 6") as a row of its members' faces.
 - Data: plants.json, records.json · photos fetched on the device (thumbs
   are about 10 KB) · rows **P1**, palette **P2**, bloom mini-strip **P2** ·
@@ -478,7 +478,6 @@ self-directed; the map is the reward.
   - Pictograms are symbols, so they scale with text.
   - Thumbnails grow to 72 pt at AX sizes.
   - Mini-maps keep their size but move below the text.
-  - Palette view drops to 2 columns at AX sizes.
 - **Reduce Motion.** Solo flights, scrub previews and the frame fill become
   cuts.
 - **Performance and battery.**
@@ -504,6 +503,12 @@ self-directed; the map is the reward.
   - Then/now says "modelled" on the pre-1750 side.
 
 ## 7. Decisions for Leo and his partner
+
+Round 2 answered (2026-11-04, DESIGN.md §8): relief **on** by default (1);
+"Places to wander" **later** (4, NATIVE_PLAN "Future ideas"); plant lists
+stay **lists**, no palette (5); habitats as **colour key boxes** (6, the
+mapping derived from the records, Riparian hatched); the map stays light in
+dark mode; the elevation drawings are approved. Still open: 2, 3, 7.
 
 1. Relief on by default (browsing beauty) or off as today?
 2. Calm-map mode: a gesture (sheet below the bar), a command only, or both?

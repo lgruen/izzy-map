@@ -42,3 +42,28 @@ struct CardStackTests {
         #expect(model.cardPath.isEmpty)
     }
 }
+
+@MainActor
+struct ModalEscapeTests {
+    /// Escape inside a modal pops one of its levels (Storage → Layers),
+    /// then closes it; a new modal starts at its root.
+    @Test func escapePopsInsideTheModalBeforeClosingIt() {
+        let model = AppModel(data: .none, tables: CardStackTests.tables)
+        model.present(.layers)
+        #expect(model.escapeStep == .dismiss(.layers))
+        model.modalDepth = 2  // Key, then Storage (the sheet reports it)
+        #expect(model.escapeStep == .modalBack)
+        #expect(model.escapeStep?.title == "Back")
+        let before = model.modalPopRequest
+        model.escape()
+        #expect(model.modalPopRequest == before + 1)  // the sheet pops
+        #expect(model.modal != nil)
+        model.modalDepth = 0
+        model.escape()
+        #expect(model.modal == nil)
+        model.modalDepth = 1
+        model.present(.plantID)
+        #expect(model.modalDepth == 0)
+        #expect(model.escapeStep == .dismiss(.plantID))
+    }
+}

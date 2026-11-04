@@ -39,7 +39,7 @@ struct PlantRow: View {
                             .foregroundStyle(DesignColor.ink)
                         Text([group.common, "\(group.size) species"].compactMap { $0 }.joined(separator: " · "))
                             .font(.subheadline)
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                     } else {
                         Text(BotanicalNames.species(entry.plant.name))
                             .font(.body)
@@ -48,7 +48,7 @@ struct PlantRow: View {
                         if !entry.plant.subline.isEmpty {
                             Text(entry.plant.subline)
                                 .font(.subheadline)
-                                .foregroundStyle(DesignColor.inkSecondary)
+                                .foregroundStyle(DesignColor.secondaryInk)
                         }
                     }
                 }
@@ -60,7 +60,7 @@ struct PlantRow: View {
                 if entry.group != nil {
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
             }
             .padding(.vertical, 6)
@@ -156,7 +156,7 @@ struct EvidenceBar: View {
                 Text("\(figure)")
                     .font(.caption2)
                     .monospacedDigit()
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
         }
         .accessibilityHidden(true)
@@ -191,7 +191,7 @@ struct PlantListSection: View {
                 Text("\(entries.count)")
                     .font(.subheadline)
                     .monospacedDigit()
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
@@ -204,7 +204,7 @@ struct PlantListSection: View {
                 // the bar column's heading, over the bars
                 Text(heading)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize()
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .accessibilityHidden(true)

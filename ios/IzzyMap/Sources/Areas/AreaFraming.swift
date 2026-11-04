@@ -180,7 +180,7 @@ struct AreaFramingBar: View {
             Text(fits ? AreaFramingMetrics.line(box, range: model.shared.areas.range(.aerial, nominal: nominal))
                       : AreaFramingMetrics.tooBig)
                 .font(.footnote).monospacedDigit()
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
                 .accessibilityIdentifier("framing-size")
@@ -213,7 +213,7 @@ struct LimitGauge: View {
                     }
                     var clipped = ctx
                     clipped.clip(to: track)
-                    clipped.fill(track, with: .color(DesignColor.inkSecondary.opacity(0.5)))
+                    clipped.fill(track, with: .color(DesignColor.secondaryInk.opacity(0.5)))
                     clipped.stroke(hatch, with: .color(DesignColor.ink.opacity(0.55)), lineWidth: 1.2)
                 } else {
                     let w = max(size.height, size.width * fill)
@@ -224,7 +224,7 @@ struct LimitGauge: View {
             .frame(minWidth: 120, maxWidth: 220, minHeight: 6, maxHeight: 6)
             Text("limit")
                 .font(.caption2)
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Share of one download's limit")

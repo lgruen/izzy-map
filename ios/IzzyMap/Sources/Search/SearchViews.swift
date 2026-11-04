@@ -17,12 +17,12 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .accessibilityHidden(true)
-            // The prompt in secondaryLabel (≈ 3.4:1 on the field), not the
-            // system placeholder grey (≈ 1.8:1): "Search places" is the
+            // The prompt in secondaryInk (≥ 7.7:1 on the light field), not
+            // the system placeholder grey (≈ 1.8:1): "Search places" is the
             // panel's resting label and must read over any map.
-            TextField(text: text, prompt: Text("Search places").foregroundStyle(DesignColor.inkSecondary)) {
+            TextField(text: text, prompt: Text("Search places").foregroundStyle(DesignColor.secondaryInk)) {
                 Text("Search places")
             }
             .focused($focused)
@@ -60,7 +60,7 @@ struct SearchField: View {
                         focused = true
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .frame(minWidth: 28, minHeight: 28)
                             .contentShape(.rect)
                     }
@@ -135,7 +135,7 @@ struct SearchPlaceChip: View {
                     if let place {
                         Text(place)
                             .font(.subheadline)
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .lineLimit(1)
                     }
                 }
@@ -153,7 +153,7 @@ struct SearchPlaceChip: View {
             Button(action: onClear) {
                 Image(systemName: "xmark")
                     .font(.footnote.weight(.bold))
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .frame(width: 40, height: height)
                     .contentShape(.rect)
             }
@@ -191,7 +191,7 @@ struct SearchResultsView: View {
 
     @ViewBuilder private var content: some View {
         if case let .failed(message) = search.status {
-            StateLine(symbol: "exclamationmark.triangle", text: message)
+            StateLine(symbol: StateSymbol.failed, text: message)
                 .accessibilityIdentifier("search-failure")
         } else if search.query.isEmpty {
             if search.recents.isEmpty {
@@ -217,7 +217,7 @@ struct SearchResultsView: View {
             rows(search.results)
             Text(SearchIndex.credit)
                 .font(.caption2)
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .padding(.top, 12)
         }
     }
@@ -241,26 +241,6 @@ struct SearchResultsView: View {
                 .id(result.id)
             }
         }
-    }
-}
-
-/// A quiet one-line state: a glyph and a sentence.
-private struct StateLine: View {
-    let symbol: String
-    let text: String
-
-    var body: some View {
-        Label {
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(DesignColor.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: symbol)
-                .foregroundStyle(DesignColor.inkSecondary)
-        }
-        .padding(.vertical, 8)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -310,7 +290,7 @@ struct SearchResultRow: View {
                     if !place.isEmpty {
                         Text(place)
                             .font(.subheadline)
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -319,7 +299,7 @@ struct SearchResultRow: View {
                     Text(distance)
                         .font(.subheadline)
                         .monospacedDigit()
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize()
                 }
             }

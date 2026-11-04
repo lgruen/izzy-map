@@ -47,7 +47,7 @@ struct MapView: UIViewRepresentable {
     func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let map = MLNMapView(frame: .zero, styleJSON: context.coordinator.initialStyleJSON())
+        let map = OrnamentFreeMapView(frame: .zero, styleJSON: context.coordinator.initialStyleJSON())
         context.coordinator.attach(to: map)
         return map
     }
@@ -62,5 +62,40 @@ struct MapView: UIViewRepresentable {
         coordinator.apply(spotlight: spotlight, to: map)
         coordinator.searchPins.apply(searchPin, framing: chrome.framingInsets, to: map)
         coordinator.apply(areaFocus: areaFocus, framing: chrome.framingInsets, to: map)
+    }
+}
+
+/// MLNMapView minus MapLibre's own ornaments in its accessibility
+/// container. The map vends its compass, (i) and logo as accessibility
+/// elements itself, hidden or not: XCUITest and the accessibility audit
+/// found "About this map" — MapLibre's credits sheet, bypassing ours — and
+/// "Compass, north" on a map that showed neither (2026-11-04). This keeps
+/// what the container vends (annotations such as the search pin, the user
+/// location) and drops the (i) and the logo always, the compass while the
+/// map faces north (it shows, and works, once the map is rotated).
+/// UIAccessibilityContainer overrides: supported UIKit API on a subclass.
+final class OrnamentFreeMapView: MLNMapView {
+    private func isHiddenOrnament(_ element: Any) -> Bool {
+        let object = element as AnyObject
+        if object === attributionButton || object === logoView { return true }
+        return object === compassView && abs(direction.remainder(dividingBy: 360)) < 0.5
+    }
+
+    /// What MapLibre vends, minus the hidden ornaments (only computed for
+    /// an accessibility client: VoiceOver, XCUITest).
+    private var vended: [Any] {
+        (0 ..< super.accessibilityElementCount()).compactMap { super.accessibilityElement(at: $0) }
+            .filter { !isHiddenOrnament($0) }
+    }
+
+    override func accessibilityElementCount() -> Int { vended.count }
+
+    override func accessibilityElement(at index: Int) -> Any? {
+        let all = vended
+        return all.indices.contains(index) ? all[index] : nil
+    }
+
+    override func index(ofAccessibilityElement element: Any) -> Int {
+        vended.firstIndex { ($0 as AnyObject) === (element as AnyObject) } ?? NSNotFound
     }
 }

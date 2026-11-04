@@ -10,6 +10,7 @@ import SwiftUI
 /// each extra is one tap to get and one to remove. Pushed from Layers (the
 /// sheet's / popover's NavigationStack); Escape closes the whole modal.
 struct StorageView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: AppModel
     /// Done in a sheet of its own (iPad: back to the Layers popover); nil
     /// when pushed in the Layers sheet (Done closes the whole modal).
@@ -42,7 +43,7 @@ struct StorageView: View {
                     #endif
                     guard let target else { return }
                     try? await Task.sleep(for: .milliseconds(600))
-                    withAnimation { proxy.scrollTo(target, anchor: .top) }
+                    withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(target, anchor: .top) }
                 }
         }
     }
@@ -82,7 +83,7 @@ struct StorageView: View {
                 Text("Core maps").panelHeader()
             } footer: {
                 Text("These arrive with the app and stay up to date by themselves.")
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             .panelRows()
 
@@ -92,7 +93,7 @@ struct StorageView: View {
                 Text("Extra maps").panelHeader().id("more")
             } footer: {
                 Text("While a map isn't on this \(DeviceNoun.current), it streams when there's reception.")
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             .panelRows()
 
@@ -103,7 +104,7 @@ struct StorageView: View {
                 Text("Photos by season").panelHeader().id("seasons")
             } footer: {
                 Text("Each season's photos cover only the areas flown that year — the ink on each map.")
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             .panelRows()
 
@@ -115,7 +116,7 @@ struct StorageView: View {
                 Text("Field guide").panelHeader().id("extras")
             } footer: {
                 Text("Fetched by this \(DeviceNoun.current) from their publishers, for your own use. Downloads carry on while IzzyMap is closed.")
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             .panelRows()
 
@@ -153,7 +154,8 @@ struct StorageView: View {
                 storage.refreshVolume()
             }
         }
-        .sensoryFeedback(.success, trigger: packs.states.values.filter(\.isInstalled).count) { old, new in new > old }
+        // "pack installed" plays from the map's status slot (MapStatusStack),
+        // which is always there — here it would play twice
         .accessibilityIdentifier("storage")
     }
 
@@ -194,7 +196,7 @@ struct StorageView: View {
                     Text(idle.isEmpty ? "\(here) of \(Season.all.count) on this \(DeviceNoun.current) · the rest are coming"
                                       : "\(here) of \(Season.all.count) on this \(DeviceNoun.current) · \(StorageText.size(bytes)) to get")
                         .font(.subheadline).monospacedDigit()
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
                 Spacer(minLength: 8)
                 if !idle.isEmpty {
@@ -288,7 +290,7 @@ struct StorageGaugeView: View {
                     // device stays out), so no "of <capacity>" here
                     Text("\(StorageText.size(Int(free))) free on this \(DeviceNoun.current)")
                         .font(.subheadline).monospacedDigit()
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
             }
             GeometryReader { proxy in
@@ -314,7 +316,7 @@ struct StorageGaugeView: View {
                             .foregroundStyle(DesignColor.ink)
                         Text(StorageText.size(Int(segment.bytes)))
                             .monospacedDigit()
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                     }
                     .font(.footnote)
                     .accessibilityElement(children: .combine)
@@ -383,7 +385,7 @@ private struct PackRow<Thumb: View>: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text(status.text(bytes: bytes, device: DeviceNoun.current))
                             .font(.subheadline).monospacedDigit()
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("pack-\(pack.rawValue)-status")
                     }
@@ -396,7 +398,7 @@ private struct PackRow<Thumb: View>: View {
                 if let note = pack.storageNote {
                     Text(note)
                         .font(.footnote)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 2)
                 }
@@ -460,7 +462,7 @@ private struct PackControl: View {
             Button(action: remove) {
                 Image(systemName: "trash")
                     .font(.body)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .frame(width: 44, height: 44)
                     .contentShape(.rect)
             }
@@ -470,7 +472,7 @@ private struct PackControl: View {
             .accessibilityIdentifier("pack-\(pack.rawValue)-remove")
         case .onDevice:
             Image(systemName: "checkmark.circle")
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .frame(width: 44, height: 44)
                 .accessibilityLabel("On this \(DeviceNoun.current)")
         case .checking:
@@ -572,7 +574,7 @@ private struct LayerThumb: View {
         ZStack {
             Rectangle().fill(.fill.tertiary)
             Image(systemName: pack == .plantid ? "leaf" : "map")
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
         }
         .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)
         .overlay {
@@ -670,7 +672,7 @@ private struct ExtraRow: View {
                 Rectangle().fill(.fill.tertiary)
                 Image(systemName: kind.symbol)
                     .font(.title3)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)
             .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
@@ -682,7 +684,7 @@ private struct ExtraRow: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text(statusText)
                             .font(.subheadline).monospacedDigit()
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("extra-\(kind.rawValue)-status")
                     }
@@ -697,7 +699,7 @@ private struct ExtraRow: View {
                 ForEach(notes, id: \.self) { note in
                     Text(note)
                         .font(.footnote)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -740,6 +742,7 @@ private struct ExtraRow: View {
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .hoverEffect(.highlight)
                 .accessibilityLabel("Stop getting \(kind.storageTitle.lowercased())")
                 .accessibilityIdentifier("extra-\(kind.rawValue)-stop")
             } else {
@@ -747,7 +750,7 @@ private struct ExtraRow: View {
                     if batch.done > 0 {
                         Button(action: delete) {
                             Image(systemName: "trash")
-                                .foregroundStyle(DesignColor.inkSecondary)
+                                .foregroundStyle(DesignColor.secondaryInk)
                                 .frame(width: 40, height: 44)
                                 .contentShape(.rect)
                         }

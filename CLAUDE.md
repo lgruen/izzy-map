@@ -37,13 +37,17 @@ milestones, map-proof results); the design brief and language is
    "looks amazing", not "follows the HIG" (`docs/DESIGN.md`, milestone 7).
    Map colours are data (official palettes, never restyled); chrome is
    quiet. Botanical names are set correctly (italics, "×", subsp./var.).
+   Scope: **private app: no VoiceOver/extended accessibility work; legibility at default sizes + iPad keyboard usability matter (Leo, 2026-11-04)** — legible outdoors at the DEFAULT text size
+   is the bar; no VoiceOver announcements/actions, AX-size layouts or
+   Reduce-Motion polish rounds (existing small ones stay).
 5. **Start from what a component is for, then use the supported native
    way** — never port a web workaround (`docs/NATIVE_PLAN.md` §10 lists the
    ones deliberately dropped).
-6. **Remote services stay up until the native app is on all three
-   devices:** the Pages site (last deploy = commit 04ea5d9), the R2 bucket
-   and the `izzy-f2f` Worker. Tear-down only after asking Leo (see
-   "Deployed endpoints").
+6. **No web hosting of our own any more** (retired 2026-11-04, see
+   "Retired hosting"): our data reaches devices only as Apple-hosted
+   Background Assets packs, the licensed extras straight from their
+   publishers. Uploads are LOCAL and deliberate (`upload_packs.sh`, Leo
+   approves), never from CI.
 
 ## Key endpoints & data facts (verified 2026-08-29)
 
@@ -289,8 +293,9 @@ milestones, map-proof results); the design brief and language is
   publisher (no CORS natively → no relay), into Application Support
   (excluded from backup).
 - `pipeline/` — data prep (bash/python via uv; tippecanoe/gdal/pmtiles
-  from brew). PMTiles to `data/` (gitignored; still uploaded to R2 for the
-  live PWA); the small tables straight into `ios/IzzyMap/Resources/Data/`.
+  from brew). PMTiles to `data/` (gitignored; packaged into
+  `data/packs/<id>.aar` by `build_packs.py`); the small tables straight
+  into `ios/IzzyMap/Resources/Data/`.
   Raster packs are declared in `pipeline/packs.json`, built by
   `build_raster.py`. `build_style.py` is misnamed: it writes
   `tasveg_communities.json` (QML colours), which the native app uses.
@@ -332,6 +337,15 @@ milestones, map-proof results); the design brief and language is
 - **Xcode device components must be current** (2026-11-02: "CoreSimulator
   is out of date" made `simctl`/`devicectl` hang) — open Xcode once or
   `sudo xcodebuild -runFirstLaunch`.
+- **Publishing data = the pack workflow:** rebuild the PMTiles in `data/`
+  → `python3 pipeline/build_packs.py <pack>` (→ `data/packs/<pack>.aar`;
+  `--verify <pack>` hashes it against `data/`) → `pipeline/upload_packs.sh
+  <pack>` (LOCAL, Leo approves). Each upload is a new pack version that
+  EVERY device re-downloads in the background (no Update button), so
+  upload only when the tiles actually changed. Pack ids ↔ files:
+  `pipeline/asset_packs.json` (raster keys `aerial2020` … → `season-2020`
+  …). Bundled tables (search, plants, trees, …) ship with the next app
+  build instead (TestFlight), not as packs.
 - **Refresh TASVEG (e.g. 6.0 release):** update URL/version in
   `pipeline/build_tasveg.sh` and the constants in `build_tasveg.py` (zip,
   `EXPECTED_FEATURES`, `OLD_BOUNDS`); `pipeline/build_tasveg.sh --clip
@@ -343,7 +357,9 @@ milestones, map-proof results); the design brief and language is
   tiny_polygons fails), every source polygon id present at z14, every
   label point at z13 AND z14 (`-r1`), table codes == tile codes, z11–14
   bounds ±0.01° of the previous archive. Then swap by hand
-  (`tasveg.pmtiles` → `tasveg_v1.pmtiles`, `_v2` → `tasveg.pmtiles`). Label
+  (`tasveg.pmtiles` → `tasveg_v1.pmtiles`, `_v2` → `tasveg.pmtiles`), then
+  `build_packs.py vector` → `upload_packs.sh vector` (the essential pack:
+  new installs wait for it). Label
   fit filter for the style: a ~3-letter code at 10–12 pt needs `r` ≥
   ~12 pt = 43 m at z14, halving per zoom (233k polygons qualify at z14,
   365k at z15, 439k at z16).
@@ -355,23 +371,25 @@ milestones, map-proof results); the design brief and language is
   PMTiles and ship as a bundled GeoJSON-ish table; their layers go at the
   END of the style, before the selection highlight. Map text Latin-1 only.
 - **Extend topo coverage (e.g. z16):** bump `maxzoom` in `packs.json`,
-  re-run `build_raster.py --pack topo` (disk cache makes it incremental).
-  Re-validate the ocean-prune threshold first (the topo `size<1000@13`
+  re-run `build_raster.py --pack topo` (disk cache makes it incremental)
+  → `build_packs.py topo` → `upload_packs.sh topo`. Re-validate the ocean-prune threshold first (the topo `size<1000@13`
   rule in build_raster.py).
 - **Add a raster pack (base map or season):** add an entry to
   `pipeline/packs.json` → `build_raster.py --measure 1500 --pack <key>` (time
   it first; ~70 tiles/s at 8 concurrent in 2026-09) → `--pack <key>` (the
-  licence guard reads the live copyrightText) → upload (R2 via
-  `upload_r2.sh data/<file>` while the PWA lives; a Background Assets pack
-  from milestone 5) → mirror the file name in `Archive.swift`. Seasons are
-  stacked chronologically. `pipeline/run_pulls.sh` chains build+upload.
+  licence guard reads the live copyrightText) → a pack entry in
+  `asset_packs.json` (mirrored in `Packs.swift`) → mirror the file name in
+  `Archive.swift` → `build_packs.py <id>` → `upload_packs.sh <id>`. Seasons
+  are stacked chronologically. `pipeline/run_pulls.sh` chains build →
+  `build_packs.py` for the seasons + aerial + Tasmap (no topo, no upload)
+  and prints the `upload_packs.sh` command for the packs it rebuilt.
 - **Refreshing a season (2025–26 is INCOMPLETE — still being flown and
   published as of 2026-09-10):** `python3 pipeline/build_raster.py --pack
   aerial2026 --fresh` (wipes that pack's tile cache incl. the cached
   "absent" markers, ~10–40k requests, minutes with keep-alive) →
-  `build_raster.py --check-footprints --pack aerial2026` → re-upload.
-  Natively, a re-uploaded pack updates on devices in the background (no
-  Update button). When LIST adds the CC badge to the 2026 service, delete
+  `build_raster.py --check-footprints --pack aerial2026` →
+  `build_packs.py season-2026` → `upload_packs.sh season-2026` (devices
+  update in the background, no Update button). When LIST adds the CC badge to the 2026 service, delete
   its `licence_override` (the guard would otherwise abort on the changed
   text). Check the season list yearly: a new `AerialPhotoYYYY` service =
   one new packs.json entry + a season in the app.
@@ -395,7 +413,8 @@ milestones, map-proof results); the design brief and language is
   z15). MapLibre Native 7.0.0 on iOS decodes AVIF-with-alpha from a
   `pmtiles://file://` source (simulator screenshots match a lossless PNG
   archive within 4/255; WebP alpha q50 within 6). Rebuild only when the
-  hillshade pack changes (new bytes → every device re-downloads).
+  hillshade pack changes (new bytes → every device re-downloads), then
+  `build_packs.py relief` → `upload_packs.sh relief`.
 - **Refresh "where else" data (with every TASVEG refresh):** `uv run
   --with geopandas --with pyogrio --with pyproj --with pyarrow --with
   rasterio --with scipy python3 pipeline/build_where.py [--tasveg ZIP]`
@@ -409,11 +428,11 @@ milestones, map-proof results); the design brief and language is
   sea in Bass Strait/off Maria Island, file 50 KB–1.5 MB, both ≤ 2 MB,
   byte round-trip through the reference parser. A grid change = bump
   `version` (the Swift reader must check it).
-- **Do not re-upload topo unless its tiles changed:** `build_raster.py`
-  writes extra metadata (`copyright_text`, `built`, …) into the archive, so
-  a rebuild of identical tiles has a different byte size — on R2 every
-  installed PWA would be offered a 2 GB "Update"; as a pack, every device
-  re-downloads it. `run_pulls.sh` deliberately excludes topo.
+- **Do not re-upload the topo pack unless its tiles changed:**
+  `build_raster.py` writes extra metadata (`copyright_text`, `built`, …)
+  into the archive, so a rebuild of identical tiles has different bytes →
+  a new `topo` pack version that every device re-downloads (~2 GB).
+  `run_pulls.sh` deliberately excludes topo. Same for `relief`/`hillshade`.
 - **Refresh place names / addresses (yearly; address points are
   republished quarterly):** `uv run --with shapely --with pyshp --with
   pyproj python3 pipeline/build_gazetteer.py [--fresh]` → writes
@@ -597,9 +616,6 @@ milestones, map-proof results); the design brief and language is
   (`http.client`): urllib's per-tile TLS handshake capped the pull at ~55
   tiles/s (0.8 MB/s); keep-alive gives ~190 tiles/s with the same 8 workers.
 - LIST ArcGIS tile path is `{z}/{y}/{x}` (row before column).
-- `wrangler r2 bucket cors set` wants `{"rules":[{"allowed":{...}}]}`, NOT
-  the S3-style `[{AllowedOrigins:...}]` — the wrong shape fails silently if
-  you pipe the output away. Always verify with a curl -H "Origin:".
 - The ArcGIS `drawingInfo` colours are wrong for 67 hatch-patterned
   communities (they give the hatch-line colour, often black) — always use
   the QML.
@@ -666,7 +682,7 @@ milestones, map-proof results); the design brief and language is
 
 The PWA (`app/`: Vite + TS + MapLibre GL JS 6, service worker, OPFS
 PMTiles, pdf.js viewer, Playwright tests; `probe/` device + plant-ID Safari
-test pages; `pipeline/f2f-proxy/` = the `izzy-f2f` CORS relay Worker;
+test pages; `pipeline/f2f-proxy/` = the CORS relay Worker;
 `.github/workflows/pages-deploy.yml`) was deleted on 2026-11-03. Its
 hard-won web-only gotchas (SW precache globs, MapLibre GL's worker URL,
 `raster://` resolver + 404-to-retain, OPFS part files, Safari keyboard /
@@ -737,41 +753,38 @@ plants UI, areas), never the workarounds.
   `--tiles-only` re-tiles cached `work/pre1750_<cell>.geojsonl` without GDAL.
 
 
-## Deployed endpoints (2026-08-29; still live — the PWA keeps running until the native app is on all devices)
+## Retired hosting (2026-11-04)
 
-- App: https://lgruen.github.io/izzy-map/ (Pages; last deployed from commit
-  04ea5d9 — the deploy workflow is deleted, so nothing redeploys it). To
-  retire (ask Leo first): unpublish Pages in the repo settings.
-- Device probe: https://lgruen.github.io/izzy-map/probe/ (same deploy)
-- Data archives: https://pub-0ef9b8ef1e7541f8814d3e4374485b76.r2.dev
-  (R2 bucket `izzy-map`, CORS for lgruen.github.io + localhost; upload via
-  `pipeline/upload_r2.sh` — LOCAL wrangler OAuth only, >300 MiB files go
-  through a deploy-use-delete multipart uploader Worker, `pipeline/r2-uploader/`).
-  Also `plantid-test/v1/` for the retired Safari plant-ID page. Stays
-  while the PWA lives; the packs replace it (milestone 5).
-- F2F CORS proxy: https://izzy-f2f.fountouki.workers.dev (Worker `izzy-f2f`,
-  allowlisted f2f_*.pdf pass-through; needed because nre.tas.gov.au sends no
-  CORS headers). Since 2026-10-25 also `/un/YYYY/MM/<file>.<img-ext>` →
-  UN `wp-content/uploads/` (separate allow-list, image content-types only,
-  no-store both ways, same Origin check). Both routes `redirect: "manual"`
-  (3xx → 502). Redeployed and verified live 2026-10-25. Its source was
-  deleted from the repo (`git show 04ea5d9:pipeline/f2f-proxy/worker.js`);
-  the native app needs no relay. **Tear-down, only after asking Leo and
-  once the native app is on all three devices:** `npx wrangler delete
-  izzy-f2f` (local wrangler OAuth).
+Torn down with Leo's approval once the native app was on the devices: the
+GitHub Pages site (the PWA + `/probe/` pages, last deployed from commit
+04ea5d9) was unpublished; the Cloudflare R2 bucket `izzy-map` (the PMTiles
+archives + `data-manifest.json`, and `plantid-test/v1/` for the Safari
+plant-ID page) was emptied and deleted; the Cloudflare Worker `izzy-f2f`
+(CORS relay for F2F PDFs and UN photos) was deleted. Their scripts went
+too (`upload_r2.sh`, `r2-cors.json`, `r2-uploader/`,
+`plantid/upload_test.sh`; history: `git show 04ea5d9:<path>`). Nothing
+else depends on Cloudflare or Pages.
+
+Where data lives now: `data/` on Leo's Mac (the master copies — R2 is
+gone, so keep a backup), packaged as Apple-hosted Background Assets packs
+(`data/packs/*.aar`, App Store Connect). The F2F chapters, UN photos and
+tree data sheets are fetched by the device straight from their publishers
+(no CORS natively, no relay). To publish data: the pack workflow
+(`build_packs.py <pack>` → `upload_packs.sh <pack>`, see Workflows).
 
 ## Decisions revised during build (vs original plan)
 
 - Region packs → ONE statewide topo pack z0–15 (probe showed 41 GB quota on
   the target phone; TASVEG stays sharp at all zooms as vector). z16 remains
   a documented extension (+~5 GB).
-- No Cloudflare secrets in GitHub CI — tests + Pages deploy only; data
-  uploads always local (user decision).
+- No upload secrets in GitHub CI — data uploads always local (user
+  decision; then R2, now `upload_packs.sh`).
 - F2F PDFs render in an in-app pdf.js viewer with per-community page deep
   links (Safari ignores #page= on blob: URLs) — web only; natively PDFKit.
 - Native app replaces the PWA (Leo, 2026-11-03): Apple-hosted Background
   Assets packs instead of R2 downloads, no relay, CI on GitHub Actions
-  (simulator tests now; TestFlight later, local pack uploads only).
+  (simulator tests + TestFlight builds; local pack uploads only). Web
+  hosting retired 2026-11-04.
 
 ## Status log
 
@@ -783,7 +796,9 @@ plants UI, areas), never the workarounds.
   Acknowledgements screen (MapLibre BSD-2 + its iOS third-party notices,
   BioCLIP 2.5 MIT + citation, Noto Sans OFL 1.1 — generated by
   `build_acknowledgements.py`). CI green (IzzyKit `swift test` + simulator
-  `xcodebuild test`).
+  `xcodebuild test`). Web hosting retired (Leo): Pages unpublished, R2
+  bucket emptied + deleted, relay Worker deleted, their scripts removed;
+  `run_pulls.sh` now packages instead of uploading.
 - 2026-11-03: Native start (milestone 1, `docs/NATIVE_PLAN.md`). Map
   proof with MapLibre Native 7.0.0 (local vector/PNG/JPEG/MIXED PMTiles,
   overzoom, live LIST above packs, Latin-1 labels, water alpha 207,
@@ -795,7 +810,7 @@ plants UI, areas), never the workarounds.
   into `ios/IzzyMap/Resources/Data/`; glyphs into `Resources/glyphs/`;
   pipeline outputs repointed; `app/`, `probe/`, `pipeline/f2f-proxy/`,
   `make_raster_fixtures.py` and the Pages workflow deleted (Pages, R2 and
-  the Worker stay live); new `ci.yml` (IzzyKit `swift test` + simulator
+  the Worker stayed live until 2026-11-04); new `ci.yml` (IzzyKit `swift test` + simulator
   `xcodebuild test` on the `xcode-27` runner). Plant ID: BioCLIP 2.5 at
   94.7 % top-1; the Safari test was memory-killed on the 16e → native Core
   ML test app (`native/plantid-test`, TestFlight).

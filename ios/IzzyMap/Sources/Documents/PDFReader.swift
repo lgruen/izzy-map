@@ -28,6 +28,7 @@ struct PDFReader: View {
                         Label("This document doesn’t open", systemImage: "doc.questionmark")
                     } description: {
                         Text("The copy on this \(DeviceNoun.current) is damaged or incomplete.")
+                            .foregroundStyle(DesignColor.secondaryInk)
                     } actions: {
                         Button("Download Again") { opener.downloadAgain() }
                             .buttonStyle(.borderedProminent)
@@ -62,13 +63,16 @@ struct PDFReader: View {
                 .font(.headline)
                 .fontDesign(.serif)
                 .lineLimit(1)
+                // a community name fits the 16e's bar a size smaller
+                // before it is cut in the middle
+                .minimumScaleFactor(0.8)
                 .truncationMode(.middle)
                 .accessibilityAddTraits(.isHeader)
             if count > 0 {
                 Text("Page \(current + 1) of \(count)")
                     .font(.caption)
                     .monospacedDigit()
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .accessibilityIdentifier("reader-page")
             }
         }

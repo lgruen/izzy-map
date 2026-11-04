@@ -1,6 +1,6 @@
 """Export a BioCLIP image encoder to ONNX for the in-browser feasibility test
 (probe/plantid/, retired — last in commit 04ea5d9). Writes a self-contained data folder that the test page
-reads from one base URL (R2 in production, a local server for testing):
+reads from one base URL (it was R2, retired 2026-11-04; now a local server):
 
   <out>/model.onnx            graph only (weights live in the shards)
   <out>/model-NN.bin          weights, <= --shard-mb each (resumable download)

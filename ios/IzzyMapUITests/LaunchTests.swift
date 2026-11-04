@@ -16,6 +16,12 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["location-button"].exists)
         XCTAssertTrue(app.textFields["search-field"].waitForExistence(timeout: patience(5)))
         XCTAssertTrue(app.buttons["plant-id-button"].exists)
+        // MapLibre's own ornaments stay out: its "About this map" button
+        // would open MapLibre's credits instead of ours, and the compass is
+        // invisible at north (it appears once the map is rotated)
+        XCTAssertTrue(app.buttons["attribution-button"].exists, "our (i)")
+        XCTAssertFalse(app.buttons["About this map"].exists, "MapLibre's attribution button is exposed")
+        XCTAssertFalse(app.descendants(matching: .any)["Compass"].exists, "MapLibre's compass is exposed at north")
         attachScreenshot("launch")
 
         app.buttons["layers-button"].tap()

@@ -7,6 +7,9 @@ nonisolated struct MapTables: Sendable {
     var geology: GeologyTable = [:]
     var pre1750: Pre1750Table = [:]
     var trees: TreesData?
+    /// Tasmania's coastline (the mini-maps' silhouette): the calm stand-in
+    /// for the topo map while it isn't on the device and there is no network.
+    var outline: TasmaniaOutline?
 
     static let empty = MapTables()
 }
@@ -46,6 +49,8 @@ nonisolated struct SelectionStyle: Equatable, Sendable {
 nonisolated enum StyleBuilder {
     enum LayerID {
         static let background = "bg"
+        /// The coastline placeholder (no topo pack, offline).
+        static let coast = "coast"
         static let topo = "topo"
         static let topoLive = "topo-live"
         static let tasmap = "tasmap"
@@ -105,6 +110,7 @@ nonisolated enum StyleBuilder {
         /// whose layer filter changes — on this source that is a few
         /// filtered lines, never the fills, boundaries and labels.
         static let highlight = "highlight"
+        static let coast = "coast"
         static let topo = "topo"
         static let topoLive = "topo-live"
         static let tasmap = "tasmap"
@@ -191,6 +197,13 @@ nonisolated enum StyleBuilder {
     static let glyphs = "asset://glyphs/{fontstack}/{range}.pbf"
     static let boldFont = ["Noto Sans Bold"]
     static let regularFont = ["Noto Sans Regular"]
+
+    /// The outline's rings as one GeoJSON polygon set (line layer only:
+    /// rings are drawn as they come, holes or not).
+    static func coastGeoJSON(_ outline: TasmaniaOutline) -> [String: Any] {
+        ["type": "Feature", "properties": [String: Any](),
+         "geometry": ["type": "MultiLineString", "coordinates": outline.rings] as [String: Any]]
+    }
 
     // MARK: Visibility rules
 
@@ -304,6 +317,20 @@ nonisolated enum StyleBuilder {
                 if online, let liveMaxZoom, a.maxZoom < liveMaxZoom { l["maxzoom"] = Double(a.maxZoom) - 0.5 }
                 layers.append(l)
             }
+        }
+
+        // The topo map not here yet and no network to stream it (first
+        // launch offline, DESIGN.md §3 "States"): plain paper with the
+        // coast in a grey hairline, as on the mini-map plates — the overlay
+        // reads as a map, not as colour floating on white. Only to z9: the
+        // outline is a union of locality areas, which run out to mid-river
+        // in estuaries — invisible statewide, a jagged line across the
+        // Derwent at z11 (seen 2026-11-04) — and from z10 the vegetation's
+        // own edges draw the land anyway.
+        if showsTopo(state, data: data), data.url(for: .topo) == nil, !online, let outline = tables.outline {
+            sources[SourceID.coast] = ["type": "geojson", "data": coastGeoJSON(outline)] as [String: Any]
+            layers.append(["id": LayerID.coast, "type": "line", "source": SourceID.coast, "maxzoom": 9.5,
+                           "paint": ["line-color": "rgba(0,0,0,0.45)", "line-width": 0.5]])
         }
 
         if showsTopo(state, data: data) {

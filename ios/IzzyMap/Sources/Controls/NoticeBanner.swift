@@ -11,7 +11,7 @@ struct NoticeBanner: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: notice.symbol)
                 .font(.body.weight(.semibold))
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .padding(.top, 2)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
@@ -29,7 +29,7 @@ struct NoticeBanner: View {
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.footnote.weight(.bold))
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .frame(width: 44, height: 44)
                     .contentShape(.circle)
             }

@@ -10,6 +10,7 @@ struct RootView: View {
     @Bindable var model: AppModel
     @Environment(\.horizontalSizeClass) private var widthClass
     @Environment(\.verticalSizeClass) private var heightClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var screen = ScreenMetrics()
     /// The compact sheet's frame in global coordinates, as measured inside
@@ -82,7 +83,7 @@ struct RootView: View {
                     .reportFrame(.setupCard, into: $chromeFrames)
                     .padding([.leading, .top], Self.margin)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
             } else if !usesSheet {
                 FloatingPanel(model: model, maxHeight: max(120, screen.size.height - pillHeight - 4 * Self.margin))
                     .frame(width: cardWidth)
@@ -137,21 +138,19 @@ struct RootView: View {
                     .transition(.opacity)
             }
 
-            if let notice = model.notice {
-                NoticeBanner(notice: notice) { model.dismissNotice() }
-                    .frame(maxWidth: 440)
-                    .reportFrame(.notice, into: $chromeFrames)
-                    // phone sheet: leading, clear of the controls; card layout:
-                    // centred in the map area between the card and the controls
-                    .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
-                    .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
-                    .padding(.top, Self.margin)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: usesSheet ? .topLeading : .top)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            // the top status slot: the one-time welcome, "Maps arriving",
+            // a location message — phone sheet: leading, clear of the
+            // controls; card layout: centred in the map area between the
+            // card and the controls
+            MapStatusStack(model: model, reduceMotion: reduceMotion,
+                           showsModeBar: model.spotlight != nil || model.isFraming, frames: $chromeFrames)
+                .frame(maxWidth: 440)
+                .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
+                .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
+                .padding(.top, Self.margin)
+                .frame(maxWidth: .infinity, maxHeight: .infinity,
+                       alignment: usesSheet ? .topLeading : .top)
         }
-        .animation(.snappy, value: model.notice)
         .animation(.snappy, value: model.isFraming)
         .animation(.snappy, value: showsSetupCard)
         .animation(.snappy, value: model.spotlight?.code)
@@ -289,9 +288,11 @@ nonisolated enum ChromePiece: Hashable, Sendable {
 
 extension View {
     /// Reports this view's global frame (whole points) under `piece`, and
-    /// removes it when the view goes.
-    func reportFrame(_ piece: ChromePiece, into frames: Binding<[ChromePiece: CGRect]>) -> some View {
-        onGeometryChange(for: CGRect.self) { proxy in
+    /// removes it when the view goes — or while `when` is false (a slot
+    /// that stays in the hierarchy with nothing in it).
+    func reportFrame(_ piece: ChromePiece, into frames: Binding<[ChromePiece: CGRect]>, when shown: Bool = true) -> some View {
+        onGeometryChange(for: CGRect?.self) { proxy in
+            guard shown else { return nil }
             let f = proxy.frame(in: .global)
             return CGRect(x: f.minX.rounded(), y: f.minY.rounded(), width: f.width.rounded(), height: f.height.rounded())
         } action: { frame in

@@ -59,7 +59,7 @@ struct AreaSetupSheet: View {
                 HStack(spacing: 12) {
                     Image(systemName: "square.dashed")
                         .font(.title2)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         TextField("Name", text: $name)
@@ -72,7 +72,7 @@ struct AreaSetupSheet: View {
                             .accessibilityIdentifier("area-name")
                         Text(AreaFramingMetrics.size(box))
                             .font(.subheadline).monospacedDigit()
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                     }
                 }
             }
@@ -86,9 +86,11 @@ struct AreaSetupSheet: View {
                 }
             } header: {
                 Text("Layers")
+                    .foregroundStyle(DesignColor.secondaryInk)
             } footer: {
                 // she will look for it: say why it isn't here, once
                 Text("Relief shading is already complete statewide.")
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
 
             Section {
@@ -97,6 +99,7 @@ struct AreaSetupSheet: View {
                     .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
             } header: {
                 Text("Detail")
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
 
             Section {
@@ -110,12 +113,12 @@ struct AreaSetupSheet: View {
                     if let problem = plan.problem {
                         Text(problem)
                             .font(.subheadline)
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .accessibilityIdentifier("area-problem")
                     } else if let freeLine = plan.freeLine {
                         Text(freeLine)
                             .font(.subheadline).monospacedDigit()
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                     }
                 }
                 .padding(.vertical, 2)
@@ -365,19 +368,19 @@ private struct LayerChoiceRow: View {
             HStack(spacing: 12) {
                 Image(systemName: choice.symbol)
                     .frame(width: 28)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(choice.title).foregroundStyle(DesignColor.ink)
                     Text(line)
                         .font(.subheadline).monospacedDigit()
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: on && enabled ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundStyle(on && enabled ? DesignColor.ink : DesignColor.inkSecondary)
+                    .foregroundStyle(on && enabled ? DesignColor.ink : DesignColor.secondaryInk)
                     .accessibilityHidden(true)
             }
             .contentShape(.rect)
@@ -413,7 +416,7 @@ struct DetailPicker: View {
             if crops?.live == false {
                 Text("Offline: the detail shows after download.")
                     .font(.footnote)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("area-detail-offline")
             }
@@ -447,11 +450,11 @@ struct DetailPicker: View {
                     .foregroundStyle(DesignColor.ink)
                 Text(String(format: "%.1f\u{00A0}m", mpp))
                     .font(.caption).monospacedDigit()
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                 if let size {
                     Text(size)
                         .font(.caption).monospacedDigit()
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                 }

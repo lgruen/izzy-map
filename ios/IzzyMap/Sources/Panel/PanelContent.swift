@@ -79,6 +79,15 @@ struct PanelHeader: View {
                         .frame(width: fieldHeight, height: fieldHeight)
                         .background(.fill.tertiary, in: .circle)
                         .contentShape(.circle)
+                        // the welcome's "this one" (App/FirstLaunch.swift),
+                        // in the label colour: the sheet follows the system
+                        .overlay {
+                            if model.showsWelcome {
+                                Circle().strokeBorder(DesignColor.ink.opacity(0.85), lineWidth: 2)
+                                    .padding(-3)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -119,21 +128,26 @@ struct LeafViewfinder: View {
     }
 }
 
-/// Shown when no map archive is on the device.
+/// Shown when no map archive is on the device (the essential pack missing
+/// after a dropout; the "Maps arriving" chip has the progress).
 struct NoDataNotice: View {
     var body: some View {
+        let online = Connectivity.shared.online
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text("No offline maps on this device yet")
+                Text("No offline maps on this \(DeviceNoun.current) yet")
                     .font(.subheadline.weight(.semibold))
-                Text("Online, the detailed topographic map still loads when you zoom in close.")
+                    .foregroundStyle(DesignColor.ink)
+                Text(online ? "They’re on their way. Meanwhile the topographic map streams from theLIST."
+                     : "They arrive once there’s reception.")
                     .font(.footnote)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
         } icon: {
-            Image(systemName: "map")
-                .foregroundStyle(DesignColor.inkSecondary)
+            Image(systemName: online ? StateSymbol.get : StateSymbol.offline)
+                .foregroundStyle(DesignColor.secondaryInk)
         }
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("no-data")
     }
 }

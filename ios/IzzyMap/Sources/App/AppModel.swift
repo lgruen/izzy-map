@@ -100,6 +100,7 @@ nonisolated struct AppData: Sendable {
             tables.geology = load("geology") { try data.geologyUnits() } ?? [:]
             tables.pre1750 = load("pre1750") { try data.pre1750Units() } ?? [:]
             tables.trees = load("trees") { try data.trees() }
+            tables.outline = load("outline") { try data.tasmaniaOutline() }
         } else {
             logger.fault("bundled data folder missing")
         }
@@ -166,6 +167,9 @@ nonisolated enum EscapeStep: Equatable, Sendable {
     /// The full-screen document reader (over everything, so first).
     case closeDocument
     case dismiss(Presentation)
+    /// One level back inside the modal (Storage → Layers, Key → Layers,
+    /// plant sheet → suggestions).
+    case modalBack
     /// Framing a detailed area: Cancel.
     case cancelFraming
     /// One view back in the card's stack (plant sheet → group list → card).
@@ -181,6 +185,7 @@ nonisolated enum EscapeStep: Equatable, Sendable {
         switch self {
         case .closeDocument: "Close Document"
         case let .dismiss(presentation): "Close \(presentation.title)"
+        case .modalBack: "Back"
         case .cancelFraming: "Cancel Framing"
         case .back: "Back"
         case .closeCard: "Close Card"
@@ -293,9 +298,31 @@ final class AppModel {
     /// Place search: query, results, the picked place's pin (Search/).
     let search = SearchModel()
     /// The modal on screen (at most one).
-    var modal: ModalRequest?
+    var modal: ModalRequest? {
+        didSet { if modal != oldValue { modalDepth = 0 } }
+    }
+    /// Levels pushed inside the open modal's own navigation (Layers ▸ Key /
+    /// Storage, Identify ▸ plant sheet, Credits ▸ Acknowledgements): the
+    /// modal reports it (`ModalEscape`), so Escape pops one level before it
+    /// closes the modal.
+    var modalDepth = 0
+    /// Bumped by Escape while `modalDepth > 0`: the modal pops one level.
+    private(set) var modalPopRequest = 0
     /// Set by RootView from the size classes.
     private(set) var panelLayout: PanelLayout = .sheet
+
+    // MARK: First launch
+
+    /// The one-time welcome over the map (App/FirstLaunch.swift): until she
+    /// taps OK, opens Layers or Identify, or taps a feature.
+    private(set) var showsWelcome: Bool
+    @ObservationIgnored private let welcome: WelcomeStore
+
+    func dismissWelcome() {
+        guard showsWelcome else { return }
+        showsWelcome = false
+        welcome.markSeen()
+    }
 
     // MARK: Location messages
 
@@ -314,10 +341,12 @@ final class AppModel {
     /// How long a location message stays up.
     static let noticeDuration: Duration = .seconds(10)
 
-    init(shared: AppData, layers: LayerState = .default, clock: LocationClock = .live) {
+    init(shared: AppData, layers: LayerState = .default, clock: LocationClock = .live, welcome: WelcomeStore = WelcomeStore()) {
         self.shared = shared
         self.layers = layers
         self.clock = clock
+        self.welcome = welcome
+        showsWelcome = !welcome.seen
         search.near = { [map] in map.centre.map { GeoPoint(longitude: $0.longitude, latitude: $0.latitude) } }
         // a picked place is a new view: the card and a soloed community go
         search.onPick = { [weak self] in
@@ -326,13 +355,16 @@ final class AppModel {
         }
     }
 
-    convenience init(data: DataLocation, tables: MapTables, layers: LayerState = .default, clock: LocationClock = .live) {
-        self.init(shared: AppData(location: data, tables: tables), layers: layers, clock: clock)
+    convenience init(data: DataLocation, tables: MapTables, layers: LayerState = .default, clock: LocationClock = .live,
+                     welcome: WelcomeStore = WelcomeStore()) {
+        self.init(shared: AppData(location: data, tables: tables), layers: layers, clock: clock, welcome: welcome)
     }
 
     // MARK: Selection
 
     func select(_ feature: SelectedFeature) {
+        // she found the core gesture: the welcome has done its job
+        dismissWelcome()
         endSpotlight()
         // a map tap while the results are up (iPad, the phone's medium
         // detent) shows its card
@@ -369,6 +401,7 @@ final class AppModel {
     // MARK: Modals and Escape
 
     func present(_ presentation: Presentation) {
+        if presentation == .layers || presentation == .plantID { dismissWelcome() }
         modal = ModalRequest(presentation: presentation, layout: panelLayout)
     }
 
@@ -390,7 +423,7 @@ final class AppModel {
     /// The next thing Escape closes, nil when there is nothing to close.
     var escapeStep: EscapeStep? {
         if documents.isReading { return .closeDocument }
-        if let modal { return .dismiss(modal.presentation) }
+        if let modal { return modalDepth > 0 ? .modalBack : .dismiss(modal.presentation) }
         if isFraming { return .cancelFraming }
         if search.fieldFocused { return .leaveSearchField }
         if search.isActive { return .closeSearch }
@@ -405,6 +438,7 @@ final class AppModel {
     func escape() {
         switch escapeStep {
         case .closeDocument: documents.closeReader()
+        case .modalBack: modalPopRequest += 1
         case .dismiss: modal = nil
         case .cancelFraming: cancelFraming()
         case .back: cardPath.removeLast()
@@ -425,8 +459,17 @@ final class AppModel {
     private(set) var isFraming = false
     /// The framed box handed to the setup sheet by Next.
     private(set) var areaDraft: AreaBox?
-    /// Layers opens with Storage pushed (after Download: the new row).
+    /// Layers opens with Storage pushed (after Download: the new row; the
+    /// "Maps arriving" chip: the maps), scrolled to `storageOpenTarget`.
     var opensStorage = false
+    @ObservationIgnored var storageOpenTarget: String?
+
+    /// Storage over the map, from anywhere (the chip, Download).
+    func openStorage(at target: String?) {
+        storageOpenTarget = target
+        opensStorage = true
+        present(.layers)
+    }
     /// "Show on map" for a detailed area: the map frames it (each request
     /// a new serial, so the same area can be asked for twice).
     private(set) var areaFocus: AreaFocus?
@@ -478,8 +521,7 @@ final class AppModel {
         areaDraft = nil
         map.framedBox = nil
         map.draftRect = nil
-        opensStorage = true
-        present(.layers)
+        openStorage(at: "areas")
     }
 
     // MARK: Location
@@ -579,6 +621,17 @@ final class AppModel {
         noFixShown = true
         show(.noFix)
     }
+
+    #if DEBUG
+    /// Screenshots: `-debugNotice denied|noFix` shows that message at launch.
+    func debugShowNotice() {
+        switch UserDefaults.standard.string(forKey: "debugNotice") {
+        case "denied": show(.denied)
+        case "noFix": show(.noFix)
+        default: break
+        }
+    }
+    #endif
 
     private func show(_ notice: LocationNotice) {
         self.notice = notice

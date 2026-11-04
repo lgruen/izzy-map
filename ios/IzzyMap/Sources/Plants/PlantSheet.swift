@@ -34,10 +34,13 @@ struct PlantSheet: View {
             }
             #if DEBUG
             // screenshots of the scroll edge: `-debugScrollSheet YES`
+            // (the elevation) or `habitats` (the habitat key)
             .task {
-                guard UserDefaults.standard.bool(forKey: "debugScrollSheet") else { return }
+                let to = UserDefaults.standard.string(forKey: "debugScrollSheet")
+                guard to == "habitats" || UserDefaults.standard.bool(forKey: "debugScrollSheet") else { return }
                 try? await Task.sleep(for: .seconds(2))
-                withAnimation { proxy.scrollTo("sheet-height", anchor: .top) }
+                let anchor = to == "habitats" ? "sheet-habitats" : "sheet-height"
+                withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(anchor, anchor: to == "habitats" ? .center : .top) }
             }
             #endif
         }
@@ -81,6 +84,7 @@ struct PlantSheet: View {
             prose(plant)
             if !plant.habitats.isEmpty {
                 habitats(plant)
+                    .id("sheet-habitats")
             }
             if let url = plant.profileURL {
                 Link(destination: url) {
@@ -95,7 +99,7 @@ struct PlantSheet: View {
                 Text(PlantCredits.records)
             }
             .font(.caption)
-            .foregroundStyle(DesignColor.inkSecondary)
+            .foregroundStyle(DesignColor.secondaryInk)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -120,7 +124,7 @@ struct PlantSheet: View {
             }
             Text(plant.photos[min(page, plant.photos.count - 1)].caption)
                 .font(.caption2)
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("photo-credit")
         }
@@ -160,7 +164,7 @@ struct PlantSheet: View {
             if let family = plant.family {
                 Text(family)
                     .font(.subheadline)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
         }
     }
@@ -182,7 +186,7 @@ struct PlantSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(MiniMapCredits.records)
                     .font(.caption2)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .ignore)
@@ -238,7 +242,7 @@ struct PlantSheet: View {
     private func label(_ s: String) -> some View {
         Text(s)
             .font(.subheadline)
-            .foregroundStyle(DesignColor.inkSecondary)
+            .foregroundStyle(DesignColor.secondaryInk)
             .gridColumnAlignment(.leading)
     }
 
@@ -277,21 +281,27 @@ struct PlantSheet: View {
         }
     }
 
+    /// Habitats as a printed key (decided by the user, 2026-11-04): each
+    /// UN class beside a key box in the map colour of its TASVEG group
+    /// (`HabitatKey`), Riparian hatched — no group of its own.
     private func habitats(_ plant: Plant) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             SheetHeading("Habitats")
-            FlowLayout(spacing: 6) {
+            FlowLayout(spacing: 14, lineSpacing: 8) {
                 ForEach(plant.habitats, id: \.self) { h in
-                    Text(h)
-                        .font(.footnote)
-                        .foregroundStyle(DesignColor.ink)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
+                    let key = HabitatKey.entry(h)
+                    HStack(spacing: 6) {
+                        HabitatBox(entry: key)
+                        Text(h)
+                            .font(.footnote)
+                            .foregroundStyle(DesignColor.ink)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(key.spoken)
                 }
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("plant-habitats")
     }
 }
@@ -314,13 +324,15 @@ struct ZoomDestination: ViewModifier {
 /// Wrapping row layout for short tags.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
+    /// Between lines (default: `spacing`).
+    var lineSpacing: CGFloat?
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
         for s in subviews {
             let size = s.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width { x = 0; y += line + spacing; line = 0 }
+            if x > 0, x + size.width > width { x = 0; y += line + (lineSpacing ?? spacing); line = 0 }
             x += size.width + spacing
             widest = max(widest, x - spacing)
             line = max(line, size.height)
@@ -332,7 +344,7 @@ struct FlowLayout: Layout {
         var x = bounds.minX, y = bounds.minY, line: CGFloat = 0
         for s in subviews {
             let size = s.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX { x = bounds.minX; y += line + spacing; line = 0 }
+            if x > bounds.minX, x + size.width > bounds.maxX { x = bounds.minX; y += line + (lineSpacing ?? spacing); line = 0 }
             s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
             x += size.width + spacing
             line = max(line, size.height)
@@ -366,7 +378,7 @@ struct GroupList: View {
                         Text(BotanicalNames.species(group.key) + AttributedString(" (broad sense) · \(group.size) species"))
                             .font(.subheadline)
                             .fontDesign(.serif)
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                     }
                     // the members' faces, as a planting board
                     HStack(spacing: 6) {
@@ -393,7 +405,7 @@ struct GroupList: View {
                     }
                     Text("The description names the group as a whole; the Understorey Network profiles its species separately.")
                         .font(.caption)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 16)

@@ -398,7 +398,7 @@ struct FormPlaceholder: View {
         Rectangle()
             .fill(Color(uiColor: .tertiarySystemFill))
             .overlay {
-                GrowthFormGlyph(shape: shape, ink: DesignColor.inkSecondary)
+                GrowthFormGlyph(shape: shape, ink: DesignColor.secondaryInk)
                     .padding(6)
             }
     }

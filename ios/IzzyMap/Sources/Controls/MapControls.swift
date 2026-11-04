@@ -22,6 +22,8 @@ struct MapControls: View {
             MapControlButton(symbol: "square.3.layers.3d", label: "Layers") {
                 model.present(.layers)
             }
+            // the welcome's "this one" (App/FirstLaunch.swift)
+            .overlay { if model.showsWelcome { WelcomeRing().padding(3) } }
             .accessibilityIdentifier("layers-button")
             .popover(isPresented: layersPopoverBinding) {
                 LayersSheet(model: model)

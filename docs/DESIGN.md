@@ -56,7 +56,7 @@ override — and the iPad floating card is one `.glassEffect(.regular)` slab,
 its equivalent. The modal sheets over the panel (Layers, attribution,
 plant ID) and the iPad Layers popover are the system's own sheet and
 popover glass too. Content sits directly on the glass in explicit,
-non-vibrant label colours (`label`, `secondaryLabel`; the hierarchical
+non-vibrant label colours (`label`, `secondaryInk`; the hierarchical
 `.primary`/`.secondary` styles turn vibrant on glass and pick up the map's
 hue); no inner glass or material groups — never glass on glass.
 
@@ -77,6 +77,8 @@ The custom roles are few:
 | Role | Light | Dark | Use |
 |---|---|---|---|
 | `ink` | `label` (#000000) | `label` (#FFFFFF) | app tint: glyphs, links, prominent buttons (ink fill, inverse text), progress |
+| `secondaryInk` | `label` @ 70 % (#4D4D4D on white, 8.4:1; 7.4–7.6:1 on glass over the map) | `label` @ 80 % (≈ 10:1 on #1C1C1E; 3.1:1 on dark glass over the light map — see below) | ALL secondary text: common names, row labels (Group, Structure), captions, distances, storage sizes, list headers/footers, placeholders — never `secondaryLabel` (decided 2026-11-04, see below) |
+| `codeInk` | `label` @ 75 % | `label` @ 75 % | community/unit codes in small caps |
 | `mapInk` | #000000 | #000000 (map is always light) | map code labels, same-community dashes |
 | `selection` | #FF3B30 | same (the map is always light) | the tapped feature: polygon line, tap ring, tree ring (3 pt) — decided 2026-11-03 |
 | `mapHalo` | #FFFFFF @ 85 % | same | halo under every map ink line/label |
@@ -86,6 +88,21 @@ The custom roles are few:
 | `location` | system blue | system blue | the user dot — a platform convention, not ours |
 | `destructive` | system red | system red | Remove, Delete |
 
+- **`secondaryInk`, not `secondaryLabel` (outdoor legibility, 2026-11-04).**
+  `secondaryLabel` measured 3.2–3.4:1 on white and on the light glass over
+  the brightest TASVEG fills — too faint in sunlight for 13–15 pt text.
+  `label` @ 70 % is 8.4:1 on white and measured **7.4–7.6:1** on the sheet's
+  glass over the map (iPhone 16e simulator, the plant list over DCO at
+  default strength: summary line, common names, counts); hierarchy stays in
+  size, weight and the 30 % step. **Dark mode is limited by the glass, not
+  the ink:** the always-light map makes the dark glass mid-grey (sampled
+  ground ≈ #79866E), where pure white measures only **3.85:1** and
+  `label` @ 80 % **3.1:1** (`secondaryLabel` ≈ 2.1:1 there); on the opaque
+  dark surfaces (large detent, Storage, form sheets) @ 80 % is ≈ 10:1.
+  Reaching 4.5:1 for secondary text in dark mode over the map would need a
+  darker ground (a tinted card glass / sheet background), which the
+  "system glass, no plate" decision rules out — open question for Leo.
+  UIKit text uses `DesignColor.secondaryInkUI`.
 - **No accent hue.** App tint = `ink`; prominent buttons are ink capsules
   (21:1). **No `Toggle`s** — an ink toggle in dark mode is a white knob on a
   white track; binary choices are checkmark rows, like a key's tick-boxes.
@@ -104,6 +121,24 @@ The custom roles are few:
     washed out to near-white (WDR #326565 at aerial-light 0.20 is #D6E0E0)
     and Outlines left a white box with a thin band. (No "Map colour #hex"
     row: the box is the colour.)
+- **Habitat key boxes — decided by the user (2026-11-04).** On the plant
+  sheet each Understorey Network habitat class gets a key box (3:2 at text
+  size, keyline, white plate) in the colour the map gives the matching
+  TASVEG group, with the class name beside it — the legend's language, so
+  "Wet Eucalypt Forest" reads as the teal on the map. Full-strength
+  official fill, like the card's swatch (it names a unit). The mapping is
+  derived from the bundled data (`IzzyKit/HabitatKey.swift`, re-derived by
+  `HabitatKeyTests`): ALA site records of the plants carrying each class,
+  summed per VEG_GROUP against all plants (lift); a class maps to the group
+  its name and ecology point to when the records put that group in its top
+  two at lift ≥ 1.4. Colour = the fill of the namesake community with the
+  highest lift (DAM, GTL, RMT, WRE, SSC, ASS, ASF, AHF), else the group's
+  largest fill by area (SHW for Heath; Highland treeless has one fill).
+  **Riparian has no group** — none is named for it and none stands out
+  (best lift 1.46, Modified land): its box is **hatched ink at 45°**, the
+  printed-key sign for "no fill of its own" (also the box for any class UN
+  adds later, until the table learns it). Aquatic, Saltmarsh and Sedgeland
+  and Wetland share one blue because TASVEG draws them in one.
 - **Red selection — decided by the user (2026-11-03).** The proposal was a
   cased ink line (ink on a white halo, ≥ 7.5:1 on every composited fill),
   because #FF3B30 on SMM #CB6565 at 0.5 is 1.9:1, on SHS #FE9898 2.5:1, and
@@ -115,7 +150,8 @@ The custom roles are few:
 ### Typography
 
 SF everywhere in chrome; **New York (`design: .serif`) for names of living
-things**; every style is a Dynamic Type text style.
+things**; every style is a system text style. Scope: **private app: no VoiceOver/extended accessibility work; legibility at default sizes + iPad keyboard usability matter (Leo, 2026-11-04)** —
+type is judged at the default size, outdoors.
 
 | Element | Style |
 |---|---|
@@ -181,13 +217,18 @@ things**; every style is a Dynamic Type text style.
 
 ### Haptics (`.sensoryFeedback`)
 
-- `.selection`: a feature is selected; a season slider detent; key-row tap.
+- `.selection`: a feature is selected; a season slider detent; key-row tap;
+  a step through "Show on map"'s patches (‹ ›).
 - `.success`: plant ID names a **species**; an area download finishes in
-  the foreground. A genus answer gets `.selection`; "Not sure" gets nothing
+  the foreground; a pack finishes installing (core or one-tap; never the
+  launch lookup finding what is already there). Both "finished" taps live
+  in the always-present `MapStatusStack`, so they play once whatever is
+  on screen. A genus answer gets `.selection`; "Not sure" gets nothing
   — a success buzz for an unsure answer would be a lie.
 - `.impact(weight: .light)`: location mode changes.
 - `.error`: only when a user-started action fails (download, PDF fetch).
-- Never on pan/zoom, async data arriving, or detent snaps (system).
+- Never on pan/zoom, async data arriving, or detent snaps (system). All
+  through SwiftUI `.sensoryFeedback`, so the system's haptics setting rules.
 
 ### Motion
 
@@ -198,8 +239,12 @@ things**; every style is a Dynamic Type text style.
 - **Never moves:** the selection line (appears instantly — no pulse, no
   draw-on), fills on strength change, season swaps (fades already off),
   progress numbers, the key.
-- **Reduce Motion:** flights become a cross-fade cut; the zoom transition
-  becomes the system cross-fade; following keeps north-up.
+- **Reduce Motion:** flights become a cut (every programmatic camera move
+  goes through `MapCamera.move`; tracking start, the launch fix, cluster
+  zooms, framing's turn to north and the content-inset shift with the sheet
+  also cut); the zoom transition becomes the system cross-fade; banners and
+  the setup card fade instead of sliding; panel and Storage scrolls jump;
+  following keeps north-up.
 
 ## 3. Layout
 
@@ -396,12 +441,11 @@ Every choice in the Layers sheet is a picture first (a layer picker in the
 manner of Google Maps), so base, overlay and "Also show" are recognisable
 without reading:
 
-- **Tiles in a grid**, four to a row on a phone (fewer at accessibility
-  sizes): a 4:3 thumbnail with **square corners and a 0.5 pt keyline** (data
+- **Tiles in a grid**, four to a row on a phone: a 4:3 thumbnail with **square corners and a 0.5 pt keyline** (data
   is square), a one-line label (`.footnote`) and the on-device status
   (`.caption2`, secondary). The selected tile gets a **2.5 pt ink frame and a
-  small ink checkmark disc** — the selection idiom in chrome, no accent hue;
-  VoiceOver reads label, status and the selected trait. The chosen item's
+  small ink checkmark disc** — the selection idiom in chrome, no accent hue.
+  The chosen item's
   one-line hint sits in the section footer.
 - **One fixed place for every thumbnail**, so the differences read: the
   slopes of Mt Arthur east of Launceston at z12 (all land; topo roads and
@@ -467,26 +511,83 @@ Storage:
 ╰──────────────────────────────╯
 ```
 
-States (copy is the design):
+States (copy is the design; designed end to end in M7, 2026-11-04 —
+screenshots of each in `StatesTests.testStateShots`):
 
-- **First launch.** TASVEG over plain paper while topo arrives, one glass
-  banner: "The topographic map is still downloading (1.2 of 2.0 GB). The
-  vegetation map works now." No onboarding; location is asked on the first
-  Locate tap.
+- **One icon language** (`StateSymbol`, App/FirstLaunch.swift), the same
+  glyph wherever the state appears: *needs reception*
+  `antenna.radiowaves.left.and.right.slash`; *not on the device, one tap
+  gets it* `arrow.down.circle`; *on the device* `checkmark.circle`; *didn't
+  finish — the line says what to do* `exclamationmark.arrow.circlepath`.
+  One phrase too: "not on this iPhone yet — needs reception". Quiet
+  one-liners share one view (`StateLine`: glyph, sentence, optional action).
+- **First launch.** The vector pack installs with the app; topo, relief and
+  plant ID prefetch after. The map never looks broken: online, topo streams
+  live from theLIST at every zoom; offline, the vegetation sits on plain
+  paper with **the coast in a 0.5 pt grey hairline** (the mini-map plates'
+  convention; statewide zooms only, to z9 — the outline is a union of
+  locality areas that run out to mid-river in estuaries, a jagged line
+  across the Derwent by z11, where the vegetation's own edges draw the land). One glass chip
+  at the top, **"Maps arriving · 62 %"** with an ink ring (bytes-weighted
+  over the core packs), opens Storage; "Maps arrive when online" /
+  "paused by iOS" while nothing moves; "Maps didn't finish · Retry"
+  retries, then opens Storage. It goes when the last core pack is in (a
+  `.success` tap). No banner, no sentence about gigabytes.
+- **Welcome** (once, dismissible): one glass card that *shows* the three
+  gestures — a scrap of map with a community outlined in the selection red
+  and a fingertip ring, the Layers control, the Identify button — each with
+  a two-word caption, and the real Layers and Identify buttons ringed in
+  ink while it is up. OK, or doing any of the three, puts it away for good
+  (`welcomeSeen`). No pages, no carousel, nothing pulses. Location is still
+  asked on the first Locate tap.
 - **Loading.** Plants section: "Loading plants…" with a small spinner in the
   summary row. No skeletons.
-- **Offline.** No global banner — offline is normal. Only an action that
-  needs the network says so, in place: "This photo isn't on the iPhone yet.
-  Connect, or get all plant photos in Storage."
-- **Empty search.** "No places match "Mt Welington". Try a street, suburb or
-  peak name."
+- **Offline.** No global banner — offline is normal. Only what needs the
+  network says so, in place, with the glyph: a plant photo plate ("Not on
+  this iPhone yet — it needs reception, or get all plant photos in
+  Storage", over the growth-form pictogram, never a broken image); "Read
+  the description" / the data sheet ("not on this iPhone yet — needs
+  reception"); a base map not downloaded ("Needs reception" on its Layers
+  tile instead of "Streams online"); plant ID's model (download glyph and
+  size, or the reception glyph while paused offline).
+- **Empty.** Search: "No places match "Mt Welington". Try a street, suburb
+  or peak name." A community with no plant lists: one line by group ("No
+  plant lists for cleared or built land", "… water, sand or bare rock") —
+  today every one of the 156 codes has a named or recorded list, so this is
+  a guard, not a common sight. Recorded near here, nothing within the 3 × 3
+  cells: the heading stays with "No plant records within about 1.5 km of
+  this spot — unrecorded, not necessarily bare." No detailed areas yet: the
+  state's silhouette with a dashed frame on Mount Field, and "Frame a place
+  you know you'll walk, and it stays sharp offline down to 0.4 m."
+- **Errors: direction, not apology.** A pack: "Didn't finish · 2.04 GB" and
+  Retry on its row (and the chip). An area: "No connection — tap Resume
+  when there's reception". A document: offline → "open it once while
+  online, or get all … in Storage"; gone → "no longer published"; a login
+  page → "a Wi-Fi login page may be in the way". Plant lists unreadable →
+  "Reinstalling IzzyMap restores them."
 - **No location.** One pill per session (NATIVE_PLAN §3); denied adds
-  "Open Settings".
+  "Open Settings". The pill shares the top slot with the chip and welcome
+  (`MapStatusStack`), below them.
 - **Unmapped tap** (sea outside TASVEG): no card; nothing happens.
 
-Accessibility sizes: card headers reflow (key box above the text). Floating
-map chrome is capped at `.accessibility1` with the Large Content Viewer — in
-M1 the readout pill grows into the sheet at AX-L.
+Accessibility sizes, VoiceOver: out of scope — private app: no VoiceOver/extended accessibility work; legibility at default sizes + iPad keyboard usability matter (Leo, 2026-11-04). What exists
+(card headers reflowing, chrome capped at `.accessibility1`, labels) stays
+but is not a requirement or a test target.
+
+**iPad keyboard and trackpad** (in scope; `App/MapCommands.swift`, all in
+the Map menu and the ⌘-hold overlay): ⌘F search, **⌘L** the Location
+button's cycle (show → follow with heading → stop), **⌘1–4** the base
+map (Topographic, Aerial photos, Paper map, Photos by season), Escape back
+one level. Inside a modal Escape pops ONE level first — Storage or Key →
+Layers (the iPad's Storage form sheet included), plant sheet or credits →
+the suggestions — and only then closes it (`EscapeStep.modalBack`, the
+modal reports its depth with `.modalEscape`). Every tappable row and tile
+has the pointer's `.hoverEffect(.highlight)`: layer tiles, strength boxes,
+key rows, plant rows and the Plants toggle, plant-ID candidates and photos,
+Storage controls. No explicit `.focusable()` yet (2026-11-04): arrow-key
+focus on the plant list and tiles would need checking on a real iPad
+keyboard against the search field's focus (XCUITest's synthesized keys
+don't reach the app's commands); Full Keyboard Access covers them meanwhile.
 
 ## 4. Cartography
 
@@ -636,3 +737,29 @@ She answered the design-choices page; every answer below is a decision.
    cased ink line (§2, §4). Key boxes: as on the map (blended at the
    current strength) in the Layers key; the card's swatch stays the
    official fill (q4).
+
+## 8. Round-2 decisions — decided by the user (2026-11-04)
+
+She answered the round-2 page (UX_VISUAL_REVIEW.md §7 and the mocks):
+
+1. **Relief shading is on by default** — decided by the user (2026-11-04).
+   `LayerState.relief` defaults to true. Existing installs get it turned on
+   ONCE: a stored state without the `reliefTouched` marker (written before
+   this decision, when off was the default and a stored off can't be told
+   from "never looked") decodes with relief on; every save writes the
+   marker, so from then on her choice — on or off — always wins
+   (`LayerStateTests.reliefMigratesOnceAndNeverOverridesHerChoice`).
+2. **Plant lists stay lists** — decided by the user (2026-11-04). No photo
+   grid / "Palette" view; the rows' photo, name, bloom strip and evidence
+   bar are the design.
+3. **"Places to wander": later** — decided by the user (2026-11-04).
+   Recorded in NATIVE_PLAN.md "Future ideas" with the mock concepts and
+   the data each needs.
+4. **Habitats as colour boxes** — decided by the user (2026-11-04); §2
+   "Habitat key boxes".
+5. **Dark mode: the map stays light** — decided by the user (2026-11-04).
+   No dim or dark map style; only the chrome follows the system (§1
+   principle 2). No dim-map experiment exists in the code.
+6. **The elevation drawings are approved** — decided by the user
+   (2026-11-04), as built (§3 "Plant sheet graphics").
+

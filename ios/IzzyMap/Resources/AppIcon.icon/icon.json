@@ -3,16 +3,16 @@
     {
       "value": {
         "linear-gradient": [
-          "srgb:0.20392,0.31373,0.22745,1.00000",
-          "srgb:0.10980,0.18431,0.13725,1.00000"
+          "srgb:0.18431,0.23922,0.32157,1.00000",
+          "srgb:0.35294,0.32157,0.18824,1.00000"
         ],
         "orientation": {
           "start": {
-            "x": 0,
+            "x": 0.5,
             "y": 0
           },
           "stop": {
-            "x": 1,
+            "x": 0.5,
             "y": 1
           }
         }
@@ -22,16 +22,16 @@
       "appearance": "dark",
       "value": {
         "linear-gradient": [
-          "srgb:0.07843,0.13333,0.09804,1.00000",
-          "srgb:0.03137,0.06667,0.04706,1.00000"
+          "srgb:0.07059,0.10196,0.14118,1.00000",
+          "srgb:0.14510,0.13333,0.05882,1.00000"
         ],
         "orientation": {
           "start": {
-            "x": 0,
+            "x": 0.5,
             "y": 0
           },
           "stop": {
-            "x": 1,
+            "x": 0.5,
             "y": 1
           }
         }
@@ -40,29 +40,85 @@
   ],
   "groups": [
     {
-      "name": "Leaf",
+      "name": "Heads",
       "layers": [
         {
-          "name": "veins",
-          "image-name": "veins.svg",
+          "name": "anthers",
+          "image-name": "anthers.svg",
           "glass": false
         },
         {
-          "name": "plication",
-          "image-name": "plication.svg",
+          "name": "head",
+          "image-name": "head.svg",
           "glass": false
         },
         {
-          "name": "blade",
-          "image-name": "blade.svg",
-          "glass": true
+          "name": "head-back",
+          "image-name": "head-back.svg",
+          "glass": false
+        },
+        {
+          "name": "old-head",
+          "image-name": "old-head.svg",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "srgb:0.50000,0.50000,0.50000,1.00000"
+              }
+            }
+          ]
         }
       ],
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.3
+        "opacity": 0.35
       },
       "specular": true,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "name": "Culms",
+      "layers": [
+        {
+          "name": "leaves-front",
+          "image-name": "leaves-front.svg",
+          "glass": false
+        },
+        {
+          "name": "stem",
+          "image-name": "stem.svg",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "name": "Tussock",
+      "layers": [
+        {
+          "name": "leaves",
+          "image-name": "leaves.svg",
+          "glass": false
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.2
+      },
+      "specular": false,
       "translucency": {
         "enabled": false,
         "value": 0.5

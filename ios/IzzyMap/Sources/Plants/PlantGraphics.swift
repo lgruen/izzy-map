@@ -36,7 +36,7 @@ struct BloomChart: View {
                                 VStack(spacing: 3) {
                                     Text(Flowering.initial(m))
                                         .font(.caption2.weight(m == now ? .bold : .regular))
-                                        .foregroundStyle(m == now ? DesignColor.ink : DesignColor.inkSecondary)
+                                        .foregroundStyle(m == now ? DesignColor.ink : DesignColor.secondaryInk)
                                     Rectangle()
                                         .fill(on.contains(m) ? DesignColor.ink : .clear)
                                         .overlay {
@@ -51,7 +51,7 @@ struct BloomChart: View {
                         if let words = Self.seasonWords {
                             Text(words[season])
                                 .font(.caption2)
-                                .foregroundStyle(DesignColor.inkSecondary)
+                                .foregroundStyle(DesignColor.secondaryInk)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }
@@ -109,7 +109,7 @@ struct ElevationDrawing: View {
                 Text("\(height.text) · \(scale.showsFigure(plotHeight: plot) ? "person 1.7 m" : "boot 30 cm")")
                     .font(.caption)
                     .monospacedDigit()
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .multilineTextAlignment(.trailing)
             }
         }
@@ -153,7 +153,7 @@ struct ElevationDrawing: View {
                 ctx.stroke(line, with: .color(DesignColor.keyline.opacity(0.45)), style: StrokeStyle(lineWidth: 0.35, dash: [2, 2]))
                 if n % every == 0 {
                     ctx.draw(Text(HeightRange.label(Double(n) * step)).font(.caption2).monospacedDigit()
-                        .foregroundStyle(DesignColor.inkSecondary),
+                        .foregroundStyle(DesignColor.secondaryInk),
                              at: CGPoint(x: labelColumn - 4, y: y), anchor: .trailing)
                 }
                 n += 1
@@ -399,7 +399,7 @@ struct ElevationScaleBar: View {
                         Text(Self.figure(cm ? v * 100 : v) + (last ? (cm ? " cm" : " m") : ""))
                             .font(.caption2)
                             .monospacedDigit()
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .fixedSize()
                             // "0" starts at the bar, the total ends with it
                             .alignmentGuide(.leading) { d in i == 0 ? 0 : d.width - length }

@@ -200,6 +200,13 @@ nonisolated final class SessionTransport: NSObject, ExtrasTransport, URLSessionD
     }
 
     func start(_ item: ExtraItem, tag: TransportTag, lane: TransportLane) {
+        // the app's one network gate (Connectivity.swift); the background
+        // session can't carry a debug URLProtocol, so this is its only stop
+        guard NetworkGate.allows(item.url, stubbed: lane == .foreground) else {
+            lock.withLock { $0.delivered += 1 }
+            sink.yield(TransportCompletion(tag: tag, lane: lane, result: .offline, file: nil))
+            return
+        }
         let session = lane == .foreground ? foreground : background
         let task = session.downloadTask(with: URLRequest(url: item.url))
         task.taskDescription = tag.description

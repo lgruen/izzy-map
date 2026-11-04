@@ -37,9 +37,11 @@ struct DocumentButton: View {
                     Text(title)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(DesignColor.ink)
-                    Text(caption)
+                    // offline and not on the device: the states' glyph
+                    // (App/FirstLaunch.swift) in front of the caption
+                    (waitsForReception ? Text("\(Image(systemName: StateSymbol.offline)) \(caption)") : Text(caption))
                         .font(.footnote)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -48,7 +50,7 @@ struct DocumentButton: View {
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
             }
             .contentShape(.rect)
@@ -86,12 +88,16 @@ struct DocumentButton: View {
         }
     }
 
+    /// Not here, and nothing to fetch it with right now.
+    private var waitsForReception: Bool { local == nil && !fetching && !gone && !Connectivity.shared.online }
+
     private var caption: String {
         let size = doc.sizeText.map { " · \($0)" } ?? ""
         if fetching { return "\(publisher)\(size) · fetching…" }
         if local != nil { return "\(publisher)\(size) · on this \(DeviceNoun.current)" }
         if gone { return "\(publisher) · not published any more — tap to check again" }
-        return "\(publisher)\(size) · fetched and kept the first time — needs reception"
+        if waitsForReception { return "\(publisher)\(size) · not on this \(DeviceNoun.current) yet — needs reception" }
+        return "\(publisher)\(size) · fetched and kept the first time"
     }
 
     private func refresh() async {

@@ -52,18 +52,18 @@ struct PlantIDCreditsView: View {
                         .accessibilityIdentifier("plant-id-credits-headline")
                     Text("The image model is BioCLIP 2.5 (Imageomics Institute), run on this device. IzzyMap’s classifier and its comparison photos were trained for Tasmania’s plants on photos from the iNaturalist Open Dataset; each photo © its observer under the licence shown — CC0, CC BY or CC BY-NC (non-commercial, which IzzyMap is). Photos under ND or SA licences were left out.")
                         .font(.subheadline)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if let credits {
                         Text(credits.licences.sorted { $0.value > $1.value }
                             .map { "\($0.value.formatted()) \(PlantIDCredits.licence($0.key))" }.joined(separator: " · "))
                             .font(.footnote)
                             .monospacedDigit()
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                     }
                     Text("Location ranking uses iNaturalist research-grade records in Tasmania. Photo pages: inaturalist.org/photos/<id>; the per-photo list ships with the model (credits-photos.tsv.gz).")
                         .font(.footnote)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
@@ -77,9 +77,10 @@ struct PlantIDCreditsView: View {
                 .accessibilityIdentifier("acknowledgements-link")
             } footer: {
                 Text("BioCLIP 2.5’s MIT licence and citation, and the app’s other software licences.")
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             if credits != nil {
-                Section("Observers") {
+                Section {
                     ForEach(observers) { o in
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -89,7 +90,7 @@ struct PlantIDCreditsView: View {
                                 if let name = o.name, !name.isEmpty {
                                     Text(o.login)
                                         .font(.caption)
-                                        .foregroundStyle(DesignColor.inkSecondary)
+                                        .foregroundStyle(DesignColor.secondaryInk)
                                 }
                             }
                             Spacer()
@@ -100,16 +101,18 @@ struct PlantIDCreditsView: View {
                                     .foregroundStyle(DesignColor.ink)
                                 Text(o.licences.keys.sorted().map(PlantIDCredits.licence).joined(separator: ", "))
                                     .font(.caption)
-                                    .foregroundStyle(DesignColor.inkSecondary)
+                                    .foregroundStyle(DesignColor.secondaryInk)
                             }
                         }
                         .accessibilityElement(children: .combine)
                     }
+                } header: {
+                    Text("Observers").foregroundStyle(DesignColor.secondaryInk)
                 }
             } else if failed {
                 Text("The full list of observers comes with the identification model.")
                     .font(.footnote)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             } else {
                 ProgressView()
             }

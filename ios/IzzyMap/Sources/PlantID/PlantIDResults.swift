@@ -12,15 +12,29 @@ struct PlantIDResults: View {
     let result: PlantIDResult
     let open: (PlantIDRoute) -> Void
     @State private var page = 0
-    @State private var width: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var widthClass
 
     private var library: PlantLibrary { .shared }
     /// Results beside the photo: a regular-width window wide enough for two columns.
-    private var twoColumns: Bool { widthClass == .regular && width >= 700 }
+    private func twoColumns(_ width: CGFloat) -> Bool { widthClass == .regular && width >= 700 }
 
+    /// The width comes from a GeometryReader around the scroll view — it
+    /// takes the space offered whatever the content does — not from
+    /// `onGeometryChange` into @State: that fed the content's width back
+    /// into the measured view, and under the accessibility audit's text-size
+    /// pass the two never settled (the main thread pinned at 100 % for
+    /// minutes, width setter firing every frame; profiled 2026-11-04).
     var body: some View {
-        ScrollView {
+        GeometryReader { geo in
+            content(width: geo.size.width)
+        }
+        .task { _ = await library.load() }
+        .accessibilityIdentifier("plant-id-results")
+    }
+
+    private func content(width: CGFloat) -> some View {
+        let twoColumns = twoColumns(width)
+        return ScrollView {
             Group {
                 if twoColumns {
                     HStack(alignment: .top, spacing: 32) {
@@ -50,9 +64,6 @@ struct PlantIDResults: View {
             .padding(.horizontal, twoColumns ? 20 : 16)
             .padding(.vertical, 16)
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .task { _ = await library.load() }
-        .accessibilityIdentifier("plant-id-results")
     }
 
     private func label(_ i: Int) -> PlantIDLabel? { session.label(i) }
@@ -89,6 +100,7 @@ struct PlantIDResults: View {
                             CandidatePhoto(plant: plant(c.label), side: s)
                         }
                         .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                         .tag(i)
                         .accessibilityLabel("Candidate \(i + 1) of \(result.candidates.count), \(label(c.label)?.name ?? "")")
                         .accessibilityHint("Opens its plant sheet")
@@ -114,7 +126,7 @@ struct PlantIDResults: View {
                 .frame(width: s, alignment: .leading)
             }
             .font(.caption)
-            .foregroundStyle(DesignColor.inkSecondary)
+            .foregroundStyle(DesignColor.secondaryInk)
             if result.candidates.count > 1 {
                 PageDots(count: result.candidates.count, current: current)
                     .frame(width: s)
@@ -151,7 +163,7 @@ struct PlantIDResults: View {
                     .foregroundStyle(DesignColor.ink)
                 Text("No single species reaches 50\u{00A0}%, but together the \(g) candidates make \(Self.percent(p)).")
                     .font(.subheadline)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             case .notSure:
                 Text("Not sure — here are the closest matches")
@@ -160,7 +172,7 @@ struct PlantIDResults: View {
                     .foregroundStyle(DesignColor.ink)
                 Text("No species or genus reaches 50\u{00A0}%. Framing one leaf, flower or fruit more closely often helps.")
                     .font(.subheadline)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -182,7 +194,7 @@ struct PlantIDResults: View {
             Image(systemName: result.usedLocation ? "mappin.and.ellipse" : "mappin.slash")
         }
         .font(.footnote)
-        .foregroundStyle(DesignColor.inkSecondary)
+        .foregroundStyle(DesignColor.secondaryInk)
         .accessibilityIdentifier("plant-id-location")
     }
 
@@ -200,7 +212,7 @@ struct PlantIDResults: View {
             }
             Text("A genus bar is its species’ shares added up; the line marks 50\u{00A0}%, where IzzyMap names a species or genus.")
                 .font(.caption)
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .contain)
@@ -221,6 +233,7 @@ struct PlantIDResults: View {
                     CandidateRow(candidate: c, label: label(c.label), plant: plant(c.label), showing: i == page)
                 }
                 .buttonStyle(.plain)
+                .hoverEffect(.highlight)
                 .accessibilityIdentifier("plant-id-candidate-\(i)")
                 if i < result.candidates.count - 1 { Divider() }
             }
@@ -238,7 +251,7 @@ struct PlantIDResults: View {
             .tint(DesignColor.ink)
             Text("Suggestions from the photo, worked out on this \(DeviceNoun.current) — check the plant sheet before relying on a name.")
                 .font(.caption)
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             Button { open(.credits) } label: {
                 Label("Model & training photos", systemImage: "info.circle")
@@ -280,7 +293,7 @@ struct CandidatePhoto: View {
                             Text("No photo")
                                 .font(.caption)
                         }
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                     }
             }
             if let image {
@@ -370,7 +383,7 @@ struct GenusBar: View {
                     Text("50\u{00A0}%")
                         .font(.caption2)
                         .monospacedDigit()
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize()
                         .position(x: geo.size.width * 0.5, y: 7)
                 }
@@ -398,7 +411,7 @@ struct GenusBar: View {
                 .font(.caption)
                 .fontDesign(.serif)
                 .italic()
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .lineLimit(2)
         }
         .accessibilityElement()
@@ -422,7 +435,7 @@ struct CandidateRow: View {
                     PlantThumb(plant: plant, side: thumb)
                 } else {
                     Rectangle().fill(Color(uiColor: .tertiarySystemFill))
-                        .overlay { Image(systemName: "leaf").foregroundStyle(DesignColor.inkSecondary) }
+                        .overlay { Image(systemName: "leaf").foregroundStyle(DesignColor.secondaryInk) }
                         .frame(width: thumb, height: thumb)
                 }
             }
@@ -439,24 +452,24 @@ struct CandidateRow: View {
                 if let common = plant?.common {
                     Text(common)
                         .font(.subheadline)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 } else if plant == nil {
                     Text("No Understorey Network profile")
                         .font(.subheadline)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
                 ConfidenceBar(p: candidate.p)
                     .padding(.top, 2)
                 if candidate.nearbyRecords > 0 {
                     Label("Recorded within 5 km", systemImage: "mappin.and.ellipse")
                         .font(.caption)
-                        .foregroundStyle(DesignColor.inkSecondary)
+                        .foregroundStyle(DesignColor.secondaryInk)
                         .accessibilityIdentifier("plant-id-nearby")
                 }
             }
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(DesignColor.inkSecondary)
+                .foregroundStyle(DesignColor.secondaryInk)
                 .padding(.top, 4)
         }
         .padding(.vertical, 10)

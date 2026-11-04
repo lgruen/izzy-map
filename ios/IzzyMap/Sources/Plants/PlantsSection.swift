@@ -58,15 +58,19 @@ struct PlantFaces: View {
                 ProgressView().controlSize(.small)
                 Text("Loading plants…")
                     .font(.subheadline)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             .frame(minHeight: side)
         case .failed:
-            Text("The plant lists couldn’t load.")
-                .font(.subheadline)
-                .foregroundStyle(DesignColor.inkSecondary)
+            // bundled data that can't be read: the one remedy is a reinstall
+            StateLine(symbol: StateSymbol.failed,
+                      text: "The plant lists couldn’t be read. Reinstalling IzzyMap restores them.")
+                .accessibilityIdentifier("plants-failed")
         case .empty:
-            EmptyView()
+            // water, rock, cleared or built land: say so in one line, so
+            // the card doesn't look as if something went missing
+            StateLine(symbol: "leaf", text: Self.emptyText(group: model.communities[context.code ?? ""]?.group))
+                .accessibilityIdentifier("plants-empty")
         case let .ready(lists):
             ViewThatFits(in: .horizontal) {
                 strip(lists, count: 5)
@@ -74,6 +78,15 @@ struct PlantFaces: View {
                 strip(lists, count: 3)
                 strip(lists, count: 2)
             }
+        }
+    }
+
+    /// No plant named, recorded in, or recorded near this community.
+    nonisolated static func emptyText(group: String?) -> String {
+        switch group {
+        case "Modified land": "No plant lists for cleared or built land."
+        case "Other natural environments": "No plant lists for water, sand or bare rock."
+        default: "No plants named or recorded for this community."
         }
     }
 
@@ -158,17 +171,18 @@ struct PlantsSection: View {
                             Text(lists.summary)
                                 .font(.subheadline)
                                 .monospacedDigit()
-                                .foregroundStyle(DesignColor.inkSecondary)
+                                .foregroundStyle(DesignColor.secondaryInk)
                         }
                         Spacer()
                         Image(systemName: "chevron.down")
                             .font(.footnote.weight(.semibold))
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .rotationEffect(.degrees(expanded ? 180 : 0))
                     }
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .hoverEffect(.highlight)
                 .accessibilityValue(expanded ? "expanded" : "collapsed")
                 .accessibilityIdentifier("plants-toggle")
                 if expanded {
@@ -212,6 +226,17 @@ struct PlantsSection: View {
             PlantListSection(model: model, id: "near", title: "Recorded near here",
                              subtitle: Text("\(near.entries.count.formatted()) species, \(near.shownTotal.formatted()) site records within roughly 1–1.5 km — what people happened to record, not a full survey. Most sites first."),
                              entries: near.entries, context: context, metric: .sites)
+        } else if lists.nearby != nil {
+            // a tapped spot nobody has recorded around: say it, honestly
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Recorded near here")
+                    .font(.headline)
+                    .foregroundStyle(DesignColor.ink)
+                    .accessibilityAddTraits(.isHeader)
+                StateLine(symbol: "mappin.and.ellipse",
+                          text: "No plant records within about 1.5 km of this spot — unrecorded, not necessarily bare.")
+            }
+            .accessibilityIdentifier("nearby-empty")
         }
         VStack(alignment: .leading, spacing: 4) {
             Text(PlantCredits.plants)

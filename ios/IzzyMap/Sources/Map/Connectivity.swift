@@ -77,6 +77,30 @@ final class Connectivity {
     #endif
 }
 
+/// The ONE question every request of ours asks before it is sent: may
+/// `url` go out now? Each network path checks it first — the photo store
+/// and documents (`ExtrasNetwork.fetch`), the area tiles
+/// (`LiveAreaTransport`), the batches (`SessionTransport.start`, whose
+/// background session can't carry a debug URLProtocol) — and answers a
+/// refusal as "offline" without touching URLSession. MapLibre's own tiles
+/// are kept out by the style (no live sources offline) instead.
+///
+/// In Release it always says yes (a real network path is URLSession's
+/// business). DEBUG `-simulateOffline YES` closes it, except for what a
+/// `-stubNetwork` stub answers in-process. `FailingURLProtocol` stays
+/// underneath as the backstop: anything that reaches it bypassed this
+/// gate, and the UI tests' network guard (`-networkLog`) fails on it.
+nonisolated enum NetworkGate {
+    /// `stubbed: false` for a session the stub can't sit in (background).
+    static func allows(_ url: URL, stubbed: Bool = true) -> Bool {
+        #if DEBUG
+        if stubbed, StubNetwork.answers(url) { return true }
+        if DebugNetwork.simulatedOffline { return false }
+        #endif
+        return true
+    }
+}
+
 #if DEBUG
 /// DEBUG launch switches for the network (UI tests, screenshots).
 nonisolated enum DebugNetwork {

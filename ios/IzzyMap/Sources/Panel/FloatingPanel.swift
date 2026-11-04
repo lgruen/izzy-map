@@ -8,6 +8,7 @@ import SwiftUI
 /// colours and no inner glass or material groups (docs/DESIGN.md §2).
 /// DEBUG `-sheetStyle plate`: a thin glass rim around a near-opaque plate.
 struct FloatingPanel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var model: AppModel
     /// Tallest the card may grow before its content scrolls.
     var maxHeight: CGFloat
@@ -58,7 +59,7 @@ struct FloatingPanel: View {
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
                 .environment(\.panelActions, PanelActions(scrollTo: { id in
-                    withAnimation(.snappy) { proxy.scrollTo(id, anchor: .top) }
+                    withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo(id, anchor: .top) }
                 }))
             }
         }

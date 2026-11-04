@@ -59,7 +59,7 @@ badge/link. The app shows this on the About screen and map attribution.
 ## 1b. CC BY 4.0 (Commonwealth) — free to use, redistribute, derive (with attribution)
 
 - **NVIS V7.0 Estimated Pre-1750 vegetation** rasters and everything
-  derived from them: the pre1750 PMTiles on R2 (and, natively, in the `vector` pack; the web
+  derived from them: the pre1750 PMTiles in the `vector` pack (the web
   app's test fixture `pre1750_test.pmtiles` went with it), `pre1750_units.json`
   (class names/groups/colours/areas). Source: DCCEEW via Find Environmental
   Data / ArcGIS Online item d82f6eab808542ee9d9a0ea09ea36567; the item's
@@ -113,28 +113,24 @@ badge/link. The app shows this on the About screen and map attribution.
 - **From Forest to Fjaeldmark** (Ed. 2) chapter PDFs and any text extracted
   from them. Copyright page verified: "no part may be reproduced … without
   the prior written permission of the publisher and creators."
-- Handling: the phone fetches the PDFs from nre.tas.gov.au for ordinary
-  private use. Because that server sends no CORS headers, the request passes
-  through a **transparent, non-caching relay** (Cloudflare Worker
-  `izzy-f2f`, source last in commit 04ea5d9 `pipeline/f2f-proxy/`; it
-  serves only the retired PWA — the native app fetches directly, no CORS
-  involved, and the relay is torn down once the PWA is retired): it forwards GET/HEAD for exactly the 11 known
-  chapter files (plus, on a separate allow-list, Understorey Network photo
-  files — below), only for this app's origins (403 otherwise), with
-  `cache: "no-store"` upstream and `Cache-Control: no-store` downstream so
-  nothing is ever stored at the edge. The relay must stay that way — never
-  add caching, widen either allowlist, or open the Origin check.
-- **Apple-hosted Background Assets packs (native app) count as OUR
-  hosting**, exactly like Pages/R2: F2F PDFs, Understorey Network photos
-  and tree data sheets never go into a pack or the app bundle — the
-  device fetches each from its publisher.
+- Handling: the device fetches the PDFs itself from nre.tas.gov.au for
+  ordinary private use (native code needs no CORS, so nothing sits in
+  between) and keeps them in its own app storage. The retired PWA needed a
+  transparent, non-caching CORS relay for this; it was deleted with the
+  rest of the web hosting on 2026-11-04 (history: commit 04ea5d9
+  `pipeline/f2f-proxy/`). Never reintroduce a server of ours that stores
+  or serves the PDFs.
+- **Apple-hosted Background Assets packs count as OUR hosting** (as the
+  retired Pages site and R2 bucket did): F2F PDFs, Understorey Network
+  photos and tree data sheets never go into a pack or the app bundle —
+  the device fetches each from its publisher.
 - This repo may only contain FACTS from F2F: `f2f_index.json` (VEGCODE →
   chapter file + page number) and the per-community species-name lists in
   `ios/IzzyMap/Resources/Data/plants.json` `communities` (which binomials each
   community's account names, normalised to Understorey Network keys, in
   order of first mention — names, not text; no sentences, no
-  descriptions). Do not commit PDFs, extracted text, or host either on
-  Pages/R2; `build_plants.py` keeps its pdftotext output in the gitignored
+  descriptions). Do not commit PDFs or extracted text, or put either in a
+  pack or the app bundle; `build_plants.py` keeps its pdftotext output in the gitignored
   `pipeline/cache/plants/f2f-text/`. `.gitignore` blocks `*.pdf` and
   `f2f_pdfs/` as a guard.
 - **Understorey Network Tasmania plant database**
@@ -154,28 +150,25 @@ badge/link. The app shows this on the About screen and map attribution.
   pruning), `build_plants.py` drops those sentences too, then caps each
   descriptor at 300 characters on a sentence boundary — short facts, not
   the profile's text.
-  **Photos are © their photographers**: never committed, never served from
-  Pages/R2, never fetched by the pipeline. The device fetches them: online
-  a plain `<img>` straight from UN; for offline use the optional "Plant
-  photos" Downloads row (~152 MB, 997 large versions) reads them through
-  the relay's separate `/un/YYYY/MM/<file>.<img-ext>` allow-list (WordPress
-  uploads only — never pages or the API; image content-types only;
-  no-store both ways; same Origin check; redirects never followed — like
-  the F2F route, a 3xx becomes a 502, so the allow-list bounds what is
-  actually fetched) into OPFS `plants/` for private
-  use. Credit shown under every photo ("Photo: <credit> · Understorey
+  **Photos are © their photographers**: never committed, never put in a
+  pack or the app bundle, never fetched by the pipeline. The device
+  fetches them straight from UN's `wp-content/uploads/` (image files only —
+  never pages or the API): online for display, and for offline use via the
+  optional "Plant photos" download (~152 MB, 997 large versions) into its
+  own app storage for private use. Credit shown under every photo ("Photo: <credit> · Understorey
   Network") and "Plant profiles & photos: Understorey Network Tasmania
   (photos © their photographers)" on the card, plant sheet and About.
 - **Council data sheets (no stated licence):** the 282 per-tree PDFs behind
   the tree service's `Data_Sheet_URL` are separate ArcGIS Online items whose
   `licenseInfo` is null — © City of Hobart, nothing granted beyond viewing
-  (verified 2026-09-12). Same posture as F2F: never committed, never served
-  from Pages/R2 (`.gitignore`'s `*.pdf` applies); the device fetches a
-  sheet on tap, or all of them via the optional "Significant tree data
-  sheets" Downloads row, and keeps them in OPFS (`trees/<id>.pdf`) for
-  private use. No relay is needed here:
+  (verified 2026-09-12). Same posture as F2F: never committed, never put
+  in a pack or the app bundle (`.gitignore`'s `*.pdf` applies); the device
+  fetches a sheet on tap, or all of them via the optional "Significant
+  tree data sheets" download, and keeps them in its own app storage for
+  private use. Nothing of ours sits in between (the retired PWA also
+  fetched these directly:
   `www.arcgis.com/sharing/rest/content/items/<id>/data` sends CORS headers
-  on its 302 to signed S3 (the `hobartcc.maps.arcgis.com` form does not).
+  on its 302 to signed S3; the `hobartcc.maps.arcgis.com` form does not).
   `trees.json` may carry only FACTS taken from the sheets and the council's
   register PDF — address and common name — never the "Reasons for
   significance" prose or any other text; the pipeline downloads at most
@@ -206,8 +199,9 @@ How this project stays inside it:
 - Tiles are stored **byte-for-byte as served** (`pipeline/build_raster.py`;
   PMTiles is only a container with range-readable indexing). Nothing is
   re-encoded, recoloured, re-projected or merged across services.
-- The archives are distributed from R2 for one household's non-commercial
-  hiking app, with the attribution the licence requires (map attribution
+- The archives are distributed as Apple-hosted Background Assets packs
+  (formerly from R2, retired 2026-11-04) for one household's
+  non-commercial hiking app, with the attribution the licence requires (map attribution
   control, About panel, README).
 - Overlays (TASVEG etc.) are composited **on screen** at view time; no
   altered image is ever produced or distributed — exactly what LISTmap does

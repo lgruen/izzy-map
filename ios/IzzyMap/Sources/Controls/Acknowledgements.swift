@@ -24,7 +24,7 @@ struct AcknowledgementsView: View {
                                 Text(c.name).foregroundStyle(DesignColor.ink)
                                 Text("\(c.licence) · \(c.role)")
                                     .font(.subheadline)
-                                    .foregroundStyle(DesignColor.inkSecondary)
+                                    .foregroundStyle(DesignColor.secondaryInk)
                                     .lineLimit(2)
                             }
                             .padding(.vertical, 2)
@@ -35,13 +35,14 @@ struct AcknowledgementsView: View {
                     header("Software and model")
                 } footer: {
                     Text("IzzyMap uses these under the licences shown; each one’s full text is inside.")
+                        .foregroundStyle(DesignColor.secondaryInk)
                 }
                 .rows(onGlass)
                 Section {
                     ForEach(doc.data, id: \.self) { line in
                         Text(line)
                             .font(.subheadline)
-                            .foregroundStyle(DesignColor.inkSecondary)
+                            .foregroundStyle(DesignColor.secondaryInk)
                             .textSelection(.enabled)
                     }
                 } header: {
@@ -50,7 +51,7 @@ struct AcknowledgementsView: View {
                 .rows(onGlass)
             } else if failed {
                 Text("The licence texts couldn’t be read from the app — reinstall IzzyMap.")
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             } else {
                 ProgressView()
             }
@@ -116,10 +117,10 @@ private struct AcknowledgementDetail: View {
             out.append(NSAttributedString(string: s + "\n", attributes: attrs))
         }
         add(c.name, .title3, weight: .semibold, after: 2)
-        add("\(c.version) · \(c.licence)", .subheadline, colour: .secondaryLabel, after: 2)
+        add("\(c.version) · \(c.licence)", .subheadline, colour: DesignColor.secondaryInkUI, after: 2)
         add(c.url.absoluteString, .subheadline, after: 12, link: c.url)
         add(c.role, .body, after: 8)
-        for note in c.notes { add(note, .subheadline, colour: .secondaryLabel, after: 6) }
+        for note in c.notes { add(note, .subheadline, colour: DesignColor.secondaryInkUI, after: 6) }
         for t in c.texts {
             add("", .footnote, after: 4)
             add(t.title, .headline, weight: .semibold, after: 8)
@@ -128,7 +129,7 @@ private struct AcknowledgementDetail: View {
         if !c.citations.isEmpty {
             add("", .footnote, after: 4)
             add("Citation", .headline, weight: .semibold, after: 4)
-            add("The model’s authors ask that it be cited as:", .subheadline, colour: .secondaryLabel, after: 8)
+            add("The model’s authors ask that it be cited as:", .subheadline, colour: DesignColor.secondaryInkUI, after: 8)
             for cite in c.citations {
                 add(cite.title, .subheadline, weight: .semibold, after: 4)
                 add(cite.text, .caption1, mono: true, after: 12)

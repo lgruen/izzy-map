@@ -239,6 +239,9 @@ struct SpotlightPill: View {
         }
         .padding(.horizontal, 4)
         .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        // a step to the next patch is a detent she chose (DESIGN.md
+        // "Haptics"); the flight itself is a cut under Reduce Motion
+        .sensoryFeedback(.selection, trigger: spotlight.step)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("spotlight-pill")
     }

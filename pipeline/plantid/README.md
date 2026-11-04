@@ -80,15 +80,15 @@ evaluate.py locally.
 
 ## Phone test (can Safari run it?)
 
-Retired: the page was deleted with the web app (last in commit 04ea5d9; the
-deployed copy at `/probe/plantid/` stays up with the Pages site until it is
-torn down). The native Core ML test is `native/plantid-test/`.
+Retired: the page was deleted with the web app (last in commit 04ea5d9) and
+its hosting (Pages site, R2 `plantid-test/v1/`) was torn down on
+2026-11-04. The native Core ML test is `native/plantid-test/`.
 
-`probe/plantid/` (deployed with the app at `/probe/plantid/`) downloads the
-image encoder into OPFS, runs it with onnxruntime-web (WebGPU) and compares
+`probe/plantid/` (was deployed with the app at `/probe/plantid/`) downloaded the
+image encoder into OPFS, ran it with onnxruntime-web (WebGPU) and compared
 its embeddings with the laptop's for three bundled CC0 test photos; the
-person running it copies a results text. A memory kill by iOS reloads the
-page, which then reports the step it died in.
+person running it copied a results text. A memory kill by iOS reloaded the
+page, which then reported the step it died in.
 
 ```bash
 uv run --with torch --with torchvision --with open_clip_torch --with onnx \
@@ -97,8 +97,9 @@ uv run --with torch --with torchvision --with open_clip_torch --with onnx \
 #   (and --model bioclip: the 0.2 GB fallback the page offers)
 uv run --with torch --with torchvision --with pillow --with numpy \
     python3 -I pipeline/plantid/check_pilresize.py                # JS resize == Pillow
-pipeline/plantid/upload_test.sh                                   # → R2 plantid-test/v1/
 ```
+(`upload_test.sh`, which put this on R2 under `plantid-test/v1/`, was
+deleted with the hosting — `git show 04ea5d9:pipeline/plantid/upload_test.sh`.)
 
 - Weights: float16, 21 shards ≤ 64 MiB (resumable download, no single 1.3 GB
   buffer during download). Input float32 → cast inside the graph.

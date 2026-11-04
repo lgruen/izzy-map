@@ -155,7 +155,7 @@ final class PlantIDShotsUITests: XCTestCase {
     @MainActor
     private func run(_ args: [String]) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-dataDir", "\(Self.repo)/data", "-debugPlantID", "YES"] + args
+        app.launchArguments = ["-dataDir", "\(Self.repo)/data", "-debugPlantID", "YES", "-welcomeSeen", "YES"] + args
         app.launch()
         return app
     }
@@ -219,5 +219,88 @@ final class PlantIDShotsUITests: XCTestCase {
         XCTAssertTrue(fake.descendants(matching: .any)["plant-id-results"].waitForExistence(timeout: 60))
         sleep(6)
         shot("results-genus-fake")
+    }
+
+    /// The real model on the three CC0 samples, then the results scrolled
+    /// up and down repeatedly, each swipe timed (XCUITest waits for the app
+    /// to go idle after a gesture, so a busy main thread shows up as a slow
+    /// swipe). Opt-in, like the shots: TEST_RUNNER_PLANTID_SCROLL=1, with
+    /// the staged plantid pack. Profile alongside with `xctrace record
+    /// --template 'Time Profiler' --attach <pid>`.
+    @MainActor
+    func testRealModelResultsScroll() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PLANTID_SCROLL"] == "1", "TEST_RUNNER_PLANTID_SCROLL=1")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/head.bin"), "no staged plantid pack")
+        let photos = [("637002849", " -43.475,146.642"), ("474508960", " -41.907,146.062"), ("594582089", " -41.806,147.507")]
+        var worst = 0.0
+        for (id, loc) in photos {
+            let app = run(["-plantIDDir", Self.model, "-plantIDPhoto", "\(Self.samples)/\(id).jpg", "-plantIDLocation", loc,
+                           "-plantIDAutoIdentify", "YES"])
+            XCTAssertTrue(app.descendants(matching: .any)["plant-id-results"].waitForExistence(timeout: 240))
+            for round in 0 ..< 6 {
+                for up in [true, false] {
+                    let start = Date.now
+                    if up { app.swipeUp(velocity: .fast) } else { app.swipeDown(velocity: .fast) }
+                    let took = Date.now.timeIntervalSince(start)
+                    worst = max(worst, took)
+                    print("PLANTID-SCROLL \(id) round \(round) \(up ? "up" : "down") \(String(format: "%.2f", took)) s")
+                }
+            }
+            if id == photos[0].0 {
+                // what the accessibility audit does on top: a full snapshot
+                // of the results, then Apple's own audit (issues ignored —
+                // only its cost is measured here)
+                var start = Date.now
+                _ = app.debugDescription
+                print("PLANTID-SCROLL snapshot \(String(format: "%.2f", Date.now.timeIntervalSince(start))) s")
+                start = Date.now
+                try? app.performAccessibilityAudit { _ in true }
+                print("PLANTID-SCROLL audit \(String(format: "%.2f", Date.now.timeIntervalSince(start))) s")
+                for _ in 0 ..< 3 {
+                    start = Date.now
+                    app.swipeUp(velocity: .fast)
+                    let took = Date.now.timeIntervalSince(start)
+                    worst = max(worst, took)
+                    print("PLANTID-SCROLL after-audit swipe \(String(format: "%.2f", took)) s")
+                }
+                // the 13k-observer credits list
+                let credits = app.buttons["plant-id-credits"]
+                for _ in 0 ..< 4 where !credits.isHittable { app.swipeUp() }
+                start = Date.now
+                credits.tap()
+                XCTAssertTrue(app.descendants(matching: .any)["plant-id-credits-headline"].waitForExistence(timeout: 30))
+                print("PLANTID-SCROLL credits open \(String(format: "%.2f", Date.now.timeIntervalSince(start))) s")
+                for _ in 0 ..< 4 {
+                    start = Date.now
+                    app.swipeUp(velocity: .fast)
+                    print("PLANTID-SCROLL credits swipe \(String(format: "%.2f", Date.now.timeIntervalSince(start))) s")
+                }
+                start = Date.now
+                _ = app.debugDescription
+                print("PLANTID-SCROLL credits snapshot \(String(format: "%.2f", Date.now.timeIntervalSince(start))) s")
+                start = Date.now
+                try? app.performAccessibilityAudit { _ in true }
+                print("PLANTID-SCROLL credits audit \(String(format: "%.2f", Date.now.timeIntervalSince(start))) s")
+                // back to the results, then the first candidate's plant sheet
+                app.navigationBars.buttons.element(boundBy: 0).tap()
+                let first = app.buttons["plant-id-candidate-0"]
+                for _ in 0 ..< 4 where !first.isHittable { app.swipeDown() }
+                first.tap()
+                XCTAssertTrue(app.descendants(matching: .any)["plant-sheet"].waitForExistence(timeout: 30))
+                start = Date.now
+                try? app.performAccessibilityAudit { _ in true }
+                print("PLANTID-SCROLL sheet audit \(String(format: "%.2f", Date.now.timeIntervalSince(start))) s")
+                for _ in 0 ..< 3 {
+                    start = Date.now
+                    app.swipeUp(velocity: .fast)
+                    let took = Date.now.timeIntervalSince(start)
+                    worst = max(worst, took)
+                    print("PLANTID-SCROLL after-sheet-audit swipe \(String(format: "%.2f", took)) s")
+                }
+            }
+            app.terminate()
+        }
+        print("PLANTID-SCROLL worst \(String(format: "%.2f", worst)) s")
+        XCTAssertLessThan(worst, 5, "a swipe over the results waited > 5 s for the app")
     }
 }

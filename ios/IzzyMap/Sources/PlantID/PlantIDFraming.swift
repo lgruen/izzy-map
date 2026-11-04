@@ -186,7 +186,7 @@ struct PlantIDFraming: View {
             } else if let failed = session.prepareFailed {
                 Label(failed, systemImage: "exclamationmark.triangle")
                     .font(.footnote)
-                    .foregroundStyle(DesignColor.inkSecondary)
+                    .foregroundStyle(DesignColor.secondaryInk)
             }
             HStack {
                 Spacer()

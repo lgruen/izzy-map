@@ -15,7 +15,18 @@ enum DesignColor {
     /// hierarchical `.primary`/`.secondary` styles: on glass those turn
     /// vibrant and pick up the map's hue (teal codes and × over cyan fills).
     static let ink = Color(uiColor: .label)
-    static let inkSecondary = Color(uiColor: .secondaryLabel)
+    /// Secondary text (common names, row labels, captions, distances,
+    /// sizes, footers): `label` at 70 % light / 80 % dark, NOT
+    /// `secondaryLabel` — that measured ≈ 3.2–3.4:1 on white and on the
+    /// light glass over bright map fills, too faint outdoors. 70 % black
+    /// is 8.4:1 on white and 7.4–7.6:1 on the sheet's glass over the map;
+    /// 80 % white ≈ 10:1 on #1C1C1E, 3.1:1 on the dark glass over the
+    /// light map, where even white is 3.85:1 (DESIGN.md §2).
+    static let secondaryInk = Color(uiColor: secondaryInkUI)
+    /// The same, for UIKit text (attributed strings).
+    static let secondaryInkUI = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.8) : UIColor(white: 0, alpha: 0.7)
+    }
     /// Codes ("DOB", "Jd"): ink at 75 %, quieter than the name beside them
     /// but legible as small footnote type (≈ 9:1 light, ≈ 10:1 dark;
     /// `secondaryLabel` is ≈ 3.4:1 on white — too faint for 13 pt small caps).
@@ -111,6 +122,42 @@ struct KeyBox: View {
     private var composited: Color? {
         guard let hex, let c = MapColour.overWhite(hex, alpha: opacity) else { return nil }
         return Color(.sRGB, red: c.red, green: c.green, blue: c.blue)
+    }
+}
+
+/// A habitat class's key box on the plant sheet (`HabitatKey`): the
+/// official fill of its TASVEG group's community at full strength, like the
+/// card's swatch — it names a unit — or, for a class no group fits
+/// (Riparian), hatched ink: the printed key's sign for "no fill of its own".
+/// Same build as every key box: square, 0.5 pt keyline, on the white plate;
+/// 3:2 like the legend's 28 × 18, at text size.
+struct HabitatBox: View {
+    let entry: HabitatKey.Entry
+    @ScaledMetric(relativeTo: .footnote) private var height = 12
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(DesignColor.keyPlate)
+            if let hex = entry.hex, let fill = Color(hex: hex) {
+                Rectangle().fill(fill)
+            } else {
+                Canvas { ctx, size in
+                    // 45° ink hatching, 3 pt apart, as on a printed key
+                    var lines = Path()
+                    var x = -size.height
+                    while x < size.width {
+                        lines.move(to: CGPoint(x: x, y: size.height))
+                        lines.addLine(to: CGPoint(x: x + size.height, y: 0))
+                        x += 3
+                    }
+                    ctx.stroke(lines, with: .color(.black.opacity(0.55)), lineWidth: 0.6)
+                }
+            }
+        }
+        .frame(width: height * 1.5, height: height)
+        .clipped()
+        .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
+        .accessibilityHidden(true)
     }
 }
 
