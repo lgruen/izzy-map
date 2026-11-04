@@ -13,7 +13,8 @@ struct PackSpaceRequest: Identifiable, Equatable {
 }
 
 extension PackStore {
-    /// One tap: fetches every pack in `list` that isn't on the device —
+    /// One tap: queues every pack in `list` that isn't on the device, in
+    /// that order —
     /// unless they don't fit, then returns the request for the space alert
     /// (`packSpaceAlert`), which can still go ahead.
     func get(_ list: [Pack], title: String) -> PackSpaceRequest? {
@@ -25,7 +26,7 @@ extension PackStore {
             let unpacked = wanted.reduce(Int64(0)) { $0 + Int64(PackSizes.nominal[$1] ?? downloadSizes[$1] ?? 0) }
             return PackSpaceRequest(packs: wanted, title: title, need: need, unpacked: unpacked, free: free)
         }
-        for pack in wanted { fetch(pack) }
+        fetch(wanted)
         return nil
     }
 }
@@ -37,7 +38,7 @@ extension View {
                                                            set: { if !$0 { request.wrappedValue = nil } }),
               presenting: request.wrappedValue) { r in
             Button("Try Anyway") {
-                for pack in r.packs { store.fetch(pack) }
+                store.fetch(r.packs)
             }
             Button("Cancel", role: .cancel) {}
         } message: { r in
@@ -67,7 +68,7 @@ struct TileDownloadBadge: View {
                     ProgressRing(fraction: f, lineWidth: 2.5, color: .black)
                         .padding(3)
                     if canGet { Image(systemName: "arrow.down").font(.system(size: 8, weight: .bold)) }
-                case .paused:
+                case .paused, .queued:
                     ProgressRing(fraction: 0, lineWidth: 2.5, color: .black).padding(3)
                     if canGet { Image(systemName: "arrow.down").font(.system(size: 8, weight: .bold)) }
                 default:

@@ -174,6 +174,34 @@ option; simulator problems on 27.1).
   subdirectories, so `plantid/PlantEncoder-w8.mlmodelc/` needs no
   repackaging. Hidden Diagnostics (long-press the Storage gauge or "Model
   & training photos") shows the system's and the app's view of every pack.
+- **Download queue (2026-11-04, field report iPhone 16e / iOS 27.2):**
+  several `ensureLocalAvailability` calls at once ("Get all") left most
+  packs failing with `AssetPackManagerError 0: The asset pack … is
+  unavailable` while each worked alone. The 27.2 headers name NO
+  concurrency limit; they point to the iOS 27 batch form
+  `ensureLocalAvailability(of: Set<AssetPack>)` "to download multiple asset
+  packs at the same time" (untried). `PackStore` instead runs ONE call
+  at a time — a new `ensureLocalAvailability` starts only after the
+  previous call has RETURNED (rows say "Queued · n"; core packs first,
+  seasons newest first). A failed call is retried after 2 / 10 / 30 s; one
+  that fails offline or cut off by a suspension is asked again without a
+  retry. A lost call (system local status [] and no event for 90 s, 10 min
+  when paused) is ended with `remove` of the pack the system has nothing
+  of — never doubled; a core pack can't be ended that way and holds the
+  queue until its call returns (relaunch). Stop waits for the system's
+  `remove` before the next call. Every state is recomputed from
+  `resolve()` + `localStatus` on launch, foreground, Storage (on appear,
+  every 10 s) and Diagnostics — a stale "Didn't finish" can't outlive the
+  system's "downloaded". The queue is checkpointed in UserDefaults
+  `packQueue` and resumed at launch; a TAP leaving ≥ 2 packs or one ≥ 1 GB
+  runs inside a `BGContinuedProcessingTask`
+  (`org.gruenschloss.izzymap.packs.<n>`, "Downloading maps", bytes across
+  the queue, never backwards, a heartbeat while nothing moves); once it
+  ends (time's up or she stopped it) only her next Get asks for another.
+  `FakePackSystem` (DEBUG) backs the unit tests and the `-fakePacks`
+  UI-test store with the same code path. Unverified on a device: whether
+  `remove` ends a lost or stopped call, and whether a paused download
+  needs a second request to resume (Resume never doubles a call in flight).
 - **Upload** [G]: `xcrun altool --upload-asset-pack <id>.aar --apple-id
   <numeric app id>` (+ `--api-key`/`--api-issuer`, `--wait`), or
   Transporter / the ASC API — separately from builds. Each upload is a new

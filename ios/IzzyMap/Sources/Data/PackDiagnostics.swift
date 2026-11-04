@@ -24,39 +24,71 @@ enum PackDiagnostics {
         for entry in store.catalogueLog { lines.append("catalogue: \(entry)") }
         lines.append("plant ID folder: \(store.plantIDDirectory?.path(percentEncoded: false) ?? "none")")
         lines.append("plant ID source: \(PlantIDSession.source(packs: store).map { "\($0)" } ?? "none")")
+        lines.append(contentsOf: queueLines(store))
         let system = store.usesBackgroundAssets
         for pack in Pack.allCases {
             lines.append("")
             var head = "[\(pack.rawValue)] \(pack.policy) · ours: \(describe(store.state(pack)))"
+            if store.current == pack { head += " · in flight" }
+            if let n = store.queuePosition(pack) { head += " · queued #\(n)" }
+            if let r = store.retries[pack], r > 0 { head += " · retries \(r)" }
             if let u = store.updates[pack] { head += " · updating \(Int(u * 100)) %" }
             if let v = store.manifestVersions[pack] { head += " · server v\(v)" }
             if let size = store.downloadSizes[pack] { head += " · download \(StorageText.size(size))" }
             lines.append(head)
-            for error in store.lastErrors[pack] ?? [] { lines.append("  error \(error)") }
-            if system {
-                lines.append(contentsOf: await systemLines(pack))
+            let systemInfo = system ? await systemLines(pack) : nil
+            for error in store.errorLog[pack] ?? [] {
+                let stale = staleness(of: error, state: store.state(pack), system: systemInfo?.status, lastSync: store.lastSync)
+                lines.append("  error \(error.date.formatted(date: .omitted, time: .standard)) \(error.stage): \(error.text)\(stale)")
             }
+            if let systemInfo { lines.append(contentsOf: systemInfo.lines) }
         }
         if !system { lines.append("\n(not Background Assets: the system isn't asked)") }
         return lines.joined(separator: "\n")
     }
 
+    /// The download queue: what's in flight, what waits, and how.
+    private static func queueLines(_ store: PackStore) -> [String] {
+        var line = "queue: "
+        if let current = store.current {
+            line += "in flight \(current.rawValue) (retries \(store.retries[current] ?? 0)"
+            if let at = store.retryAt { line += ", next retry \(at.formatted(date: .omitted, time: .standard))" }
+            if let parked = store.parkedFor { line += ", \(parked.rawValue)" }
+            line += ")"
+        } else {
+            line += "nothing in flight"
+        }
+        line += store.queue.isEmpty ? " · none waiting" : " · then " + store.queue.map(\.rawValue).joined(separator: ", ")
+        line += " · call in flight: \(store.callInFlight?.rawValue ?? "none")"
+        line += " · abandoned: \(store.abandonedCall?.rawValue ?? "none") (\(store.abandonedCount) this launch)"
+        return [line,
+                "app active \(store.isActive) · online \(store.online) · background task \(store.backgroundTaskRunning ? "running" : "none") · last sync \(store.lastSync?.formatted(date: .omitted, time: .standard) ?? "never")"]
+    }
+
+    /// Whether an error still describes the pack: " (stale: …)" when what
+    /// the app and the system say now has moved on from it.
+    private static func staleness(of error: PackStore.ErrorRecord, state: PackState, system: PackSystemStatus?, lastSync: Date?) -> String {
+        if state.isInstalled { return " (stale: installed since)" }
+        if let system, system.downloaded { return " (stale: the system has it now)" }
+        if let system, system.downloading { return " (stale: the system is downloading it now)" }
+        if case .downloading = state { return " (stale: downloading again)" }
+        if let lastSync, lastSync < error.date { return " (newer than the last sync)" }
+        return ""
+    }
+
     /// What Background Assets says about one pack, and where each of its
     /// files resolves.
-    @concurrent nonisolated private static func systemLines(_ pack: Pack) async -> [String] {
+    @concurrent nonisolated private static func systemLines(_ pack: Pack) async -> (status: PackSystemStatus, lines: [String]) {
         let manager = AssetPackManager.shared
         var out: [String] = []
-        if #available(iOS 26.4, *) {
-            let local = manager.assetPackIsAvailableLocally(withID: pack.rawValue)
-            let status = await manager.localStatus(ofAssetPackWithID: pack.rawValue)
-            var line = "  system: available locally \(local) · local status \(names(status)) (raw \(status.rawValue))"
-            if #available(iOS 27.2, *) {
-                line += " · local version " + ((try? manager.localVersion(ofAssetPackWithID: pack.rawValue)).map(String.init) ?? "none")
-            }
-            out.append(line)
-        } else {
-            out.append("  system: no local-status API before iOS 26.4")
+        let local = manager.assetPackIsAvailableLocally(withID: pack.rawValue)
+        let status = await manager.localStatus(ofAssetPackWithID: pack.rawValue)
+        var line = "  system: available locally \(local) · local status \(names(status)) (raw \(status.rawValue))"
+        if #available(iOS 27.2, *) {
+            line += " · local version " + ((try? manager.localVersion(ofAssetPackWithID: pack.rawValue)).map(String.init) ?? "none")
         }
+        out.append(line)
+        let summary = PackSystemStatus(downloading: status.contains(.downloading), downloaded: status.contains(.downloaded), raw: UInt(status.rawValue))
         var paths = pack.archives.map(\.fileName)
         paths += pack.otherFiles
         for path in paths {
@@ -80,7 +112,7 @@ enum PackDiagnostics {
                 for (rel, size) in listing(url).prefix(20) { out.append("    · \(rel) \(size)") }
             }
         }
-        return out
+        return (summary, out)
     }
 
     nonisolated private static func probe(_ url: URL) -> String {
@@ -173,6 +205,9 @@ struct PackDiagnosticsView: View {
 
     private func gather() async {
         copied = false
+        // the store's states from the system first: the report shows both
+        // views, and an old error is marked stale against the new one
+        await packs.resync()
         report = await PackDiagnostics.report(packs)
     }
 }

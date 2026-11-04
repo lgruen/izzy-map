@@ -9,8 +9,8 @@ final class StorageTests: XCTestCase {
     }
 
     @MainActor
-    private func launch(packs: String = "vector,topo,relief") -> XCUIApplication {
-        let app = offlineApp(["-fakePacks", packs, "-fakePackSeconds", "2"])
+    private func launch(packs: String = "vector,topo,relief", seconds: String = "2") -> XCUIApplication {
+        let app = offlineApp(["-fakePacks", packs, "-fakePackSeconds", seconds])
         app.launch()
         XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         return app
@@ -110,7 +110,8 @@ final class StorageTests: XCTestCase {
 
     @MainActor
     func testGetAllSeasonsAndTheIncompleteSeasonNote() {
-        let app = launch(packs: "vector,topo,relief,season-2023,season-2024")
+        // one pack at a time (the store's queue): 5 seasons × 1 s
+        let app = launch(packs: "vector,topo,relief,season-2023,season-2024", seconds: "1")
         openStorage(app)
         let note = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Still being flown'")).firstMatch
         for _ in 0 ..< 10 where !note.exists { drag(app, under: "Storage") }
@@ -118,8 +119,11 @@ final class StorageTests: XCTestCase {
         let all = app.buttons["seasons-get-all"]
         reveal(all, in: app)
         all.tap()
+        // newest first, one at a time: the oldest waits its turn, numbered
+        let oldest = app.staticTexts["pack-season-2020-status"]
+        XCTAssertTrue(eventually(patience(2)) { oldest.exists && oldest.label.hasPrefix("Queued") }, oldest.label)
         // every missing season downloads; once all are here the row goes away
-        XCTAssertTrue(app.descendants(matching: .any)["pack-season-2020-progress"].waitForExistence(timeout: patience(3))
+        XCTAssertTrue(app.descendants(matching: .any)["pack-season-2020-progress"].waitForExistence(timeout: patience(8))
             || app.buttons["pack-season-2020-remove"].exists)
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: all)
         XCTAssertEqual(XCTWaiter().wait(for: [gone], timeout: patience(12)), .completed)

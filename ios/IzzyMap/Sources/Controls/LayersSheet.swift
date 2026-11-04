@@ -140,10 +140,14 @@ struct LayersSheet: View {
         let missing = list.filter { !store.state($0).isInstalled && store.state($0) != .unpublished }
         guard store.canFetch, store.isResolved, !missing.isEmpty else { return nil }
         let states = missing.map {
-            PackRowStatus.of(store.state($0), pack: $0, canFetch: true, online: Connectivity.shared.online)
+            PackRowStatus.of(store.state($0), pack: $0, canFetch: true, online: Connectivity.shared.online,
+                             queued: store.queuePosition($0))
         }
         let busy = states.filter(\.isBusy)
-        let moving = busy.filter { !$0.isPaused }
+        // waiting its turn in the queue is no progress either
+        let moving = busy.filter { status in
+            if case .queued = status { false } else { !status.isPaused }
+        }
         let status: PackRowStatus = if busy.isEmpty { .get }
             else if moving.isEmpty { busy[0] }
             else { .downloading(moving.map { $0.progress ?? 0 }.reduce(0, +) / Double(moving.count)) }

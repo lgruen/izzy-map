@@ -1,7 +1,7 @@
 import BackgroundAssets
 import Foundation
 import Observation
-import System
+import UIKit
 import os
 
 /// The offline map archives on this device and the state of every
@@ -12,7 +12,21 @@ import os
 ///   with the install; the rest come from `fetch(_:)` — one tap each.
 /// - DEBUG `-dataDir <path>`: the developer's `data/` directory, read in
 ///   place; Background Assets is never touched.
+/// - DEBUG `-fakePacks <spec>`: the same store over `FakePackSystem`.
 /// - Tests and previews: a fixed location.
+///
+/// **Requests are serial** (the download queue, see "Queue"): at most ONE
+/// `ensureLocalAvailability` call is in flight, for any pack, and a new one
+/// starts only after the previous call has RETURNED — not merely after the
+/// store stopped waiting for it. On iOS 27.2 several at once made most fail
+/// with "The asset pack … is unavailable" while each worked alone (field
+/// report, iPhone 16e, 2026-11-04; the headers name no limit). A failed
+/// request is retried with backoff, one cut off by a suspension or made
+/// offline is asked again without using a retry, and nothing is marked
+/// failed before the system has been asked what it actually has: SYSTEM
+/// TRUTH WINS — every refresh recomputes the states from `resolve()` (files)
+/// and `localStatus` (downloads), on launch, on return to the foreground,
+/// while Storage is open and after every event.
 ///
 /// `location` is observable: the style (via `AppModel.data`) and everything
 /// else that reads it follows pack installs and removals. Non-SwiftUI code
@@ -26,11 +40,48 @@ final class PackStore {
         case fixed
         #if DEBUG
         /// `-fakePacks <spec>` (UI tests, screenshots; `FakePacks`): pack
-        /// states from the spec, fetch and remove simulated. With `-dataDir`
-        /// an installed pack's archives come from that directory, so the map
-        /// really restyles as fake packs arrive and leave.
+        /// states from the spec, downloads simulated by `FakePackSystem`. With
+        /// `-dataDir` an installed pack's archives come from that directory,
+        /// so the map really restyles as fake packs arrive and leave.
         case fake
         #endif
+    }
+
+    /// The queue's timing (tests shrink it).
+    nonisolated struct Tuning: Sendable {
+        /// Waits before the 1st, 2nd, 3rd retry of a failed request; after
+        /// the last one the row says "Didn't finish · Retry".
+        var retryDelays: [Duration] = [.seconds(2), .seconds(10), .seconds(30)]
+        /// A request whose pack the system neither downloads nor has, with
+        /// no event for this long, is treated as lost (the watchdog).
+        var stallAfter: Duration = .seconds(90)
+        /// The same for a pack the system reported paused.
+        var pausedStallAfter: Duration = .seconds(600)
+        var watchInterval: Duration = .seconds(30)
+        /// Re-reads after "local, but its files don't open" (a move in progress?).
+        var unreadableRechecks: [Duration] = [.seconds(3), .seconds(15)]
+        /// A request that failed while the system says it's still
+        /// downloading is re-attached without using a retry, at most this often.
+        var freeReattaches = 10
+        /// `downloading` (or `paused`) with no event for this long, nobody
+        /// asking, and the system has nothing: stale — asked for again.
+        var staleAfter: Duration = .seconds(30)
+        var pausedStaleAfter: Duration = .seconds(600)
+        var pollInterval: Duration = .milliseconds(250)
+        /// The continued-processing task hears from us at least this often.
+        var heartbeat: Duration = .seconds(10)
+        /// A lost call the watchdog ended (or, for a core pack, couldn't)
+        /// that still hasn't returned after this long is ABANDONED: the
+        /// queue goes on beside it. Liveness over strict one-at-a-time — at
+        /// most one abandoned call at a time, so at most two overlap.
+        var abandonGrace: Duration = .seconds(120)
+    }
+
+    /// One recorded error (Diagnostics).
+    nonisolated struct ErrorRecord: Sendable, Equatable {
+        let date: Date
+        let stage: String
+        let text: String
     }
 
     let mode: Mode
@@ -57,23 +108,100 @@ final class PackStore {
     /// `plantid` pack is on the device and every one of them is readable.
     private(set) var plantIDDirectory: URL?
 
+    // MARK: Queue state (observable: rows say "Queued · n")
+
+    /// The pack the queue is working on (its call in flight, or waiting for
+    /// a retry, the app, a connection or the previous call to return).
+    private(set) var current: Pack?
+    /// The packs waiting, in order.
+    private(set) var queue: [Pack] = []
+    /// Retries used by each pack since it was last asked for.
+    private(set) var retries: [Pack: Int] = [:]
+    /// When the current pack's next retry goes (Diagnostics).
+    private(set) var retryAt: Date?
+    /// The pack whose `ensureLocalAvailability` call hasn't returned yet —
+    /// the in-flight marker (it may no longer be `current`: a Stop, or the
+    /// system finishing first). No other call starts while it is set.
+    private(set) var callInFlight: Pack?
+    /// A lost call given up on (it never returned): the queue went on
+    /// beside it. Cleared when it finally returns. At most one.
+    private(set) var abandonedCall: Pack?
+    /// Calls abandoned this launch (Diagnostics).
+    private(set) var abandonedCount = 0
+    /// Why the current request waits instead of being asked (nil: it isn't).
+    private(set) var parkedFor: ParkReason?
+    /// The app is in the foreground (`didBecomeActive` … `didEnterBackground`).
+    private(set) var isActive = true
+    /// The device has a network path (real launches follow `Connectivity`;
+    /// the fakes have no network to lose).
+    private(set) var online = true
+    /// The last time the states were recomputed from the system.
+    private(set) var lastSync: Date?
+
+    nonisolated enum ParkReason: String, Sendable { case background = "waiting for the app", offline = "waiting for a connection" }
+
     @ObservationIgnored private var handlers: [UUID: @MainActor () -> Void] = [:]
-    @ObservationIgnored private var fetches: [Pack: Task<Void, Never>] = [:]
-    /// Which fetch task is the live one per pack: a task whose token was
-    /// replaced (Resume) or dropped (Stop/Remove) leaves `states` alone.
-    @ObservationIgnored private var fetchTokens: [Pack: UUID] = [:]
+    @ObservationIgnored private var system: (any PackSystem)?
+    @ObservationIgnored private let tuning: Tuning
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var runner: Task<Void, Never>?
+    @ObservationIgnored private var currentToken: UUID?
+    @ObservationIgnored private var attempt: Attempt?
+    /// Completes when the in-flight system call has returned.
+    @ObservationIgnored private var inFlight: Task<Void, Never>?
+    @ObservationIgnored private var inFlightID: UUID?
+    /// The abandoned call's task, kept so it is referenced until it returns
+    /// (its attempt is already settled: settling is once only).
+    @ObservationIgnored private var abandonedTask: Task<Void, Never>?
+    @ObservationIgnored private var abandonedID: UUID?
+    /// Completes when a Stop/Remove has finished with the system.
+    @ObservationIgnored private var removal: Task<Void, Never>?
+    @ObservationIgnored private var watchTask: Task<Void, Never>?
+    @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
+    @ObservationIgnored private var recheckTask: Task<Void, Never>?
+    @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
+    /// Resume tapped while the current pack waits (a retry, the app): go now.
+    @ObservationIgnored private var cutWait = false
+    /// Bumped on every `didEnterBackground`: a call that spans one may have
+    /// been cut off by the suspension.
+    @ObservationIgnored private var backgroundEpoch = 0
+    /// The process is kept running in the background by a
+    /// continued-processing task (ours or the areas'): calls aren't cut off.
+    @ObservationIgnored private var keptAlive: @MainActor () -> Bool = { AreaBackgroundTask.anyRunning }
+
+    private func isKeptAlive() -> Bool { background?.isRunning == true || keptAlive() }
+    @ObservationIgnored private var connectivity: Connectivity.Subscription?
+    /// The last status event (or request) per pack, for staleness.
+    @ObservationIgnored private var lastEvent: [Pack: ContinuousClock.Instant] = [:]
+    /// What the system called local at the last refresh.
+    @ObservationIgnored private var lastSystemLocal: Set<Pack> = []
     /// Packs stopped from Storage: status events still in flight for them
     /// (`downloading`, `paused`, `failed`) are ignored until a new fetch,
     /// so a stopped row can't flip back to "Downloading".
     @ObservationIgnored private var stopped: Set<Pack> = []
     @ObservationIgnored private var statusTask: Task<Void, Never>?
-    @ObservationIgnored private var manifest: [Pack: AssetPack] = [:]
+    @ObservationIgnored private var lifecycleTasks: [Task<Void, Never>] = []
+    @ObservationIgnored private var manifest: [Pack: PackManifestEntry] = [:]
+    /// The system's progress UI for a long queue (`BGContinuedProcessingTask`).
+    @ObservationIgnored private var background: (any ContinuedWork)?
+    /// The packs the running background task covers, and those done.
+    @ObservationIgnored private var run: (packs: [Pack], done: Set<Pack>) = ([], [])
+    /// The task's progress never goes back (high-water mark, bytes) …
+    @ObservationIgnored private var progressHigh = 0
+    /// … and while nothing moves, it hears a tick (one byte each) so the
+    /// scheduler doesn't take it for stalled.
+    @ObservationIgnored private var progressTicks = 0
+    @ObservationIgnored private var lastBeatValue = -1
+    /// The checkpoint was read: before that, writing it would erase it.
+    @ObservationIgnored private var queueRestored = false
+    @ObservationIgnored private var refreshCount = 0
+    @ObservationIgnored private var refreshApplied = 0
     /// The server's manifest was read (`manifest` is then the whole list).
     private(set) var manifestLoaded = false
     /// Why the manifest couldn't be read (Diagnostics).
     private(set) var manifestError: String?
-    /// Each pack's recent fetch errors, raw (Diagnostics).
-    private(set) var lastErrors: [Pack: [String]] = [:]
+    /// Each pack's recent errors, raw, with their time (Diagnostics).
+    private(set) var errorLog: [Pack: [ErrorRecord]] = [:]
     /// Catalogue refreshes this launch (Diagnostics).
     private(set) var catalogueLog: [String] = []
     /// Set at launch when the process can't use Background Assets (no app
@@ -83,12 +211,22 @@ final class PackStore {
     @ObservationIgnored private var fake: FakePacks?
     #endif
     nonisolated private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Packs")
+    /// Where the queue is checkpointed (pack IDs, current first).
+    nonisolated static let queueKey = "packQueue"
+    /// The fake store's own key: a UI test's queue never reaches a real launch.
+    @ObservationIgnored private var queueKey = PackStore.queueKey
 
-    private init(mode: Mode, location: DataLocation, states: [Pack: PackState]) {
+    private init(mode: Mode, location: DataLocation, states: [Pack: PackState], system: (any PackSystem)? = nil,
+                 tuning: Tuning = Tuning(), defaults: UserDefaults = .standard, background: (any ContinuedWork)? = nil) {
         self.mode = mode
         self.location = location
         self.states = states
         self.seasonProbes = SeasonProbes(location: location)
+        self.system = system
+        self.tuning = tuning
+        self.defaults = defaults
+        self.background = background
+        background?.onExpire = { [weak self] in self?.backgroundExpired() }
     }
 
     /// Tests and previews: these archives, no Background Assets.
@@ -109,7 +247,9 @@ final class PackStore {
             let dir = defaults.string(forKey: DataLocator.dataDirectoryKey).flatMap { $0.isEmpty ? nil : $0 }
                 .map { URL(filePath: $0, directoryHint: .isDirectory) }
             let seconds = defaults.double(forKey: "fakePackSeconds")
-            return PackStore(fake: FakePacks(spec: spec, directory: dir, seconds: seconds > 0 ? seconds : 4))
+            let store = PackStore(fake: FakePacks(spec: spec, directory: dir, seconds: seconds > 0 ? seconds : 4))
+            store.observeLifecycle()
+            return store
         }
         if let path = defaults.string(forKey: DataLocator.dataDirectoryKey), !path.isEmpty {
             let location = DataLocator.locate(debugDirectory: path)
@@ -132,8 +272,14 @@ final class PackStore {
         }
         #endif
         let store = PackStore(mode: .assetPacks, location: DataLocation(origin: .assetPacks, archives: [:]),
-                              states: Dictionary(uniqueKeysWithValues: Pack.allCases.map { ($0, .notInstalled) }))
+                              states: Dictionary(uniqueKeysWithValues: Pack.allCases.map { ($0, .notInstalled) }),
+                              defaults: defaults, background: AreaBackgroundTask.forPacks())
         store.isResolved = false
+        store.isActive = UIApplication.shared.applicationState != .background
+        // offline: a failed request waits for a path instead of using its
+        // retries (and being dropped from the checkpoint)
+        store.online = Connectivity.shared.online
+        store.connectivity = Connectivity.shared.observe { [weak store] up in store?.setOnline(up) }
         Task { [weak store] in
             let start = ContinuousClock.now
             // Background Assets traps (kills the app) when the app group named
@@ -146,36 +292,127 @@ final class PackStore {
                 store?.isResolved = true
                 return
             }
-            // first: nothing on the main actor may touch the manager before this
-            await store?.refresh()
             guard let store else { return }
-            store.isResolved = true
-            logger.info("launch: \(store.states.filter { $0.value.isInstalled }.keys.map(\.rawValue).sorted(), privacy: .public) installed (\(start.duration(to: .now), privacy: .public))")
-            store.start(defaults: defaults)
+            store.system = ApplePackSystem()
+            store.observeLifecycle()
+            await store.boot(autoFetchCore: true, restoreQueue: true, hooks: true) {
+                logger.info("launch: \(store.states.filter { $0.value.isInstalled }.keys.map(\.rawValue).sorted(), privacy: .public) installed (\(start.duration(to: .now), privacy: .public))")
+            }
         }
         return store
     }
 
+    #if DEBUG
+    /// Unit tests: the Background Assets store over a fake system, booted
+    /// (states from the system, the checkpointed queue resumed).
+    static func testing(system: FakePackSystem, defaults: UserDefaults, tuning: Tuning,
+                        background: (any ContinuedWork)? = nil, autoFetchCore: Bool = false,
+                        keptAlive: @escaping @MainActor () -> Bool = { false }, online: Bool = true) async -> PackStore {
+        let store = PackStore(mode: .assetPacks, location: DataLocation(origin: .assetPacks, archives: [:]),
+                              states: Dictionary(uniqueKeysWithValues: Pack.allCases.map { ($0, .notInstalled) }),
+                              system: system, tuning: tuning, defaults: defaults, background: background)
+        store.keptAlive = keptAlive
+        store.online = online
+        store.isResolved = false
+        await store.boot(autoFetchCore: autoFetchCore, restoreQueue: true, hooks: false)
+        return store
+    }
+
+    /// Tests: the network path came or went.
+    func simulateConnectivity(_ up: Bool) { setOnline(up) }
+    #endif
+
+    /// Ends everything the store runs (tests: one store per test). Not for
+    /// the app's own store, which lives as long as the process.
+    func shutdown() {
+        statusTask?.cancel()
+        for task in lifecycleTasks { task.cancel() }
+        watchTask?.cancel()
+        heartbeatTask?.cancel()
+        recheckTask?.cancel()
+        runner?.cancel()
+        queue = []
+        current = nil
+        currentToken = nil
+        attempt?.settle(.failure(CancellationError()))
+        connectivity = nil
+        wake()
+    }
+
+    /// The first look at the system, the checkpointed queue (read before
+    /// anything can write it), then the event stream and the manifest.
+    private func boot(autoFetchCore: Bool, restoreQueue: Bool, hooks: Bool, resolved: () -> Void = {}) async {
+        guard let system else { return }
+        // first: nothing on the main actor may touch the manager before this
+        await refresh()
+        if restoreQueue { self.restoreQueue() } else { queueRestored = true }
+        isResolved = true
+        resolved()
+        await syncDownloads()
+        let stream = await system.events()
+        statusTask = Task { [weak self] in
+            for await event in stream {
+                guard let self else { return }
+                await self.handle(event)
+            }
+        }
+        runQueue()
+        #if DEBUG
+        // simulated offline: the manifest refresh would go to Apple's servers
+        if DebugNetwork.simulatedOffline, !(system is FakePackSystem) { return }
+        #endif
+        await loadManifest()
+        // a pack we expect but the catalogue doesn't list: the device's
+        // copy may predate an upload — ask the server once
+        if manifestLoaded, let unknown = Pack.allCases.first(where: { manifest[$0] == nil }) {
+            await refreshCatalogue(reason: "launch: \(unknown.rawValue) not in the catalogue")
+        }
+        // Core packs are the system's job, but "network dropouts or other
+        // uncommon issues can prevent the system from downloading [even
+        // an essential pack] until you call ensureLocalAvailability"
+        // (Apple, "Downloading Apple-hosted asset packs").
+        // One the system is downloading by itself isn't asked for: the queue
+        // would hold every Get behind a 2 GB prefetch (if it stalls, the
+        // stale-download check asks for it).
+        if autoFetchCore {
+            enqueue(Pack.allCases.filter {
+                guard $0.policy != .onDemand, !state($0).isInstalled, manifest[$0] != nil else { return false }
+                if case .downloading = state($0) { return false }
+                return true
+            }, user: false)
+        }
+        guard hooks else { return }
+        // test hook (all builds; only reachable through launch
+        // arguments): `-fetchPacks season-2021,aerial`, `-removePacks …`
+        for id in Self.ids(defaults.string(forKey: "removePacks")) { await remove(id) }
+        fetch(Self.ids(defaults.string(forKey: "fetchPacks")))
+    }
+
     func state(_ pack: Pack) -> PackState { states[pack] ?? .notInstalled }
+
+    /// Its place in the queue (1 = next), nil when it isn't waiting.
+    func queuePosition(_ pack: Pack) -> Int? { queue.firstIndex(of: pack).map { $0 + 1 } }
 
     /// The server's version of each pack it offers (Diagnostics).
     var manifestVersions: [Pack: Int] { manifest.mapValues(\.version) }
 
-    /// Whether this store talks to Background Assets (Diagnostics may then
-    /// ask the system about each pack).
-    var usesBackgroundAssets: Bool { managesPacks }
+    /// Whether this store talks to the real Background Assets (Diagnostics
+    /// may then ask the system about each pack).
+    var usesBackgroundAssets: Bool { mode == .assetPacks && system is ApplePackSystem && !backgroundAssetsUnavailable }
 
     /// Whether `fetch`/`remove` do anything here (Background Assets, or the
     /// DEBUG fake). A developer's `-dataDir` folder is read as it is.
-    var canFetch: Bool {
-        #if DEBUG
-        if mode == .fake { return true }
-        #endif
-        return managesPacks
+    var canFetch: Bool { managesPacks }
+
+    /// A system to ask (Background Assets with a usable manager, or the
+    /// fake) — or about to be: a tap in the first moments after launch
+    /// joins the queue, which runs once the system is known.
+    private var managesPacks: Bool {
+        !backgroundAssetsUnavailable && (system != nil || (mode == .assetPacks && !isResolved))
     }
 
-    /// Background Assets mode with a usable manager.
-    private var managesPacks: Bool { mode == .assetPacks && !backgroundAssetsUnavailable }
+    /// The running continued-processing task (Diagnostics).
+    var backgroundTaskRunning: Bool { background?.isRunning ?? false }
 
     // MARK: Observation for non-SwiftUI code
 
@@ -197,145 +434,102 @@ final class PackStore {
 
     // MARK: Fetch and remove
 
-    /// Downloads an on-demand pack (or retries a core pack): the system
-    /// schedules it and it keeps going in the background; `states` follows.
-    func fetch(_ pack: Pack) {
-        #if DEBUG
-        if mode == .fake { return fakeFetch(pack) }
-        #endif
-        guard managesPacks, fetches[pack] == nil, !state(pack).isInstalled else { return }
-        start(pack)
+    /// Downloads an on-demand pack (or retries a core pack) — a tap: it
+    /// joins the queue (core packs at its front), the system downloads it
+    /// and keeps going in the background; `states` follows.
+    func fetch(_ pack: Pack) { fetch([pack]) }
+
+    /// Several packs, in this order ("Get all": newest season first). A tap:
+    /// a long queue gets the system's progress UI.
+    func fetch(_ packs: [Pack]) { enqueue(packs, user: true) }
+
+    /// `user`: asked for by a tap (only a tap may start a continued-processing
+    /// task — she may have ended the last one herself).
+    private func enqueue(_ packs: [Pack], user: Bool) {
+        guard managesPacks else { return }
+        let wanted = packs.filter { !state($0).isInstalled && $0 != current && !queue.contains($0) }
+        if user { considerBackgroundTask(adding: wanted) }
+        guard !wanted.isEmpty else { return }
+        for pack in wanted {
+            stopped.remove(pack)
+            retries[pack] = 0
+        }
+        let core = wanted.filter { $0.policy != .onDemand }
+        queue.insert(contentsOf: core, at: 0)
+        queue.append(contentsOf: wanted.filter { $0.policy == .onDemand })
+        checkpoint()
+        updateBackground()
+        runQueue()
     }
 
-    /// A paused download, asked for again (the row's Resume): a fresh
-    /// `ensureLocalAvailability` — the system's own download carries on
-    /// where it was; the old request's outcome is ignored.
+    /// A paused or waiting download, asked for again (the row's Resume).
+    /// The current pack: the row says so at once, and a request waiting for
+    /// its retry (or the app) goes now — but a call still in flight is
+    /// never doubled: the system carries that download on by itself.
     func resume(_ pack: Pack) {
-        #if DEBUG
-        if mode == .fake {
-            fetches[pack]?.cancel()
-            fetches[pack] = nil
-            return fakeFetch(pack)
-        }
-        #endif
         guard managesPacks, !state(pack).isInstalled else { return }
-        fetches[pack]?.cancel()
-        start(pack)
-    }
-
-    private func start(_ pack: Pack) {
-        let token = UUID()
-        fetchTokens[pack] = token
-        stopped.remove(pack)
-        if case .downloading = states[pack] {} else { states[pack] = .downloading(nil) }
-        fetches[pack] = Task { [weak self] in
-            // a tap in the first moments after launch: let the lookup finish
-            // (it initialises the manager off the main thread)
-            while self?.isResolved == false { try? await Task.sleep(for: .milliseconds(50)) }
-            do {
-                do {
-                    try await self?.fetchOnce(pack)
-                } catch where Self.isNotFound(error) {
-                    // "no such pack": the device's catalogue may predate the
-                    // upload. Ask the server once (`checkForUpdates`, the
-                    // documented way to get the latest asset-pack
-                    // information unconditionally), then try again.
-                    guard let self, !Task.isCancelled, self.fetchTokens[pack] == token else { return }
-                    self.noteError(pack, error, stage: "first try")
-                    await self.refreshCatalogue(reason: "\(pack.rawValue) not found")
-                    guard !Task.isCancelled, self.fetchTokens[pack] == token else { return }
-                    try await self.fetchOnce(pack)
-                }
-                Self.logger.info("\(pack.rawValue, privacy: .public): available locally")
-                guard !Task.isCancelled, let self, self.fetchTokens[pack] == token else { return }
-                await self.refresh()
-                // available, yet its archives aren't readable: say so (with a
-                // Retry) rather than leave the row waiting for ever
-                if self.fetchTokens[pack] == token, !self.state(pack).isInstalled {
-                    Self.logger.error("\(pack.rawValue, privacy: .public): available but its archives aren't readable")
-                    self.states[pack] = .failed(Self.unreadable)
-                }
-            } catch {
-                // stopped or superseded: whoever did that owns the state now
-                guard !Task.isCancelled, let self, self.fetchTokens[pack] == token else { return }
-                Self.logger.error("\(pack.rawValue, privacy: .public): fetch failed: \(String(describing: error), privacy: .public)")
-                self.noteError(pack, error, stage: "fetch")
-                self.states[pack] = Self.isNotFound(error) ? .unpublished : .failed(error.localizedDescription)
+        retries[pack] = 0
+        considerBackgroundTask(adding: owned(pack) ? [] : [pack])
+        if pack == current {
+            if case .paused = state(pack) { states[pack] = .downloading(nil) }
+            if callInFlight == nil {
+                cutWait = true
+                wake()
             }
-            guard let self, self.fetchTokens[pack] == token else { return }
-            self.fetches[pack] = nil
-            self.fetchTokens[pack] = nil
+        } else if let i = queue.firstIndex(of: pack) {
+            queue.remove(at: i)
+            queue.insert(pack, at: 0)
+            checkpoint()
+        } else {
+            stopped.remove(pack)
+            queue.insert(pack, at: 0)
+            checkpoint()
+            runQueue()
         }
     }
 
-    /// One attempt: the pack from the catalogue, then the system's download.
-    private func fetchOnce(_ pack: Pack) async throws {
-        let assetPack: AssetPack
-        do {
-            assetPack = try await self.assetPack(pack)
-        } catch {
-            lastErrors[pack, default: []].append("catalogue lookup: \(Self.describe(error))")
-            throw error
-        }
-        try await Self.ensureLocalAvailability(of: assetPack)
-    }
-
-    /// The server's latest asset-pack information (`checkForUpdates`: it
-    /// also starts updates and drops packs the server removed — the system
-    /// does both by itself periodically anyway), then the manifest again.
-    private func refreshCatalogue(reason: String) async {
-        do {
-            let (updating, removed) = try await AssetPackManager.shared.checkForUpdates()
-            catalogueLog.append("\(Date.now.formatted(date: .omitted, time: .standard)) checkForUpdates (\(reason)): updating \(updating.sorted()), removed \(removed.sorted())")
-        } catch {
-            catalogueLog.append("\(Date.now.formatted(date: .omitted, time: .standard)) checkForUpdates (\(reason)) failed: \(Self.describe(error))")
-        }
-        manifest = [:]
-        await loadManifest()
-    }
-
-    private func noteError(_ pack: Pack, _ error: any Error, stage: String) {
-        lastErrors[pack, default: []].append("\(stage): \(Self.describe(error))")
-        if lastErrors[pack]!.count > 6 { lastErrors[pack]!.removeFirst() }
-    }
-
-    /// "BAManagedErrorDomain 0: No asset pack …" (Diagnostics).
-    nonisolated static func describe(_ error: any Error) -> String {
-        let ns = error as NSError
-        return "\(ns.domain) \(ns.code): \(ns.localizedDescription) [\(String(describing: error))]"
-    }
-
-    nonisolated static let unreadable = "The download finished, but its files couldn't be opened."
-
-    /// "No such asset pack" from Background Assets (the Swift error, or the
-    /// bridged `BAManagedErrorCodeAssetPackNotFound`, code 0).
-    nonisolated static func isNotFound(_ error: any Error) -> Bool {
-        if let managed = error as? ManagedBackgroundAssetsError, case .assetPackNotFound = managed { return true }
-        let ns = error as NSError
-        return ns.domain.contains("BAManaged") && ns.code == 0
-    }
-
-    /// Removes an on-demand pack. Its archives leave the style FIRST, so
-    /// MapLibre and the season probes let go of the files, then the system
-    /// deletes them.
+    /// Removes an on-demand pack (or stops its download, or takes it out of
+    /// the queue). Its archives leave the style FIRST, so MapLibre and the
+    /// season probes let go of the files, then the system deletes them. No
+    /// other request starts before the system is done with the removal.
     func remove(_ pack: Pack) async {
-        #if DEBUG
-        if mode == .fake { return await fakeRemove(pack) }
-        #endif
         guard managesPacks, pack.isRemovable else { return }
         // Stop as much as Remove: late events of this download are ignored
         stopped.insert(pack)
-        fetches[pack]?.cancel()
-        fetches[pack] = nil
-        fetchTokens[pack] = nil
+        queue.removeAll { $0 == pack }
+        if current == pack {
+            current = nil
+            currentToken = nil
+            attempt?.settle(.failure(CancellationError()))
+        }
+        retries[pack] = nil
         updates[pack] = nil
+        // a stopped pack is no part of the background task's success
+        run.packs.removeAll { $0 == pack }
+        run.done.remove(pack)
+        checkpoint()
+        wake()
+        let previous = removal
+        let task = Task { [weak self] in
+            await previous?.value
+            await self?.removeFromSystem(pack)
+        }
+        removal = task
+        await task.value
+        if removal == task { removal = nil }
+        updateBackground()
+        queueDrained()
+    }
+
+    private func removeFromSystem(_ pack: Pack) async {
         var shown = location.archives
         for archive in pack.archives { shown[archive] = nil }
         publish(DataLocation(origin: location.origin, archives: shown))
         // one run-loop turn: the style rebuild drops the source first
         try? await Task.sleep(for: .milliseconds(300))
+        guard let system else { return }
         do {
-            try await AssetPackManager.shared.remove(assetPackWithID: pack.rawValue)
+            try await system.remove(pack.rawValue)
             Self.logger.info("\(pack.rawValue, privacy: .public): removed")
         } catch {
             Self.logger.error("\(pack.rawValue, privacy: .public): remove failed: \(String(describing: error), privacy: .public)")
@@ -343,80 +537,495 @@ final class PackStore {
         await refresh()
         // a download stopped from Storage: `refresh` only clears installed
         // packs, and a stopped one's late events are ignored
-        if !state(pack).isInstalled, fetchTokens[pack] == nil { states[pack] = .notInstalled }
+        if !state(pack).isInstalled, !owned(pack) { states[pack] = .notInstalled }
+    }
+
+    // MARK: Queue
+
+    /// One request at a time, in order: `process` each pack until it is
+    /// here, failed for good, unpublished or stopped.
+    private func runQueue() {
+        guard runner == nil, system != nil, isResolved, current != nil || !queue.isEmpty else { return }
+        runner = Task { [weak self] in
+            while !Task.isCancelled, let store = self, let next = store.pickNext() {
+                await store.process(next.pack, token: next.token)
+            }
+            self?.runner = nil
+            self?.queueDrained()
+        }
+    }
+
+    private func pickNext() -> (pack: Pack, token: UUID)? {
+        if let current, let currentToken { return (current, currentToken) }
+        guard !queue.isEmpty else { return nil }
+        let pack = queue.removeFirst()
+        let token = UUID()
+        current = pack
+        currentToken = token
+        cutWait = false
+        checkpoint()
+        updateBackground()
+        return (pack, token)
+    }
+
+    private func owns(_ pack: Pack, _ token: UUID) -> Bool { current == pack && currentToken == token }
+
+    /// Ours to download: in flight or waiting.
+    private func owned(_ pack: Pack) -> Bool { current == pack || queue.contains(pack) }
+
+    /// The previous call (any pack) has returned and no removal is under
+    /// way: only then may a call start.
+    private func gateCalls() async {
+        while true {
+            if let inFlight { await inFlight.value; continue }
+            if let removal { await removal.value; if self.removal == removal { self.removal = nil }; continue }
+            return
+        }
+    }
+
+    /// Runs the current pack's request until it settles one way or another.
+    private func process(_ pack: Pack, token: UUID) async {
+        var catalogueRefreshed = false
+        var reattached = 0
+        while owns(pack, token), !Task.isCancelled {
+            await gateCalls()
+            // the system's word first: maybe it's here already
+            await refresh()
+            guard owns(pack, token) else { return }
+            if state(pack).isInstalled { return finish(pack, token) }
+            switch states[pack] {
+            case .downloading?, .paused?: break
+            default: states[pack] = .downloading(nil)
+            }
+            lastEvent[pack] = .now
+            let epoch = backgroundEpoch
+            do {
+                try await request(pack)
+                guard owns(pack, token) else { return }
+                await refresh()
+                if state(pack).isInstalled { return finish(pack, token) }
+                // "available" (the call returns at once for a local pack) but
+                // its files don't open: retrying the call can't help — say
+                // so, and look again shortly (a move in progress?)
+                if lastSystemLocal.contains(pack) {
+                    Self.logger.error("\(pack.rawValue, privacy: .public): available but its archives aren't readable")
+                    noteError(pack, PackStoreError.unreadable, stage: "request")
+                    states[pack] = .failed(Self.unreadable)
+                    drop(pack, token)
+                    return scheduleRechecks()
+                }
+                throw PackStoreError.notLocal
+            } catch {
+                guard owns(pack, token) else { return }
+                noteError(pack, error, stage: "request")
+                // the system's word before any verdict: a request that
+                // failed or was cut off may still have left the pack here
+                await refresh()
+                guard owns(pack, token) else { return }
+                if state(pack).isInstalled { return finish(pack, token) }
+                // offline (also "no such pack" offline: the catalogue can't be
+                // asked): nothing failed — wait for a path, no retry used
+                if !online {
+                    Self.logger.notice("\(pack.rawValue, privacy: .public): offline; waiting for a connection")
+                    await park(.offline, pack, token) { self.online }
+                    continue
+                }
+                // cut off by a suspension (the app went to the background
+                // during the call, nothing kept the process running): ask
+                // again once she is back, no retry used
+                if !isKeptAlive(), epoch != backgroundEpoch || !isActive {
+                    Self.logger.notice("\(pack.rawValue, privacy: .public): interrupted in the background; asking again in the foreground")
+                    await park(.background, pack, token) { self.isActive || self.isKeptAlive() }
+                    continue
+                }
+                if Self.isNotFound(error) {
+                    // "no such pack": the device's catalogue may predate the
+                    // upload. Ask the server once (`checkForUpdates`, the
+                    // documented way to get the latest asset-pack
+                    // information unconditionally), then try again.
+                    if !catalogueRefreshed {
+                        catalogueRefreshed = true
+                        await refreshCatalogue(reason: "\(pack.rawValue) not found")
+                        continue
+                    }
+                    states[pack] = .unpublished
+                    return drop(pack, token)
+                }
+                // still downloading in the system: attach again, no retry used
+                if let system, reattached < tuning.freeReattaches, await system.localStatus(pack.rawValue).downloading {
+                    reattached += 1
+                    await wait(tuning.retryDelays.first ?? .seconds(2), pack, token)
+                    continue
+                }
+                let used = retries[pack] ?? 0
+                guard used < tuning.retryDelays.count else {
+                    Self.logger.error("\(pack.rawValue, privacy: .public): giving up after \(used) retries: \(String(describing: error), privacy: .public)")
+                    states[pack] = .failed(Self.message(error))
+                    return drop(pack, token)
+                }
+                retries[pack] = used + 1
+                let delay = tuning.retryDelays[used]
+                retryAt = Date.now.addingTimeInterval(Double(delay.components.seconds) + Double(delay.components.attoseconds) / 1e18)
+                Self.logger.notice("\(pack.rawValue, privacy: .public): retry \(used + 1) in \(delay, privacy: .public)")
+                await wait(delay, pack, token)
+                retryAt = nil
+            }
+        }
+    }
+
+    /// Sleeps `delay` unless the pack stops being the current one, or a
+    /// Resume cuts it short (one tapped before the wait began counts too).
+    private func wait(_ delay: Duration, _ pack: Pack, _ token: UUID) async {
+        let end = ContinuousClock.now + delay
+        while owns(pack, token), !cutWait, !Task.isCancelled, ContinuousClock.now < end {
+            try? await Task.sleep(for: min(tuning.pollInterval, ContinuousClock.now.duration(to: end)))
+        }
+        cutWait = false
+    }
+
+    /// Waits (no polling) until `ready`, a Stop, or a Resume.
+    private func park(_ reason: ParkReason, _ pack: Pack, _ token: UUID, until ready: () -> Bool) async {
+        parkedFor = reason
+        updateBackground()
+        while owns(pack, token), !ready(), !cutWait, !Task.isCancelled {
+            await withCheckedContinuation { waiters.append($0) }
+        }
+        cutWait = false
+        parkedFor = nil
+    }
+
+    private func wake() {
+        let all = waiters
+        waiters = []
+        for waiter in all { waiter.resume() }
+    }
+
+    /// One `ensureLocalAvailability` call. The store may stop waiting for
+    /// it early (Stop, the system's own `finished`), but the call stays THE
+    /// in-flight one until it returns: `gateCalls` holds the next back. (A
+    /// Swift cancellation doesn't reach the system's call, so it runs in a
+    /// task of its own.)
+    private func request(_ pack: Pack) async throws {
+        guard let system else { throw CancellationError() }
+        let attempt = Attempt()
+        self.attempt = attempt
+        defer { if self.attempt === attempt { self.attempt = nil } }
+        let id = pack.rawValue
+        let call = Task.detached { () -> Result<Void, any Error> in
+            do {
+                try await system.ensureLocalAvailability(id)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }
+        let callID = UUID()
+        callInFlight = pack
+        inFlightID = callID
+        inFlight = Task { [weak self] in
+            let result = await call.value
+            attempt.settle(result)
+            guard let self else { return }
+            if self.inFlightID == callID {
+                self.inFlight = nil
+                self.inFlightID = nil
+                self.callInFlight = nil
+            }
+            if self.abandonedID == callID {
+                Self.logger.notice("\(pack.rawValue, privacy: .public): the abandoned call returned at last")
+                self.abandonedTask = nil
+                self.abandonedID = nil
+                self.abandonedCall = nil
+            }
+            self.wake()
+        }
+        watch(pack, attempt)
+        try await attempt.value()
+        Self.logger.info("\(pack.rawValue, privacy: .public): available locally")
+    }
+
+    /// The watchdog. A request whose pack the system neither downloads nor
+    /// has, with no event for a while, is lost (Diagnostics showed
+    /// "downloading 79 %" here while the system had nothing: local status
+    /// []). Asking again would put a second call beside the lost one, so
+    /// the lost one is ended instead: `remove` of a pack the system has
+    /// nothing of loses nothing, and the call then returns (an error, so it
+    /// is asked again like any failure). A core pack can't be removed: the
+    /// queue waits for its call. Paused packs get a longer threshold.
+    private func watch(_ pack: Pack, _ attempt: Attempt) {
+        watchTask?.cancel()
+        watchTask = Task { [weak self, tuning] in
+            var endedAt: ContinuousClock.Instant?
+            while !Task.isCancelled {
+                try? await Task.sleep(for: tuning.watchInterval)
+                guard !Task.isCancelled, let self, attempt.isPending, let system = self.system else { return }
+                guard self.isActive || self.isKeptAlive(), self.online else { continue }
+                if let endedAt {
+                    // ended (or not endable), still not back: after the grace
+                    // period the queue goes on without it — unless another
+                    // abandoned call is still out (then it waits for that)
+                    if endedAt.duration(to: .now) >= tuning.abandonGrace, self.abandon(pack, attempt) { return }
+                    continue
+                }
+                let status = await system.localStatus(pack.rawValue)
+                if status.downloaded {
+                    // here, whatever the call says (refresh settles it)
+                    await self.refresh()
+                    continue
+                }
+                guard !status.downloading else { continue }
+                let limit = self.state(pack) == .paused ? tuning.pausedStallAfter : tuning.stallAfter
+                guard self.quiet(pack, for: limit), attempt.started.duration(to: .now) >= limit else { continue }
+                endedAt = .now
+                self.noteError(pack, PackStoreError.stalled, stage: "watchdog")
+                guard pack.isRemovable else {
+                    Self.logger.fault("\(pack.rawValue, privacy: .public): request lost; a core pack can't be ended — waiting out the grace period")
+                    continue
+                }
+                Self.logger.notice("\(pack.rawValue, privacy: .public): request lost (the system has nothing); ending it to ask again")
+                try? await system.remove(pack.rawValue)
+            }
+        }
+    }
+
+    /// Gives up on the in-flight call of `attempt` (see `Tuning.abandonGrace`).
+    private func abandon(_ pack: Pack, _ attempt: Attempt) -> Bool {
+        guard self.attempt === attempt, let inFlight, abandonedTask == nil else { return false }
+        Self.logger.fault("\(pack.rawValue, privacy: .public): call still not back after the grace period; abandoned — the queue goes on")
+        abandonedTask = inFlight
+        abandonedID = inFlightID
+        abandonedCall = callInFlight
+        abandonedCount += 1
+        self.inFlight = nil
+        inFlightID = nil
+        callInFlight = nil
+        noteError(pack, PackStoreError.abandoned, stage: "watchdog")
+        attempt.settle(.failure(PackStoreError.abandoned))
+        wake()
+        return true
+    }
+
+    private func quiet(_ pack: Pack, for duration: Duration) -> Bool {
+        guard let last = lastEvent[pack] else { return true }
+        return last.duration(to: .now) >= duration
+    }
+
+    private func finish(_ pack: Pack, _ token: UUID) {
+        guard owns(pack, token) else { return }
+        retries[pack] = nil
+        run.done.insert(pack)
+        current = nil
+        currentToken = nil
+        checkpoint()
+        updateBackground()
+    }
+
+    private func drop(_ pack: Pack, _ token: UUID) {
+        guard owns(pack, token) else { return }
+        current = nil
+        currentToken = nil
+        checkpoint()
+        updateBackground()
+    }
+
+    private func queueDrained() {
+        guard current == nil, queue.isEmpty, let background, background.isRunning else { return }
+        let all = run.packs.allSatisfy { state($0).isInstalled }
+        background.end(success: all)
+        endRun()
+    }
+
+    /// The queue as it stands, for the next launch (a kill, an expired
+    /// background task): pack IDs, the current one first. Never before the
+    /// last one was read.
+    private func checkpoint() {
+        guard queueRestored else { return }
+        let ids = ([current].compactMap { $0 } + queue).map(\.rawValue)
+        if ids.isEmpty { defaults.removeObject(forKey: queueKey) } else { defaults.set(ids, forKey: queueKey) }
+    }
+
+    private func restoreQueue() {
+        defer {
+            queueRestored = true
+            checkpoint()
+        }
+        let ids = defaults.stringArray(forKey: queueKey) ?? []
+        let packs = ids.compactMap(Pack.init(rawValue:)).filter { !state($0).isInstalled && state($0) != .unpublished }
+        guard !packs.isEmpty else { return }
+        Self.logger.info("resuming the queue: \(packs.map(\.rawValue), privacy: .public)")
+        for pack in packs where !owned(pack) && !stopped.contains(pack) { queue.append(pack) }
+    }
+
+    // MARK: Background task
+
+    /// A tap that leaves two or more packs to get, or one of 1 GB or more,
+    /// runs the queue inside a `BGContinuedProcessingTask`, so it carries on
+    /// while she uses other apps (the system's progress UI: "Downloading
+    /// maps", the pack, the bytes across the queue). Only a tap starts one
+    /// (it must come from the foreground, and she may have ended the last
+    /// one herself); a running one takes the new packs in.
+    private func considerBackgroundTask(adding new: [Pack]) {
+        guard let background else { return }
+        if background.isRunning {
+            run.packs.append(contentsOf: new.filter { !run.packs.contains($0) })
+            return
+        }
+        guard isActive else { return }
+        let packs = [current].compactMap { $0 } + queue + new.filter { !owned($0) }
+        guard packs.count >= 2 || packs.contains(where: { size($0) >= 1_000_000_000 }) else { return }
+        run = (packs, [])
+        progressHigh = 0
+        progressTicks = 0
+        lastBeatValue = -1
+        guard background.begin(title: "Downloading maps", subtitle: subtitle()) else {
+            run = ([], [])
+            return
+        }
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { [weak self, tuning] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: tuning.heartbeat)
+                guard !Task.isCancelled, let self, self.background?.isRunning == true else { return }
+                self.beat()
+            }
+        }
+    }
+
+    private func subtitle() -> String {
+        guard let pack = current ?? queue.first ?? run.packs.first(where: { !state($0).isInstalled }) else { return "" }
+        var line = pack.storageTitle
+        if current == pack {
+            if let parkedFor { line += " · \(parkedFor == .offline ? "waiting for a connection" : "waiting")" }
+            else if retryAt != nil { line += " · retrying soon" }
+            else if state(pack) == .downloading(nil) { line += " · waiting to start" }
+        }
+        let more = Set(queue + run.packs.filter { !state($0).isInstalled && !run.done.contains($0) }).subtracting([pack]).count
+        return more == 0 ? line : "\(line) · \(more) more"
+    }
+
+    private func size(_ pack: Pack) -> Int { downloadSizes[pack] ?? PackSizes.nominal[pack] ?? 0 }
+
+    private func updateBackground() {
+        guard let background, background.isRunning else { return }
+        let total = run.packs.reduce(0) { $0 + size($1) }
+        var done = run.packs.filter { run.done.contains($0) || state($0).isInstalled }.reduce(0) { $0 + size($1) }
+        if let current, run.packs.contains(current), !run.done.contains(current), case let .downloading(f?) = state(current) {
+            done += Int(Double(size(current)) * min(max(f, 0), 1))
+        }
+        // never backwards: a pause, a fresh "began", a give-up or a Stop
+        // don't take bytes off the bar
+        progressHigh = max(progressHigh, done)
+        background.update(done: progressHigh + progressTicks, total: max(total, progressHigh) + progressTicks,
+                          title: "Downloading maps", subtitle: subtitle())
+    }
+
+    /// Nothing moved since the last beat (a retry wait, the watchdog's
+    /// window, "waiting to start"): a tick and the current words, so the
+    /// task never looks stalled to the scheduler.
+    private func beat() {
+        if progressHigh == lastBeatValue { progressTicks += 1 }
+        lastBeatValue = progressHigh
+        updateBackground()
+    }
+
+    private func endRun() {
+        run = ([], [])
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+    }
+
+    /// The system ends the task (time's up, or she stopped it from its
+    /// Live Activity): the queue is checkpointed and carries on as usual —
+    /// without the task; only her next Get / Get all / Resume asks for one.
+    /// The system's download itself isn't ours to stop.
+    private func backgroundExpired() {
+        Self.logger.notice("pack task ended by the system; the queue carries on without it")
+        endRun()
+        checkpoint()
+    }
+
+    // MARK: App lifecycle
+
+    private func observeLifecycle() {
+        let center = NotificationCenter.default
+        lifecycleTasks.append(Task { [weak self] in
+            for await _ in center.notifications(named: UIApplication.didBecomeActiveNotification) {
+                self?.appBecameActive()
+            }
+        })
+        lifecycleTasks.append(Task { [weak self] in
+            for await _ in center.notifications(named: UIApplication.didEnterBackgroundNotification) {
+                self?.appEnteredBackground()
+            }
+        })
+    }
+
+    /// Back in the foreground: the states from the system again (it may
+    /// have finished, or still be downloading, out of process), then the
+    /// queue carries on. (No continued-processing task is asked for here:
+    /// this also fires after Control Center, Face ID, a notification.)
+    func appBecameActive() {
+        isActive = true
+        wake()
+        Task { await resync() }
+    }
+
+    func appEnteredBackground() {
+        isActive = false
+        backgroundEpoch += 1
+        checkpoint()
+    }
+
+    private func setOnline(_ up: Bool) {
+        guard up != online else { return }
+        online = up
+        wake()
+        if up { Task { await resync() } }
     }
 
     // MARK: Background Assets
-
-    private func start(defaults: UserDefaults) {
-        statusTask = Task { [weak self] in
-            let updates = await AssetPackManager.shared.statusUpdates
-            for await update in updates {
-                guard let self else { return }
-                await self.handle(update)
-            }
-        }
-        Task { [weak self] in
-            #if DEBUG
-            // simulated offline: the manifest refresh would go to Apple's servers
-            if DebugNetwork.simulatedOffline { return }
-            #endif
-            await self?.loadManifest()
-            guard let self else { return }
-            // a pack we expect but the catalogue doesn't list: the device's
-            // copy may predate an upload — ask the server once
-            if self.manifestLoaded, let unknown = Pack.allCases.first(where: { self.manifest[$0] == nil }) {
-                await self.refreshCatalogue(reason: "launch: \(unknown.rawValue) not in the catalogue")
-            }
-            // Core packs are the system's job, but "network dropouts or other
-            // uncommon issues can prevent the system from downloading [even
-            // an essential pack] until you call ensureLocalAvailability"
-            // (Apple, "Downloading Apple-hosted asset packs").
-            for pack in Pack.allCases where pack.policy != .onDemand && !self.state(pack).isInstalled
-                && self.manifest[pack] != nil {
-                self.fetch(pack)
-            }
-            // test hook (all builds; only reachable through launch
-            // arguments): `-fetchPacks season-2021,aerial`, `-removePacks …`
-            for id in Self.ids(defaults.string(forKey: "removePacks")) { await self.remove(id) }
-            for id in Self.ids(defaults.string(forKey: "fetchPacks")) { self.fetch(id) }
-        }
-    }
 
     private static func ids(_ list: String?) -> [Pack] {
         (list ?? "").split(separator: ",").compactMap { Pack(rawValue: $0.trimmingCharacters(in: .whitespaces)) }
     }
 
-    private func handle(_ update: AssetPackManager.DownloadStatusUpdate) async {
-        switch update {
-        case let .began(assetPack):
-            set(assetPack, .downloading(nil))
-        case let .paused(assetPack):
-            set(assetPack, .paused)
-        case let .downloading(assetPack, progress):
-            set(assetPack, .downloading(progress.fractionCompleted))
-        case let .finished(assetPack):
-            Self.logger.info("\(assetPack.id, privacy: .public): download finished")
-            if let pack = Pack(rawValue: assetPack.id) { updates[pack] = nil }
+    private func handle(_ event: PackSystemEvent) async {
+        guard let pack = Pack(rawValue: event.id) else { return }
+        lastEvent[pack] = .now
+        switch event.kind {
+        case .began:
+            if case .downloading = state(pack) {} else { set(pack, .downloading(nil)) }
+        case .paused:
+            set(pack, .paused)
+        case let .downloading(fraction):
+            set(pack, .downloading(fraction))
+            if pack == current { updateBackground() }
+        case .finished:
+            Self.logger.info("\(pack.rawValue, privacy: .public): download finished")
+            updates[pack] = nil
             await refresh()
-            // a system download (core pack, update) whose files can't be
-            // read: a Retry, never a row stuck "Waiting" (a fetch of ours
-            // reports this itself when `ensureLocalAvailability` returns)
-            if let pack = Pack(rawValue: assetPack.id), !state(pack).isInstalled,
-               fetchTokens[pack] == nil, !stopped.contains(pack) {
+            if !state(pack).isInstalled, !owned(pack), !stopped.contains(pack) {
+                // a system download (core pack, update) whose files can't be
+                // read: a Retry, never a row stuck "Waiting" — after a
+                // second look (the files may still be moving into place)
                 states[pack] = .failed(Self.unreadable)
+                scheduleRechecks()
             }
-        case let .failed(assetPack, error):
-            Self.logger.error("\(assetPack.id, privacy: .public): download failed: \(String(describing: error), privacy: .public)")
-            if let pack = Pack(rawValue: assetPack.id) { noteError(pack, error, stage: "status stream") }
-            set(assetPack, Self.isNotFound(error) ? .unpublished : .failed(error.localizedDescription))
-        @unknown default:
+        case let .failed(error):
+            Self.logger.error("\(pack.rawValue, privacy: .public): download failed: \(String(describing: error), privacy: .public)")
+            noteError(pack, error, stage: "status stream")
+            // ours: the request reports it, retried and checked against the
+            // system first; a pack we stopped stays as Stop left it
+            guard !owned(pack), !stopped.contains(pack) else { return }
             await refresh()
+            guard !state(pack).isInstalled, !owned(pack) else { return }
+            if let system, await system.localStatus(pack.rawValue).downloading { return }
+            set(pack, Self.isNotFound(error) ? .unpublished : .failed(Self.message(error)))
         }
     }
 
-    private func set(_ assetPack: AssetPack, _ state: PackState) {
-        guard let pack = Pack(rawValue: assetPack.id), !stopped.contains(pack) else { return }
+    private func set(_ pack: Pack, _ state: PackState) {
+        guard !stopped.contains(pack) else { return }
         if self.state(pack).isInstalled {
             // an installed pack downloading again = a new version arriving
             // in the background; the installed one keeps serving
@@ -439,17 +1048,48 @@ final class PackStore {
         states[pack] = state
     }
 
-    /// Re-reads which packs are on the device (off the main thread).
+    /// Re-reads which packs are on the device (off the main thread) and
+    /// recomputes every state from it: installed wherever the files open,
+    /// whatever we thought before.
     private func refresh() async {
-        let found = await Self.resolveInstalledOffMain()
+        guard let system else { return }
+        // refreshes overlap (events, the queue, Storage): a look taken
+        // before a newer one never overwrites it
+        refreshCount += 1
+        let mine = refreshCount
+        var found = await Self.resolveOffMain(system)
+        guard mine > refreshApplied else { return }
+        refreshApplied = mine
+        // In the background (a status event while the phone is locked, a
+        // continued-processing task) files can be unreadable for a while —
+        // data protection, a move in progress. An installed pack is not
+        // downgraded then: the foreground re-sync has the last word.
+        if !isActive {
+            for pack in Pack.allCases where states[pack] == .installed && found.systemLocal.contains(pack) && !found.installed.contains(pack) {
+                found.installed.insert(pack)
+                var archives = found.location.archives
+                for archive in pack.archives { archives[archive] = location.url(for: archive) }
+                found.location = DataLocation(origin: found.location.origin, archives: archives)
+                if pack == .plantid { found.plantID = plantIDDirectory }
+            }
+        }
+        lastSystemLocal = found.systemLocal
         plantIDDirectory = found.plantID
+        var unreadable = false
         for pack in Pack.allCases {
             if found.installed.contains(pack) {
-                states[pack] = .installed
+                if states[pack] != .installed { states[pack] = .installed }
+                if queue.contains(pack) {
+                    queue.removeAll { $0 == pack }
+                    checkpoint()
+                }
             } else if found.systemLocal.contains(pack) {
                 // the system has it, but its files don't resolve: say so (a
                 // Retry; Diagnostics shows each path), never "not here · Get"
-                if fetchTokens[pack] == nil, !stopped.contains(pack) { states[pack] = .failed(Self.unreadable) }
+                if !owned(pack), !stopped.contains(pack), states[pack] != .failed(Self.unreadable) {
+                    states[pack] = .failed(Self.unreadable)
+                    unreadable = true
+                }
                 updates[pack] = nil
             } else if states[pack] == .installed {
                 states[pack] = .notInstalled
@@ -457,32 +1097,82 @@ final class PackStore {
             }
         }
         publish(found.location)
-        // a download the system runs by itself (a prefetch pack after the
-        // install) shows as one even before its first status event
-        if #available(iOS 26.4, *) {
-            for pack in Pack.allCases where states[pack] == .notInstalled && !stopped.contains(pack) {
-                let status = await AssetPackManager.shared.localStatus(ofAssetPackWithID: pack.rawValue)
-                if status.contains(.downloading), states[pack] == .notInstalled { states[pack] = .downloading(nil) }
+        lastSync = .now
+        if unreadable { scheduleRechecks() }
+        // here, whatever our request says (it may return late, or never):
+        // the queue moves on — the next CALL still waits for this one
+        if let current, found.installed.contains(current) { attempt?.settle(.success(())) }
+        updateBackground()
+    }
+
+    /// Downloads the system runs by itself (a prefetch pack after the
+    /// install, a request from before a relaunch) show as such; a row
+    /// showing a download (or a pause) the system no longer has is asked
+    /// for again.
+    private func syncDownloads() async {
+        guard let system else { return }
+        for pack in Pack.allCases where !state(pack).isInstalled && !stopped.contains(pack) {
+            let status = await system.localStatus(pack.rawValue)
+            let limit: Duration
+            switch state(pack) {
+            case .notInstalled, .failed:
+                if status.downloading, !state(pack).isInstalled {
+                    states[pack] = .downloading(nil)
+                    lastEvent[pack] = .now
+                }
+                continue
+            case .downloading: limit = tuning.staleAfter
+            case .paused: limit = tuning.pausedStaleAfter
+            default: continue
+            }
+            if !status.downloading, !status.downloaded, !owned(pack), quiet(pack, for: limit),
+               manifest[pack] != nil || !manifestLoaded {
+                // stale: nobody downloads it — a request resumes it
+                Self.logger.notice("\(pack.rawValue, privacy: .public): shown \(String(describing: self.state(pack)), privacy: .public), the system has nothing; asking again")
+                enqueue([pack], user: false)
             }
         }
     }
 
-    private func loadManifest() async {
-        do {
-            let packs: Set<AssetPack>
-            if #available(iOS 27, *) {
-                packs = try await AssetPackManager.shared.manifest.assetPacks
-            } else {
-                packs = try await AssetPackManager.shared.allAssetPacks
+    /// The states from the system now (return to the foreground, Storage
+    /// open, Diagnostics): files, downloads, then the queue carries on.
+    func resync() async {
+        guard system != nil, !backgroundAssetsUnavailable, isResolved else { return }
+        await refresh()
+        await syncDownloads()
+        runQueue()
+    }
+
+    /// "Local, but the files don't open" may be a move in progress (iOS 27
+    /// moved pack files to `Staging/Unlocalized/`): look again shortly.
+    private func scheduleRechecks() {
+        guard recheckTask == nil else { return }
+        recheckTask = Task { [weak self, tuning] in
+            for delay in tuning.unreadableRechecks {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled else { return }
+                await self?.refresh()
             }
-            for assetPack in packs {
-                guard let pack = Pack(rawValue: assetPack.id) else {
-                    Self.logger.notice("server has an unknown pack \(assetPack.id, privacy: .public)")
+            self?.recheckTask = nil
+        }
+    }
+
+    /// The server's manifest. The known one is replaced only by a manifest
+    /// that was read: a failed reload (offline) keeps it.
+    private func loadManifest() async {
+        guard let system else { return }
+        do {
+            let packs = try await system.manifest()
+            var fresh: [Pack: PackManifestEntry] = [:]
+            for entry in packs {
+                guard let pack = Pack(rawValue: entry.id) else {
+                    Self.logger.notice("server has an unknown pack \(entry.id, privacy: .public)")
                     continue
                 }
-                manifest[pack] = assetPack
-                downloadSizes[pack] = assetPack.downloadSize
+                fresh[pack] = entry
+                downloadSizes[pack] = entry.downloadSize
             }
+            manifest = fresh
             manifestLoaded = true
             manifestError = nil
             Self.logger.info("manifest: \(packs.map { "\($0.id) v\($0.version) \($0.downloadSize)" }.sorted(), privacy: .public)")
@@ -491,6 +1181,7 @@ final class PackStore {
             for pack in Pack.allCases {
                 switch (manifest[pack] != nil, states[pack] ?? .notInstalled) {
                 case (false, .notInstalled), (false, .failed):
+                    guard !owned(pack) else { break }
                     Self.logger.notice("\(pack.rawValue, privacy: .public): not in the server's manifest")
                     states[pack] = .unpublished
                 case (true, .unpublished):
@@ -506,44 +1197,51 @@ final class PackStore {
         }
     }
 
-    private func assetPack(_ pack: Pack) async throws -> AssetPack {
-        if let known = manifest[pack] { return known }
-        let assetPack: AssetPack
-        if #available(iOS 27, *) {
-            guard let found = try await AssetPackManager.shared.manifest.assetPack(withID: pack.rawValue) else {
-                throw ManagedBackgroundAssetsError.assetPackNotFound(withID: pack.rawValue)
-            }
-            assetPack = found
-        } else {
-            assetPack = try await AssetPackManager.shared.assetPack(withID: pack.rawValue)
+    /// The server's latest asset-pack information (`checkForUpdates`: it
+    /// also starts updates and drops packs the server removed — the system
+    /// does both by itself periodically anyway), then the manifest again.
+    private func refreshCatalogue(reason: String) async {
+        guard let system else { return }
+        let time = Date.now.formatted(date: .omitted, time: .standard)
+        do {
+            let (updating, removed) = try await system.checkForUpdates()
+            catalogueLog.append("\(time) checkForUpdates (\(reason)): updating \(updating.sorted()), removed \(removed.sorted())")
+        } catch {
+            catalogueLog.append("\(time) checkForUpdates (\(reason)) failed: \(Self.describe(error))")
         }
-        manifest[pack] = assetPack
-        downloadSizes[pack] = assetPack.downloadSize
-        return assetPack
+        await loadManifest()
     }
 
-    nonisolated private static func ensureLocalAvailability(of assetPack: AssetPack) async throws {
-        if #available(iOS 26.4, *) {
-            try await AssetPackManager.shared.ensureLocalAvailability(of: assetPack, requireLatestVersion: false)
-        } else {
-            try await AssetPackManager.shared.ensureLocalAvailability(of: assetPack)
-        }
+    private func noteError(_ pack: Pack, _ error: any Error, stage: String) {
+        errorLog[pack, default: []].append(ErrorRecord(date: .now, stage: stage, text: Self.describe(error)))
+        if errorLog[pack]!.count > 8 { errorLog[pack]!.removeFirst() }
+    }
+
+    /// "BAManagedErrorDomain 0: No asset pack …" (Diagnostics).
+    nonisolated static func describe(_ error: any Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain) \(ns.code): \(ns.localizedDescription) [\(String(describing: error))]"
+    }
+
+    nonisolated static func message(_ error: any Error) -> String {
+        if case PackStoreError.unreadable? = error as? PackStoreError { return unreadable }
+        return error.localizedDescription
+    }
+
+    nonisolated static let unreadable = "The download finished, but its files couldn't be opened."
+
+    /// "No such asset pack" from Background Assets (the Swift error, or the
+    /// bridged `BAManagedErrorCodeAssetPackNotFound`, code 0).
+    nonisolated static func isNotFound(_ error: any Error) -> Bool {
+        if let managed = error as? ManagedBackgroundAssetsError, case .assetPackNotFound = managed { return true }
+        let ns = error as NSError
+        return ns.domain.contains("BAManaged") && ns.code == 0
     }
 
     // MARK: Resolving files
 
-    /// What `resolveInstalled` found.
-    nonisolated struct Resolution: Sendable {
-        var location: DataLocation
-        /// On the device with every file readable.
-        var installed: Set<Pack>
-        /// The system says it's on the device (`assetPackIsAvailableLocally`).
-        var systemLocal: Set<Pack>
-        var plantID: URL?
-    }
-
-    @concurrent nonisolated private static func resolveInstalledOffMain() async -> Resolution {
-        resolveInstalled()
+    @concurrent nonisolated private static func resolveOffMain(_ system: any PackSystem) async -> PackResolution {
+        system.resolve()
     }
 
     /// Whether this process can use the app group Background Assets
@@ -552,81 +1250,6 @@ final class PackStore {
     @concurrent nonisolated private static func appGroupIsAccessibleOffMain() async -> Bool {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "BAAppGroupID") as? String else { return false }
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil
-    }
-
-    /// Which packs are local, and the file URL of each of their archives.
-    /// `url(for:)` is the documented way to get a path for code that opens
-    /// files itself (MapLibre's `pmtiles://file://`); its URL must not be
-    /// persisted beyond this process. A pack counts as installed only when
-    /// every one of its archives is readable.
-    nonisolated private static func resolveInstalled(fileManager: FileManager = .default) -> Resolution {
-        let manager = AssetPackManager.shared
-        var archives: [Archive: URL] = [:]
-        var installed: Set<Pack> = []
-        var systemLocal: Set<Pack> = []
-        var plantID: URL?
-        for pack in Pack.allCases {
-            if #available(iOS 26.4, *) {
-                guard manager.assetPackIsAvailableLocally(withID: pack.rawValue) else { continue }
-                systemLocal.insert(pack)
-            }
-            var found: [Archive: URL] = [:]
-            for archive in pack.archives {
-                let url = try? manager.url(for: FilePath(archive.fileName))
-                let readable = url.map { fileManager.isReadableFile(atPath: $0.path(percentEncoded: false)) } ?? false
-                logger.debug("\(pack.rawValue, privacy: .public)/\(archive.fileName, privacy: .public): \(url?.path(percentEncoded: false) ?? "no URL", privacy: .public) readable=\(readable)")
-                if let url, readable { found[archive] = url }
-            }
-            guard found.count == pack.archives.count else { continue }
-            let folder = otherFilesFolder(pack, manager: manager, fileManager: fileManager)
-            guard pack.otherFiles.isEmpty || folder != nil else { continue }
-            // pre-26.4 has no availability call: an empty pack can't be told apart
-            if pack.archives.isEmpty, pack.otherFiles.isEmpty, #unavailable(iOS 26.4) { continue }
-            archives.merge(found) { a, _ in a }
-            installed.insert(pack)
-            if pack == .plantid { plantID = folder }
-        }
-        return Resolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: installed,
-                          systemLocal: systemLocal, plantID: plantID)
-    }
-
-    /// The one folder holding all of a pack's `otherFiles`, when every one
-    /// is there (files readable, directories present). `url(for:)` may not
-    /// resolve a directory, so a directory is also looked for beside the
-    /// pack's files.
-    nonisolated private static func otherFilesFolder(_ pack: Pack, manager: AssetPackManager, fileManager: FileManager) -> URL? {
-        guard !pack.otherFiles.isEmpty else { return nil }
-        var folder: URL?
-        for path in pack.otherFiles where !path.hasSuffix("/") {
-            guard let url = try? manager.url(for: FilePath(path)),
-                  fileManager.isReadableFile(atPath: url.path(percentEncoded: false))
-            else {
-                logger.debug("\(pack.rawValue, privacy: .public)/\(path, privacy: .public): not readable")
-                return nil
-            }
-            let parent = url.deletingLastPathComponent().standardizedFileURL
-            if let folder, folder != parent {
-                logger.fault("\(pack.rawValue, privacy: .public): files in two folders (\(folder.path(percentEncoded: false), privacy: .public), \(parent.path(percentEncoded: false), privacy: .public))")
-                return nil
-            }
-            folder = parent
-        }
-        for path in pack.otherFiles where path.hasSuffix("/") {
-            let name = String(path.dropLast())
-            let leaf = String(name.split(separator: "/").last ?? Substring(name))
-            let candidates = [(try? manager.url(for: FilePath(name))), folder?.appending(path: leaf, directoryHint: .isDirectory)]
-            let found = candidates.compactMap { $0 }.first { url in
-                var isDir: ObjCBool = false
-                return fileManager.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDir) && isDir.boolValue
-            }
-            guard let found, found.deletingLastPathComponent().standardizedFileURL == folder ?? found.deletingLastPathComponent().standardizedFileURL else {
-                logger.debug("\(pack.rawValue, privacy: .public)/\(path, privacy: .public): no such folder")
-                return nil
-            }
-            folder = folder ?? found.deletingLastPathComponent().standardizedFileURL
-        }
-        logger.debug("\(pack.rawValue, privacy: .public): files in \(folder?.path(percentEncoded: false) ?? "?", privacy: .public)")
-        return folder
     }
 
     #if DEBUG
@@ -648,6 +1271,61 @@ final class PackStore {
     }
 }
 
+/// The store's own reasons a request ends.
+nonisolated enum PackStoreError: Error, Equatable, LocalizedError {
+    /// Available, but its files didn't open.
+    case unreadable
+    /// The call returned, yet the system doesn't call the pack local.
+    case notLocal
+    /// The system had nothing for it for too long (the watchdog).
+    case stalled
+    /// The lost call never returned; the queue went on without it.
+    case abandoned
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadable: PackStore.unreadable
+        case .notLocal: "iOS said the download was done, but it isn't on the device."
+        case .stalled: "The download stopped without a word from iOS."
+        case .abandoned: "iOS never answered the request; asked again."
+        }
+    }
+}
+
+/// One request's outcome, settled once — by the system's call returning, or
+/// earlier by the store (Stop, the system's `finished`).
+@MainActor
+private final class Attempt {
+    let started = ContinuousClock.now
+    private var outcome: Result<Void, any Error>?
+    private var continuation: CheckedContinuation<Void, any Error>?
+
+    var isPending: Bool { outcome == nil }
+
+    func settle(_ result: Result<Void, any Error>) {
+        guard outcome == nil else { return }
+        outcome = result
+        continuation?.resume(with: result)
+        continuation = nil
+    }
+
+    func value() async throws {
+        if let outcome { return try outcome.get() }
+        try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+}
+
+/// The system's progress UI for long work (`AreaBackgroundTask`), as the
+/// pack queue uses it (a fake in tests).
+@MainActor
+protocol ContinuedWork: AnyObject {
+    var onExpire: (() -> Void)? { get set }
+    var isRunning: Bool { get }
+    @discardableResult func begin(title: String, subtitle: String) -> Bool
+    func update(done: Int, total: Int, title: String, subtitle: String)
+    func end(success: Bool)
+}
+
 #if DEBUG
 // MARK: - DEBUG fake store
 
@@ -659,7 +1337,8 @@ final class PackStore {
 /// every other pack is not installed. Presets for screenshots: `mixed`
 /// (core packs arriving/updating — plant ID at 83 %), `settled` (every core
 /// pack here: the folded summary row; extras in their other states).
-/// A fetch "downloads" over `-fakePackSeconds` (default 4 s).
+/// A fetch "downloads" over `-fakePackSeconds` (default 4 s), one at a time
+/// like the real queue (`FakePackSystem`).
 nonisolated struct FakePacks: Sendable {
     static let key = "fakePacks"
     static let mixed = "vector,topo=updating:0.4,relief,plantid=downloading:0.83,aerial,season-2023,season-2024,season-2025=downloading:0.62,season-2026=paused"
@@ -706,46 +1385,29 @@ nonisolated struct FakePacks: Sendable {
         }
         return DataLocation(origin: .assetPacks, archives: archives)
     }
+
+    /// The system side of the spec: installed and downloading packs.
+    func system() -> FakePackSystem {
+        var downloading: [Pack: Double] = [:]
+        for (pack, state) in states { if case let .downloading(f) = state { downloading[pack] = f ?? 0 } }
+        return FakePackSystem(installed: Set(states.filter { $0.value == .installed }.keys), downloading: downloading,
+                              unpublished: Set(states.filter { $0.value == .unpublished }.keys),
+                              seconds: seconds, directory: directory)
+    }
 }
 
 extension PackStore {
+    /// The `-fakePacks` store: the spec's states at once (no lookup), then
+    /// the same queue, events and refreshes as the real one.
     convenience init(fake: FakePacks) {
-        self.init(mode: .fake, location: fake.location(), states: fake.states)
+        // the system's progress UI would cover the app in UI tests
+        let background = UserDefaults.standard.bool(forKey: "fakePackBackgroundTask") ? AreaBackgroundTask.forPacks() : nil
+        self.init(mode: .fake, location: fake.location(), states: fake.states, system: fake.system(), background: background)
         self.fake = fake
+        queueKey = "packQueueFake"
         updates = fake.updates
         downloadSizes = PackSizes.nominal
-    }
-
-    fileprivate func fakeFetch(_ pack: Pack) {
-        guard fetches[pack] == nil, !state(pack).isInstalled, let seconds = fake?.seconds else { return }
-        let start: Double = if case let .downloading(f?) = state(pack) { f } else { 0 }
-        states[pack] = .downloading(start)
-        fetches[pack] = Task { [weak self] in
-            let steps = 20
-            for i in 1 ... steps {
-                try? await Task.sleep(for: .seconds(seconds / Double(steps)))
-                guard let self, !Task.isCancelled else { return }
-                self.states[pack] = .downloading(start + (1 - start) * Double(i) / Double(steps))
-            }
-            guard let self, !Task.isCancelled, var updated = self.fake else { return }
-            updated.states[pack] = .installed
-            self.fake = updated
-            self.states[pack] = .installed
-            self.fetches[pack] = nil
-            self.publish(updated.location())
-        }
-    }
-
-    fileprivate func fakeRemove(_ pack: Pack) async {
-        guard pack.isRemovable, var fake else { return }
-        fetches[pack]?.cancel()
-        fetches[pack] = nil
-        fake.states[pack] = .notInstalled
-        fake.updates[pack] = nil
-        self.fake = fake
-        states[pack] = .notInstalled
-        updates[pack] = nil
-        publish(fake.location())
+        Task { [weak self] in await self?.boot(autoFetchCore: false, restoreQueue: false, hooks: false) }
     }
 }
 #endif

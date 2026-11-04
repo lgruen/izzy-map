@@ -21,9 +21,16 @@ import os
 /// - Expiration (the system or she ends it from the Live Activity): the
 ///   store stops the download — the tiles so far are journalled — and the
 ///   task completes.
+///
+/// The pack download queue uses the same class with its own prefix
+/// (`forPacks()`: `org.gruenschloss.izzymap.packs.<n>`).
 @MainActor
-final class AreaBackgroundTask {
+final class AreaBackgroundTask: ContinuedWork {
     static let identifierPrefix = "org.gruenschloss.izzymap.areas"
+    static let packsIdentifierPrefix = "org.gruenschloss.izzymap.packs"
+
+    /// The identifiers' prefix (Info.plist lists `<prefix>.*`).
+    let prefix: String
 
     /// Called when the system expires the running task.
     var onExpire: (() -> Void)?
@@ -34,7 +41,24 @@ final class AreaBackgroundTask {
     private var latest: (done: Int64, total: Int64, title: String, subtitle: String) = (0, 1, "", "")
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Areas")
 
+    private let scheduler: any ContinuedTaskScheduling
+
     var isRunning: Bool { task != nil || awaitingID != nil }
+
+    /// Every instance (areas, packs), weakly: whether ANY keeps the process
+    /// running in the background (`anyRunning` — the pack queue then knows a
+    /// failed call wasn't cut off by a suspension).
+    private static let instances = NSHashTable<AreaBackgroundTask>.weakObjects()
+    static var anyRunning: Bool { instances.allObjects.contains { $0.isRunning } }
+
+    init(prefix: String = AreaBackgroundTask.identifierPrefix, scheduler: any ContinuedTaskScheduling = SystemTaskScheduler()) {
+        self.prefix = prefix
+        self.scheduler = scheduler
+        Self.instances.add(self)
+    }
+
+    /// The pack queue's task ("Downloading maps").
+    static func forPacks() -> AreaBackgroundTask { AreaBackgroundTask(prefix: packsIdentifierPrefix) }
 
     /// Submits a request; false when the system refused it (the download
     /// then runs in the foreground only).
@@ -46,10 +70,10 @@ final class AreaBackgroundTask {
         if UserDefaults.standard.bool(forKey: "noAreaBackgroundTask") { return false }
         #endif
         counter += 1
-        let id = "\(Self.identifierPrefix).\(Int(Date.now.timeIntervalSince1970))\(counter)"
+        let id = "\(prefix).\(Int(Date.now.timeIntervalSince1970))\(counter)"
         latest.title = title
         latest.subtitle = subtitle
-        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: .main) { [weak self] task in
+        let registered = scheduler.register(id) { [weak self] task in
             MainActor.assumeIsolated {
                 guard let self, let task = task as? BGContinuedProcessingTask, self.awaitingID == id else {
                     task.setTaskCompleted(success: true)
@@ -59,7 +83,7 @@ final class AreaBackgroundTask {
             }
         }
         guard registered else {
-            Self.logger.error("area task \(id, privacy: .public) not registered (Info.plist identifiers?)")
+            Self.logger.error("\(self.prefix, privacy: .public) task \(id, privacy: .public) not registered (Info.plist identifiers?)")
             return false
         }
         let request = BGContinuedProcessingTaskRequest(identifier: id, title: title, subtitle: subtitle)
@@ -69,10 +93,10 @@ final class AreaBackgroundTask {
         // counts as awaited; a refusal clears that and the download simply
         // runs in the foreground.
         awaitingID = id
-        BGTaskScheduler.shared.submitTaskRequest(request) { [weak self] error in
+        scheduler.submit(request) { [weak self] error in
             guard let error else { return }
             Task { @MainActor in
-                Self.logger.notice("area task not submitted: \(error.localizedDescription, privacy: .public)")
+                Self.logger.notice("continued-processing task not submitted: \(error.localizedDescription, privacy: .public)")
                 if self?.awaitingID == id { self?.awaitingID = nil }
             }
         }
@@ -117,5 +141,22 @@ final class AreaBackgroundTask {
         Self.logger.notice("area task expired: stopping the download")
         onExpire?()
         end(success: false)
+    }
+}
+
+/// Where `AreaBackgroundTask` registers and submits (the system's
+/// `BGTaskScheduler`; a fake in tests).
+nonisolated protocol ContinuedTaskScheduling: Sendable {
+    func register(_ id: String, launch: @escaping (BGTask) -> Void) -> Bool
+    func submit(_ request: BGContinuedProcessingTaskRequest, completion: @escaping @Sendable ((any Error)?) -> Void)
+}
+
+nonisolated struct SystemTaskScheduler: ContinuedTaskScheduling {
+    func register(_ id: String, launch: @escaping (BGTask) -> Void) -> Bool {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: .main, launchHandler: launch)
+    }
+
+    func submit(_ request: BGContinuedProcessingTaskRequest, completion: @escaping @Sendable ((any Error)?) -> Void) {
+        BGTaskScheduler.shared.submitTaskRequest(request, completionHandler: completion)
     }
 }

@@ -145,8 +145,21 @@ struct StorageView: View {
             Text(r.message(storage))
         }
         .task {
+            // system truth first: a row's "Didn't finish" from an earlier
+            // moment never outlives what the system says now
+            await packs.resync()
             await storage.load()
             await footprints.update(packs.location)
+        }
+        // …and again while the screen is open (a download the system
+        // finished or resumed by itself shows without a tap)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { return }
+                await packs.resync()
+                storage.refreshPacks()
+            }
         }
         .onChange(of: packs.location) {
             storage.refresh()
@@ -609,6 +622,10 @@ private struct PackControl: View {
             GetButton(title: "Stop", action: remove)
                 .accessibilityLabel("Stop downloading \(pack.storageTitle)")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-stop")
+        case .queued where pack.isRemovable && canRemove:
+            GetButton(title: "Stop", action: remove)
+                .accessibilityLabel("Stop getting \(pack.storageTitle)")
+                .accessibilityIdentifier("pack-\(pack.rawValue)-stop")
         case .paused:
             // Stop stays the row's swipe / VoiceOver action
             GetButton(title: "Resume", action: resume)
@@ -626,7 +643,7 @@ private struct PackControl: View {
             .hoverEffect(.highlight)
             .accessibilityLabel("Remove \(pack.storageTitle)")
             .accessibilityIdentifier("pack-\(pack.rawValue)-remove")
-        case .checking, .downloading, .updating, .onDevice, .unavailable, .unpublished:
+        case .checking, .downloading, .queued, .updating, .onDevice, .unavailable, .unpublished:
             EmptyView()
         }
     }

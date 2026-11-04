@@ -281,11 +281,23 @@ struct StorageTests {
         #expect(store.state(.tasmap) == .notInstalled)
     }
 
+    /// The pack in flight, paused by the system: Resume moves the row at
+    /// once (the old store set "Downloading" too) and it then arrives.
     @Test func resumeCarriesOnAPausedDownload() async throws {
-        let store = PackStore(fake: FakePacks(spec: "vector,season-2026=paused", seconds: 0.2))
+        let system = FakePackSystem(installed: [.vector], seconds: 0.05)
+        system.script(.season2026, .init(hangs: 1))
+        let store = await PackStore.testing(system: system, defaults: UserDefaults(suiteName: "resume-\(UUID().uuidString)")!,
+                                            tuning: PackQueueTests.tuning)
+        defer { store.shutdown() }
+        store.fetch(.season2026)
+        for _ in 0 ..< 100 where system.inFlight == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        system.pause(.season2026)
+        for _ in 0 ..< 100 where store.state(.season2026) != .paused { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(store.current == .season2026)
         #expect(StorageModel(packs: store, trees: nil).status(.season2026).isPaused)
         store.resume(.season2026)
         #expect(store.state(.season2026) != .paused)
+        system.finish(.season2026)
         for _ in 0 ..< 100 where !store.state(.season2026).isInstalled { try await Task.sleep(for: .milliseconds(20)) }
         #expect(store.state(.season2026) == .installed)
     }

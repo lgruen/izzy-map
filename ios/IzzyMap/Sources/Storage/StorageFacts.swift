@@ -133,6 +133,9 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
     case updating(Double)
     /// On-demand and not here: one tap gets it.
     case get
+    /// Asked for, waiting its turn in the download queue (1 = next): the
+    /// store asks the system for one pack at a time.
+    case queued(Int)
     /// The system is fetching it (nil until the first progress report).
     case downloading(Double?)
     /// The download stands still; Resume asks for it again.
@@ -147,7 +150,11 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
     case unpublished
 
     static func of(_ state: PackState, pack: Pack, canFetch: Bool, resolved: Bool = true,
-                   update: Double? = nil, online: Bool = true) -> PackRowStatus {
+                   update: Double? = nil, online: Bool = true, queued: Int? = nil) -> PackRowStatus {
+        // waiting its turn — unless the system is already moving its bytes
+        if let queued, !state.isInstalled, state != .unpublished {
+            if case .downloading(_?) = state {} else { return .queued(queued) }
+        }
         switch state {
         case .installed: return update.map { .updating($0) } ?? .onDevice
         case let .downloading(f): return .downloading(f)
@@ -167,7 +174,7 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
     /// (Stop removes what has arrived). An update is not: the pack is here.
     var isBusy: Bool {
         switch self {
-        case .downloading, .paused: true
+        case .downloading, .paused, .queued: true
         default: false
         }
     }
@@ -211,6 +218,7 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
         case let .downloading(f?):
             return "Downloading\u{00A0}\(StorageText.percent(f)) · \(StorageText.fraction(Int(Double(bytes) * f), of: bytes))"
         case .downloading(nil): return "Waiting to start · \(size)"
+        case let .queued(n): return "Queued · \(n == 1 ? "next" : "\(n) in line") · \(size)"
         case .paused(.offline): return "Waiting for a connection · \(size)"
         case .paused(.system): return "Paused by iOS · \(size)"
         case .failed: return "Didn't finish · \(size)"

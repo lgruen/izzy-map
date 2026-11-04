@@ -78,6 +78,7 @@ final class StorageModel {
     /// Something is arriving (a pack, an update or an extras batch).
     var isBusy: Bool {
         Pack.allCases.contains { if case .downloading = packs.state($0) { true } else { false } }
+            || packs.current != nil || !packs.queue.isEmpty
             || !packs.updates.isEmpty || extras.jobs.values.contains { $0.isRunning }
             || areas?.running != nil
     }
@@ -112,7 +113,8 @@ final class StorageModel {
 
     func status(_ pack: Pack) -> PackRowStatus {
         PackRowStatus.of(packs.state(pack), pack: pack, canFetch: packs.canFetch, resolved: packs.isResolved,
-                         update: packs.updates[pack], online: Connectivity.shared.online)
+                         update: packs.updates[pack], online: Connectivity.shared.online,
+                         queued: packs.queuePosition(pack))
     }
 
     /// Every core pack (maps and plant ID) is on the device and nothing
@@ -133,8 +135,9 @@ final class StorageModel {
         return StorageGauge(parts: parts, capacity: volume.capacity, free: volume.free)
     }
 
-    /// The on-demand packs of a section that aren't on the device.
+    /// The packs of a section that aren't on the device, in the screen's
+    /// order (seasons newest first: "Get all" queues them so).
     func missing(_ section: Pack.StorageSection) -> [Pack] {
-        Pack.allCases.filter { $0.storageSection == section && !packs.state($0).isInstalled }
+        section.packs.filter { !packs.state($0).isInstalled }
     }
 }
