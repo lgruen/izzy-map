@@ -172,10 +172,10 @@ def main():
         "F3 v2 + ALA lift (UN species, σ 5 km)": (lambda c, p: c["Lh"] + 0.75 * c["Lv_pri"][10.0] + p["lam"] * c["La"], lams),
         "F4 v2 + Tasmanian bank kNN (ω), Tasmania only": (
             lambda c, p: BS.log_softmax(c["Lh"] + p["om"] * np.maximum(c["Lk"], -30)) + 0.75 * c["Lv_pri"][10.0],
-            [{"om": o} for o in (0.25, 0.5, 1.0, 2.0)]),
+            [{"om": o} for o in (0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0)]  # ω chosen on A-val; 2.0 was the old edge),
         "F5 v2 + bank kNN + prior σ5 re-tuned": (
             lambda c, p: BS.log_softmax(c["Lh"] + p["om"] * np.maximum(c["Lk"], -30)) + p["lam"] * c["Lv_pri"][5.0],
-            [{"om": o, "lam": l} for o in (0.5, 1.0, 2.0) for l in (0.5, 0.75, 1.0)]),
+            [{"om": o, "lam": l} for o in (0.5, 1.0, 2.0, 3.0, 4.0, 6.0) for l in (0.5, 0.75, 1.0)]),
     }
     for k, (fn, grid) in V_.items():
         res[k] = variant(fn, grid)
