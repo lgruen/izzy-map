@@ -45,6 +45,10 @@ def main():
     z = np.load(os.path.join(V.V2, "runs", run + ".npz"))
     W, b, n_tr = (torch.from_numpy(z["W"].astype(np.float32)).to(DEV), torch.from_numpy(z["b"].astype(np.float32)).to(DEV),
                   z["n_c"].copy())
+    tn = float(os.environ.get("TAUNORM", 0))  # scale-kept τ-normalisation, as eval_v2 / tas_gap (set it as for eval.json)
+    if tn:
+        nr = W.norm(dim=1, keepdim=True).clamp_min(1e-6)
+        W = W * (nr.mean() / nr) ** tn
     L_ = pq.read_table(os.path.join(TA.AU, "labels.parquet"), columns=["name", "inat_ids", "rg_au"]).to_pydict()
     merge = V.class_merges(L_["name"], L_["inat_ids"], n_tr, V.name_map_pairs(L_["inat_ids"]))
     mapv = np.arange(C)

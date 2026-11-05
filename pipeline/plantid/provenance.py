@@ -32,7 +32,10 @@ STEPS = os.path.join(V2, "provenance-steps.jsonl")
 BUCKET = "gs://leo-superresolution-izzy-plantid/au"
 # embeddings (BioCLIP 2.5, cloud fp16, L2-normalised; npz shards {photo_id, emb})
 EMB_GCS = {"au_run_2026-11-04": f"{BUCKET}/emb  (590,824 photos, 591 shards; train_australia.py vm-embed)",
-           "tasmanian_run_2026-11-01": f"{BUCKET}/emb0  (92,006 photos; copied from emb/bioclip25 of the 2026-11-01 run)"}
+           "tasmanian_run_2026-11-01": f"{BUCKET}/emb0  (92,006 photos; copied from emb/bioclip25 of the 2026-11-01 run)",
+           "extras_capped": f"{BUCKET}/extra/emb  (→ extra/emb; the capped iNat extras)",
+           "extras_k1000": f"{BUCKET}/extra-k1000/emb  (→ extra/emb-k1000; 2,890 shards, RunPod 2026-11-05)",
+           "extras_sources": f"{BUCKET}/extra-src/emb  (→ extra/emb-src; 254 shards, ALA + Commons, GCP L4 2026-11-05)"}
 INPUTS = {  # name → local path (the small files a rebuild needs besides the embeddings)
     "plan_train.parquet": os.path.join(AU, "plan", "train.parquet"),
     "plan_eval.parquet": os.path.join(AU, "plan", "eval.parquet"),
@@ -47,6 +50,9 @@ INPUTS = {  # name → local path (the small files a rebuild needs besides the e
     "sets_prior.parquet": os.path.join(CACHE, "sets", "prior.parquet"),
     "apc_inat_map.json": os.path.join(CACHE, "names", "apc_inat_map.json"),
     "extra_photos.parquet": os.path.join(CACHE, "extra", "extra_photos.parquet"),
+    "extra_photos_k1000.parquet": os.path.join(CACHE, "extra", "extra_photos_k1000.parquet"),
+    "extra_photos_src.parquet": os.path.join(CACHE, "extra", "extra_photos_src.parquet"),
+    "ids-src.parquet": os.path.join(CACHE, "extra", "work", "src", "ids-src.parquet"),
     "reassign_train.parquet": os.path.join(CACHE, "extra", "reassign_train.parquet"),
 }
 
@@ -82,7 +88,7 @@ def record(step, inputs=(), outputs=(), extra=None):
         versions = {"python": sys.version.split()[0]}
     os.makedirs(V2, exist_ok=True)
     line = {"step": step, "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-            "argv": sys.argv, "env": {k: os.environ[k] for k in ("V2DATA", "V2PRIOR", "FINAL") if k in os.environ},
+            "argv": sys.argv, "env": {k: os.environ[k] for k in ("V2DATA", "V2PRIOR", "FINAL", "TAUNORM", "POSTHOC_TAU") if k in os.environ},
             "git": git_state(), "versions": versions,
             "inputs": {os.path.relpath(p, REPO): sha256(p) for p in inputs if p and os.path.isfile(p)},
             "outputs": {os.path.relpath(p, REPO): sha256(p) for p in outputs if p and os.path.isfile(p)},
