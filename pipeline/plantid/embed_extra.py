@@ -45,7 +45,10 @@ def cmd_vm_embed(a):
     from PIL import Image
     bucket = a.bucket.rstrip("/")
     T = pq.read_table(a.todo).to_pydict()
-    ids, exts = T["photo_id"], T["ext"]
+    ids = T["photo_id"]
+    # non-iNat sources (ALA, Commons …): the todo carries `path` (relative to
+    # --photo-dir, e.g. synced from GCS onto the VM) instead of an S3 key
+    exts = T["path"] if a.photo_dir else T["ext"]
     nsh = -(-len(ids) // SHARD)
     out = os.path.join(a.work, "emb")
     os.makedirs(out, exist_ok=True)
@@ -89,12 +92,16 @@ def cmd_vm_embed(a):
             x, why = None, "failed"
             for attempt in range(5):
                 try:
-                    if conn is None:
-                        conn = http.client.HTTPSConnection(HOST, timeout=30)
-                    conn.request("GET", f"/photos/{pid}/medium.{ext}", headers=UA)
-                    resp = conn.getresponse()
-                    body = resp.read()
-                    if resp.status == 200 and body.startswith(MAGIC):
+                    if a.photo_dir:
+                        fp = os.path.join(a.photo_dir, ext)
+                        status, body = (200, open(fp, "rb").read()) if os.path.exists(fp) else (404, b"")
+                    else:
+                        if conn is None:
+                            conn = http.client.HTTPSConnection(HOST, timeout=30)
+                        conn.request("GET", f"/photos/{pid}/medium.{ext}", headers=UA)
+                        resp = conn.getresponse()
+                        status, body = resp.status, resp.read()
+                    if status == 200 and body.startswith(MAGIC):
                         import io
                         with Image.open(io.BytesIO(body)) as im:
                             x = tf(im.convert("RGB"))
@@ -104,10 +111,10 @@ def cmd_vm_embed(a):
                         with lock:
                             stats["bytes"] += len(body)
                             stats["fetched"] += 1
-                    elif resp.status in (403, 404):
+                    elif status in (403, 404) or (status == 200 and a.photo_dir):
                         why = "missing"
                     else:
-                        raise IOError(f"HTTP {resp.status}")
+                        raise IOError(f"HTTP {status}")
                     break
                 except Exception:
                     conn = None
@@ -212,6 +219,7 @@ def main():
     p.add_argument("--threads", type=int, default=48)
     p.add_argument("--batch", type=int, default=128)
     p.add_argument("--device", default="cuda")
+    p.add_argument("--photo-dir", default="", help="read photos from here (todo column `path`) instead of iNat S3")
     p.add_argument("--shard-range", default="", help="lo:hi — only shards lo … hi-1 (one pod's slice)")
     a = ap.parse_args()
     cmd_vm_embed(a)

@@ -875,6 +875,34 @@ def cmd_dedup_emb(a):
     print(json.dumps(summ, indent=1, default=int))
 
 
+def stage1_hashes(X, cal, t0):
+    """Hash stage of cmd_finalize: vs every eval photo, cross-class identical
+    twins (both dropped), within the class (earlier fill rank wins)."""
+    import pandas as pd  # noqa: F401
+    reason = np.full(len(X), "", dtype=object)
+    Eh = read_parts("hashes-eval").to_pandas()
+    Eh = Eh[Eh["status"].isin(["ok", "local"])]
+    hit, j = dedup.near_any(X["phash"].to_numpy(np.uint64), X["dhash"].to_numpy(np.uint64),
+                            Eh["phash"].to_numpy(np.uint64), Eh["dhash"].to_numpy(np.uint64), cal["phash"], cal["dhash"])
+    reason[hit] = "hash: eval photo"
+    print(f"  hash vs eval: {hit.sum():,} ({time.time() - t0:.0f} s)", flush=True)
+    key = X["phash"].astype(str) + ":" + X["dhash"].astype(str)
+    multi = X.assign(k=key).groupby("k")["u"].transform("nunique") > 1
+    reason[(reason == "") & multi.to_numpy()] = "hash: identical image in another class (both dropped)"
+    uu = X["u"].to_numpy()
+    bounds = np.r_[0, np.nonzero(uu[1:] != uu[:-1])[0] + 1, len(X)]
+    phv, dhv = X["phash"].to_numpy(np.uint64), X["dhash"].to_numpy(np.uint64)
+    nw = 0
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        if hi - lo > 1:
+            dup, _ = dedup.near_within(phv[lo:hi], dhv[lo:hi], cal["phash"], cal["dhash"])
+            m = dup & (reason[lo:hi] == "")
+            reason[lo:hi][m] = "hash: within class"
+            nw += m.sum()
+    print(f"  hash within class: {nw:,}; cross-class twins {multi.sum():,} ({time.time() - t0:.0f} s)", flush=True)
+    return reason
+
+
 def cmd_finalize(a):
     """Both dedup stages for a big list (`select --tag`, e.g. k1000) whose
     shards carry their own pHash/dHash (embed_extra.py on the VM); photos of
@@ -925,80 +953,103 @@ def cmd_finalize(a):
     ei = X["ei"].to_numpy()
     X["phash"], X["dhash"] = ph[ei], dh[ei]
     reason = np.full(len(X), "", dtype=object)
-    # ---- stage 1: hashes
-    Eh = read_parts("hashes-eval").to_pandas()
-    Eh = Eh[Eh["status"].isin(["ok", "local"])]
-    hit, j = dedup.near_any(X["phash"].to_numpy(np.uint64), X["dhash"].to_numpy(np.uint64),
-                            Eh["phash"].to_numpy(np.uint64), Eh["dhash"].to_numpy(np.uint64), cal["phash"], cal["dhash"])
-    reason[hit] = "hash: eval photo"
-    print(f"  hash vs eval: {hit.sum():,} ({time.time() - t0:.0f} s)", flush=True)
-    key = X["phash"].astype(str) + ":" + X["dhash"].astype(str)
-    multi = X.assign(k=key).groupby("k")["u"].transform("nunique") > 1
-    reason[(reason == "") & multi.to_numpy()] = "hash: identical image in another class (both dropped)"
+    s1 = os.path.join(WORK, f"finalize-{tag}-stage1.parquet")
+    if os.path.exists(s1):  # stage 1 is ~11 min on 3.15M rows: cached per photo id
+        r1 = pq.read_table(s1).to_pandas().set_index("photo_id")["reason"]
+        reason[:] = r1.reindex(X["photo_id"]).fillna("").to_numpy(object)
+        print(f"  stage 1 from cache: {(reason != '').sum():,} dropped", flush=True)
+    else:
+        reason = stage1_hashes(X, cal, t0)
+        pq.write_table(pa.table({"photo_id": X["photo_id"].to_numpy(np.int64), "reason": reason.astype(str)}), s1)
+    phv, dhv = X["phash"].to_numpy(np.uint64), X["dhash"].to_numpy(np.uint64)
     uu = X["u"].to_numpy()
     bounds = np.r_[0, np.nonzero(uu[1:] != uu[:-1])[0] + 1, len(X)]
-    phv, dhv = X["phash"].to_numpy(np.uint64), X["dhash"].to_numpy(np.uint64)
-    nw = 0
-    for lo, hi in zip(bounds[:-1], bounds[1:]):
-        if hi - lo > 1:
-            dup, _ = dedup.near_within(phv[lo:hi], dhv[lo:hi], cal["phash"], cal["dhash"])
-            m = dup & (reason[lo:hi] == "")
-            reason[lo:hi][m] = "hash: within class"
-            nw += m.sum()
-    print(f"  hash within class: {nw:,}; cross-class twins {multi.sum():,} ({time.time() - t0:.0f} s)", flush=True)
-    # ---- stage 2: embeddings
-    Q = torch.from_numpy(E[ei]).to(dev)
-    ev = eval_sets().to_pandas().drop_duplicates("photo_id")
-    aid, aE = TA.all_embeddings()
-    i_, ok = TA.lookup(aid, ev["photo_id"].to_numpy(np.int64))
-    R = torch.from_numpy(aE[i_[ok]]).to(dev)
-    rid = ev["photo_id"].to_numpy(np.int64)[ok]
-    best = torch.full((len(Q),), -2.0, device=dev)
-    arg = torch.zeros(len(Q), dtype=torch.long, device=dev)
-    for lo in range(0, len(Q), 16384):
-        S = (Q[lo:lo + 16384] @ R.T).float()
-        v, k = S.max(1)
-        best[lo:lo + 16384], arg[lo:lo + 16384] = v, k
-    best, arg = best.cpu().numpy(), arg.cpu().numpy()
+    Eh = read_parts("hashes-eval").to_pandas()
+    Eh = Eh[Eh["status"].isin(["ok", "local"])]
+    # (stage 1 body moved to stage1_hashes)
+    if False:
+        pass
+    # ---- stage 2: embeddings (nearest neighbours cached; thresholds applied after)
+    s2 = os.path.join(WORK, f"finalize-{tag}-stage2.parquet")
+    pid_x = X["photo_id"].to_numpy(np.int64)
+    if os.path.exists(s2):
+        C2 = pq.read_table(s2).to_pandas().set_index("photo_id").reindex(pid_x)
+        cos_e, nn_e = C2["cos_eval"].to_numpy(), C2["nn_eval"].to_numpy()
+        cos_t, nn_t = C2["cos_train"].to_numpy(), C2["nn_train"].to_numpy()
+        cos_w, nn_w = C2["cos_within"].to_numpy(), C2["nn_within"].to_numpy()
+        print("  stage 2 neighbours from cache", flush=True)
+    else:
+        Qn = E[ei]  # host memory: MPS tensors are limited to INT_MAX elements (3.15M × 1024 is more)
+        ev = eval_sets().to_pandas().drop_duplicates("photo_id")
+        aid, aE = TA.all_embeddings()
+        i_, ok = TA.lookup(aid, ev["photo_id"].to_numpy(np.int64))
+        R = torch.from_numpy(aE[i_[ok]]).to(dev)
+        rid = ev["photo_id"].to_numpy(np.int64)[ok]
+        cos_e = np.empty(len(Qn), np.float32)
+        arg = np.empty(len(Qn), np.int64)
+        for lo in range(0, len(Qn), 16384):
+            S = (torch.from_numpy(Qn[lo:lo + 16384]).to(dev) @ R.T).float()
+            v, k = S.max(1)
+            cos_e[lo:lo + 16384], arg[lo:lo + 16384] = v.cpu().numpy(), k.cpu().numpy()
+        nn_e = rid[arg]
+        print(f"  emb vs eval done ({time.time() - t0:.0f} s)", flush=True)
+        del R
+        tr = pq.read_table(os.path.join(AU, "plan", "train.parquet"), columns=["photo_id", "u"]).to_pandas()
+        rt = pq.read_table(os.path.join(EX, "reassign_train.parquet")).to_pandas()
+        tr.loc[tr["photo_id"].isin(rt["photo_id"]), "u"] = tr["photo_id"].map(dict(zip(rt["photo_id"], rt["u_new"])))
+        i_, ok = TA.lookup(aid, tr["photo_id"].to_numpy(np.int64))
+        tr = tr[ok].assign(ai=i_[ok]).sort_values("u")
+        tu, tai, tpid = tr["u"].to_numpy(), tr["ai"].to_numpy(), tr["photo_id"].to_numpy(np.int64)
+        tb = dict(zip(*np.unique(tu, return_index=True)))
+        tcnt = dict(zip(*np.unique(tu, return_counts=True)))
+        cos_t = np.full(len(Qn), -2.0, np.float32)
+        nn_t = np.full(len(Qn), -1, np.int64)
+        cos_w = np.full(len(Qn), -2.0, np.float32)
+        nn_w = np.full(len(Qn), -1, np.int64)
+        for lo, hi in zip(bounds[:-1], bounds[1:]):
+            u = int(uu[lo])
+            q = torch.from_numpy(Qn[lo:hi]).to(dev)
+            if u in tb:
+                Rt = torch.from_numpy(aE[tai[tb[u]:tb[u] + tcnt[u]]]).to(dev)
+                v, k = (q @ Rt.T).float().max(1)
+                cos_t[lo:hi], nn_t[lo:hi] = v.cpu().numpy(), tpid[tb[u] + k.cpu().numpy()]
+            if hi - lo > 1:
+                S = (q @ q.T).float()
+                S = S.masked_fill(torch.ones_like(S, dtype=torch.bool).triu(), -2.0)  # only earlier rows
+                v, k = S.max(1)
+                cos_w[lo:hi], nn_w[lo:hi] = v.cpu().numpy(), pid_x[lo + k.cpu().numpy()]
+        del aE
+        pq.write_table(pa.table({"photo_id": pid_x, "cos_eval": cos_e, "nn_eval": nn_e, "cos_train": cos_t,
+                                 "nn_train": nn_t, "cos_within": cos_w, "nn_within": nn_w}), s2)
+        print(f"  emb vs class training photos + within class done ({time.time() - t0:.0f} s)", flush=True)
+    # thresholds: the calibrated standalone 0.95 only between photos of ONE observation
+    # (bursts / zooms); across observations / observers a.cross (0.98): at this scale
+    # (up to 1,000 photos per class, max over 85k eval photos) 0.95 flags many distinct
+    # photos of common species — on this list 0 eval neighbours reached 0.99 and the hash
+    # stage had already caught the true copies.
     Ehx = Eh.drop_duplicates("photo_id").set_index("photo_id")
-    nn = rid[arg]
-    hp = Ehx.reindex(nn)["phash"].fillna(0).to_numpy(np.uint64)
-    hd = Ehx.reindex(nn)["dhash"].fillna(0).to_numpy(np.uint64)
+    hp = Ehx.reindex(nn_e)["phash"].fillna(0).to_numpy(np.uint64)
+    hd = Ehx.reindex(nn_e)["dhash"].fillna(0).to_numpy(np.uint64)
     near = (np.bitwise_count(phv ^ hp) <= cal["phash"]) & (np.bitwise_count(dhv ^ hd) <= cal["dhash"])
-    m = (reason == "") & ((best >= ta) | ((best >= tc) & near))
+    m = (reason == "") & ((cos_e >= a.cross) | ((cos_e >= tc) & near))
     reason[m] = "emb: eval photo"
-    X["cos_eval"] = best
-    print(f"  emb vs eval: {m.sum():,} (≥ {ta}: {(best >= ta).sum():,}) ({time.time() - t0:.0f} s)", flush=True)
-    del R, aE
-    # vs the class's own training photos + within the class
-    tr = pq.read_table(os.path.join(AU, "plan", "train.parquet"), columns=["photo_id", "u"]).to_pandas()
-    rt = pq.read_table(os.path.join(EX, "reassign_train.parquet")).to_pandas()
-    tr.loc[tr["photo_id"].isin(rt["photo_id"]), "u"] = tr["photo_id"].map(dict(zip(rt["photo_id"], rt["u_new"])))
-    i_, ok = TA.lookup(aid, tr["photo_id"].to_numpy(np.int64))
-    tr = tr[ok].assign(ai=i_[ok]).sort_values("u")
-    _, aE = TA.all_embeddings()
-    tu = tr["u"].to_numpy()
-    tb = dict(zip(*np.unique(tu, return_index=True)))
-    tcnt = dict(zip(*np.unique(tu, return_counts=True)))
-    tai = tr["ai"].to_numpy()
-    n_tr = n_in = 0
-    for lo, hi in zip(bounds[:-1], bounds[1:]):
-        u = int(uu[lo])
-        q = Q[lo:hi]
-        if u in tb:
-            Rt = torch.from_numpy(aE[tai[tb[u]:tb[u] + tcnt[u]]]).to(dev)
-            v = (q @ Rt.T).float().max(1).values.cpu().numpy()
-            m = (reason[lo:hi] == "") & (v >= ta)
-            reason[lo:hi][m] = "emb: training photo (same class)"
-            n_tr += m.sum()
-        if hi - lo > 1:
-            S = (q @ q.T).float()
-            S = torch.tril(S, diagonal=-1)  # only earlier rows (rank order)
-            v = S.max(1).values.cpu().numpy()
-            m = (reason[lo:hi] == "") & (v >= ta)
-            reason[lo:hi][m] = "emb: within class"
-            n_in += m.sum()
-    print(f"  emb vs class training photos: {n_tr:,}; within class: {n_in:,} ({time.time() - t0:.0f} s)", flush=True)
+    print(f"  emb vs eval: {m.sum():,} (≥ {ta} would be {(cos_e >= ta).sum():,})", flush=True)
+    tr_obs = {}
+    for f in (os.path.join(AU, "plan", "train.parquet"), os.path.join(CACHE, "sets", "train.parquet")):
+        tt = pq.read_table(f, columns=["photo_id", "uuid"]).to_pydict()
+        tr_obs.update(zip(map(int, tt["photo_id"]), map(str, tt["uuid"])))
+    obs = X["observation_uuid"].astype(str).to_numpy()
+    obs_of = dict(zip(pid_x.tolist(), obs.tolist()))
+    same_t = np.array([tr_obs.get(int(n)) == o for n, o in zip(nn_t, obs)])
+    same_w = np.array([obs_of.get(int(n)) == o for n, o in zip(nn_w, obs)])
+    for cos, same, lab in ((cos_t, same_t, "training photo"), (cos_w, same_w, "earlier extra")):
+        m1 = (reason == "") & same & (cos >= ta)
+        reason[m1] = f"emb: {lab}, same observation"
+        m2 = (reason == "") & ~same & (cos >= a.cross)
+        reason[m2] = f"emb: {lab}, other observation"
+        print(f"  emb vs {lab}: same observation ≥ {ta}: {m1.sum():,}, other ≥ {a.cross}: {m2.sum():,} "
+              f"(other ≥ {ta} would be {((cos >= ta) & ~same).sum():,})", flush=True)
+    X["cos_eval"], X["cos_train"], X["cos_within"] = cos_e, cos_t, cos_w
     drop = reason != ""
     dropped.append(X[drop].assign(reason=reason[drop]))
     F_ = X[~drop].copy()
@@ -1298,6 +1349,7 @@ def main():
     sub.add_parser("dedup-emb")
     p = sub.add_parser("finalize")
     p.add_argument("--tag", default="k1000")
+    p.add_argument("--cross", type=float, default=0.98, help="cosine threshold across observations")
     p.add_argument("--emb-dirs", nargs="+", default=[os.path.join(EX, "emb"), os.path.join(EX, "emb-k1000")])
     p = sub.add_parser("noise")
     p.add_argument("--n", type=int, default=1000)

@@ -304,3 +304,91 @@ shared / eval / training photo ids excluded).
   preemptions ≈ $6.2) + disk 120 GB ≈ $0.15 + embeddings 5.9 GB to the
   laptop ≈ $0.71 + GCS < $0.2 → **≈ $5–7, cap $10**. One GPU project-wide:
   launch only when no other GPU VM runs.
+
+### K = 1,000 embedding moves to RunPod (Leo, 2026-11-05) — validation + bound
+
+No cloud credentials on the pods (Leo's rule): each pod runs
+`cloud/runpod_pod.py`, a token-guarded HTTP server behind RunPod's HTTPS
+proxy (random single-purpose token per pod; uploads only code.tgz /
+todo.parquet / job.json; shards served read-only with sha256 in
+`/manifest`); the Mac (`cloud/runpod_extra.py`) uploads, starts, pulls,
+verifies (count + sha256) and terminates. No IAM change was made (signing
+via the compute SA was PERMISSION_DENIED; a new SA was not created). Job =
+uv + torch 2.7 / torchvision 0.22 / open_clip (the GCP env), BioCLIP 2.5
+pinned to HF revision 6e3d04e3…, `embed_extra.py --bucket local`. Image
+`runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` (only bash/python3/curl
+used). COMMUNITY 4090s had no capacity; SECURE RTX 4090 ($0.89/h listed).
+
+- **Validation pod** (1× RTX 4090, SECURE, US-NC-1, ~6.6 min alive incl.
+  image pull, uv env and the 3.9 GB model download): 300 photos the GCP L4
+  embedded → **cos min 0.99999** (median 0.999999); pHash/dHash identical on
+  **298/300**, the other two differ by 1–2 bits (pHash 2 / dHash 1) — both
+  old ".JPG" uploads; the laptop re-hash is reproducible, so it is the JPEG
+  DCT-scaled decode on x86 vs ARM (SIMD IDCT rounding), immaterial against
+  the 8 / 10-bit thresholds and the ≤ 4-bit spread of genuine resizes.
+- **Bound (before the scale-out):** 2,889,800 photos on 8 × RTX 4090 SECURE
+  ($7.12/h together). Assumed ≥ 100 photos/s per pod (≥ the L4's 102/s) →
+  2,889,800 / 800/s = 1.0 h + ~0.15 h setup ≈ **1.2 h ≈ $8.5**; at 60/s per
+  pod 1.8 h ≈ $13. **Hard stop: every pod terminated at 2.5 h ($17.8)**,
+  below the $20 cap and keeping > $3 of the $25 balance (pods are stopped
+  at $0 → never reached). One measurement check ~15 min in, then one check
+  at the estimated end.
+
+### K = 1,000 run: actual (2026-11-05)
+
+- 8 RunPod pods, RTX 4090 SECURE ($0.89/h listed), image
+  `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`, torch 2.7 env via uv.
+  4 of the first 8 landed in unnamed data centres and were still downloading
+  the CUDA wheels after 15 min → terminated at 0.28 h each and replaced in
+  EUR-IS-1/2 (`launch --ranges … --dcs EUR-IS-1,EUR-IS-2`). The Iceland pods
+  embedded **175–193 photos/s each** (≈ 1.85× the L4), fetch-bound at
+  22–32 MB/s from S3. 2,890 / 2,890 shards (2,889,800 photos, 9 missing
+  upstream) pulled to `extra/emb-k1000/` (5.6 GB) and each verified
+  against the pod's sha256 manifest before the pod was terminated. The first
+  pull was serial (~1 MB/s per proxied request) → `pull` now downloads 16
+  shards per pod in parallel (~2,800 shards in 5 min).
+- Pod-hours 7.4 (validation 0.11, 4 × 0.28 stalled, 8 × 0.68–0.89) →
+  **≈ $6.6** at the listed rate (bound $8.5, cap $20); first pod created
+  ~02:12 UTC, last terminated 03:13 UTC. All pods gone (`GET /v2/pods` = 0).
+  The GCS model copy and `au/extra2/` were deleted afterwards.
+
+### K = 1,000 dedup and the final list
+
+`expand_inat.py finalize --tag k1000` (stage 1 ~9 min, stage-2 neighbours
+~25 min on MPS; both cached in `work/finalize-k1000-stage{1,2}.parquet`, so
+re-thresholding takes seconds). **Threshold change at this scale:** with up
+to 1,000 photos per class and a max over 85k evaluation photos, the
+calibrated standalone cos ≥ 0.95 flagged 76,233 extras against evaluation
+photos (818 common species, all classes with ≥ 100 training photos), 162,512
+against other observations' training photos and 222,230 within the list —
+multiple comparisons, not duplicates: NO evaluation neighbour reached 0.99
+(the hash stage had removed the 16 true copies; the earlier eye check found
+the 0.95–0.96 pairs to be different photos). So 0.95 now applies only
+between photos of ONE observation (bursts, zooms); across observations
+**cos ≥ 0.98** (`--cross`), plus the 0.85 + hash confirmation vs eval.
+
+| dropped | photos |
+|---|---|
+| hash ≈ evaluation photo | 16 |
+| hash: identical image in two classes (both copies) | 1,322 |
+| hash: within class (earlier fill rank kept) | 13,229 |
+| cos ≥ 0.98 vs an evaluation photo | 1,293 |
+| cos ≥ 0.95 vs a training photo of the same observation | 22,761 |
+| cos ≥ 0.98 vs a training photo of another observation (same class) | 7,091 |
+| cos ≥ 0.95 vs an earlier extra of the same observation | 41,905 |
+| cos ≥ 0.98 vs an earlier extra of another observation | 8,308 |
+| not embedded (gone upstream) | 105 |
+
+**`extra/extra_photos_k1000.parquet`: 3,054,271 photos, 2.08M observations,
+16,571 classes** (rg-unused 1,981,026 · extra-photo 689,792 · sa-nd 287,365
+· needs-id 57,439 · name-map 38,649); by training bucket 0: 50,762, 1–9:
+89,325, 10–19: 86,041, 20–49: 138,559, 50+: 2,689,584. Photo-less labels
+gain ≥ 1 / 5 / 20: 1,142 / 701 / 219; classes with ≥ 5 / 20 / 100 photos
+after: 15,201 / 11,593 / 6,359. train_v2 `--extra` format, sorted by
+(shard, row): `u`, `photo_id`, `source`, `licence`, `shard` (npz path in
+`extra/emb` or `extra/emb-k1000`), `shard_row`, `lat`, `lon` + the
+attribution / provenance columns and cos_eval/train/within; spot check of
+2,000 rows: shard rows match. Note for the trainer: `add_extra` keeps a row
+VIEW of each loaded shard, so loading 3.05M rows holds every shard array
+(~6.4 GB) plus the stacked copy (~6.3 GB) — fine on the VM, tight on the
+laptop. Dropped rows: `extra/dropped_k1000.parquet`.

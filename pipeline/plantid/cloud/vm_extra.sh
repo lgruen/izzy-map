@@ -42,7 +42,13 @@ fi
 export HF_HUB_OFFLINE=1
 if [[ $MODE == *embed* ]]; then
   gcloud storage cp "$B/in/todo.parquet" . --quiet || finish "no todo.parquet"
+  PD=""
+  # non-iNat photos (ALA, Commons): uploaded to $B/photos/ from the laptop, synced here
+  if gcloud storage ls "$B/photos/" >/dev/null 2>&1; then
+    mkdir -p photos && gcloud storage rsync -r "$B/photos" photos --quiet || finish "photo sync failed"
+    PD="--photo-dir $W/photos"
+  fi
   $E code/embed_extra.py vm-embed --bucket "$B" --todo todo.parquet --work "$W" \
-    --shards "$SHARDS" || finish "embed failed"
+    --shards "$SHARDS" $PD || finish "embed failed"
 fi
 finish ok

@@ -47,6 +47,8 @@ IMAGE = "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"  # only python3 + bash
 REVISION = "6e3d04e3d6522012c88181085c5ae666e14c45cd"      # BioCLIP 2.5 snapshot the GCP runs used
 SHARD = 1000
 os.makedirs(RP, exist_ok=True)
+import threading  # noqa: E402
+STATE_LOCK = threading.Lock()
 
 
 def key():
@@ -95,13 +97,15 @@ def code_tgz():
     return b.getvalue()
 
 
-def create(name, gpu, cloud, token):
+def create(name, gpu, cloud, token, dcs=None):
     boot = base64.b64encode(open(os.path.join(HERE, "runpod_pod.py"), "rb").read()).decode()
     body = {"name": name, "image": IMAGE, "cloud": cloud, "disk": 80, "ports": ["8000/http"],
-            "gpu": {"id": gpu, "count": 1, "minVcpuCountPerGpu": 8, "minRamPerGpu": 24, "minCudaVersion": "12.6"},
+            "gpu": {"id": gpu, "count": 1, "minVcpuCountPerGpu": 8},
             "env": {"IZZY_TOKEN": token, "IZZY_BOOT": boot},
             "entrypoint": ["bash", "-c"],
             "cmd": ["echo \"$IZZY_BOOT\" | base64 -d > /boot.py && exec python3 /boot.py"]}
+    if dcs:
+        body["dataCenterIds"] = dcs
     return api("POST", "/v2/pods", body)
 
 
@@ -137,9 +141,9 @@ def cmd_gpus(a):
         print(json.dumps({k: g.get(k) for k in g if k not in ("description",)})[:400])
 
 
-def new_pod(st, name, gpu, cloud, rng, todo, kind):
+def new_pod(st, name, gpu, cloud, rng, todo, kind, dcs=None):
     token = secrets.token_urlsafe(32)
-    r = create(name, gpu, cloud, token)
+    r = create(name, gpu, cloud, token, dcs)
     pod = {"id": r["id"], "token": token, "gpu": gpu, "cloud": cloud, "range": rng, "todo": todo, "kind": kind,
            "created": time.time(), "image": IMAGE, "info": {k: r.get(k) for k in ("costPerHr", "dataCenterId", "machineId",
                                                                                    "vcpuCount", "memoryInGb") if k in r}}
@@ -174,12 +178,14 @@ def cmd_launch(a):
     first = a.first_shard
     per = -(-(nsh - first) // a.pods)
     st = load_state()
-    for i in range(a.pods):
-        lo, hi = first + i * per, min(nsh, first + (i + 1) * per)
+    ranges = [tuple(map(int, r.split(":"))) for r in a.ranges.split(",")] if a.ranges else \
+        [(first + i * per, min(nsh, first + (i + 1) * per)) for i in range(a.pods)]
+    for lo, hi in ranges:
         if lo >= hi:
             break
         try:
-            pod = new_pod(st, f"izzy-embed-{lo:04d}", a.gpu, a.cloud, f"{lo}:{hi}", a.todo, "run")
+            pod = new_pod(st, f"izzy-embed-{lo:04d}", a.gpu, a.cloud, f"{lo}:{hi}", a.todo, "run",
+                          a.dcs.split(",") if a.dcs else None)
         except RuntimeError as e:
             print(f"create failed for {lo}:{hi}: {e}", flush=True)
             continue
@@ -204,33 +210,44 @@ def cmd_status(a):
             print(pid, pod["range"], "unreachable:", e)
 
 
-def pull_pod(pod, out_dir):
-    man = json.loads(pod_call(pod, "GET", "/manifest", timeout=120))
-    got = 0
-    for name, (size, sha) in man.items():
+def pull_pod(pod, out_dir, threads=16):
+    """Download every shard in the pod's manifest that is not already here
+    with the same sha256 (parallel: one proxied request is ~1 MB/s)."""
+    import concurrent.futures as cf
+    man = json.loads(pod_call(pod, "GET", "/manifest", timeout=300))
+
+    def one(item):
+        name, (size, sha) = item
         p = os.path.join(out_dir, name)
         if os.path.exists(p) and os.path.getsize(p) == size and \
                 hashlib.sha256(open(p, "rb").read()).hexdigest() == sha:
-            continue
-        for attempt in range(4):
+            return 0
+        for attempt in range(5):
             try:
-                b = pod_call(pod, "GET", f"/emb/{name}", timeout=120)
+                b = pod_call(pod, "GET", f"/emb/{name}", timeout=180)
                 if len(b) == size and hashlib.sha256(b).hexdigest() == sha:
                     with open(p + ".part", "wb") as f:
                         f.write(b)
                     os.replace(p + ".part", p)
-                    got += 1
-                    break
+                    return 1
             except Exception:  # noqa: BLE001
-                time.sleep(3)
-        else:
-            print(f"  {pod['id']}: {name} failed verification", flush=True)
+                time.sleep(3 + 3 * attempt)
+        print(f"  {pod['id']}: {name} failed verification", flush=True)
+        return 0
+    with cf.ThreadPoolExecutor(threads) as ex:
+        got = sum(ex.map(one, man.items()))
     return man, got
 
 
 def cmd_pull(a):
+    import concurrent.futures as cf
     st = load_state()
-    for pid, pod in list(st["pods"].items()):
+    with cf.ThreadPoolExecutor(len(st["pods"]) or 1) as ex:
+        list(ex.map(lambda kv: pull_one(a, st, *kv), list(st["pods"].items())))
+
+
+def pull_one(a, st, pid, pod):
+    if True:
         out = os.path.join(EX, "emb-validate" if pod["kind"] == "validate" else f"emb-{a.tag}")
         os.makedirs(out, exist_ok=True)
         try:
@@ -238,7 +255,7 @@ def cmd_pull(a):
             man, got = pull_pod(pod, out)
         except Exception as e:  # noqa: BLE001
             print(pid, "unreachable:", e)
-            continue
+            return
         lo, hi = map(int, pod["range"].split(":"))
         want = {f"shard-{k:04d}.npz" for k in range(lo, hi)}
         have = {n for n in want if os.path.exists(os.path.join(out, n)) and n in man and
@@ -248,8 +265,9 @@ def cmd_pull(a):
             api("DELETE", f"/v2/pods/{pid}")
             pod["terminated"] = time.time()
             st.setdefault("done", {})[pid] = pod
-            del st["pods"][pid]
-            save_state(st)
+            with STATE_LOCK:
+                del st["pods"][pid]
+                save_state(st)
             print(f"  terminated {pid}", flush=True)
 
 
@@ -283,6 +301,8 @@ def main():
     p.add_argument("--cloud", default="SECURE")
     p.add_argument("--todo", default=os.path.join(EX, "work", "todo-k1000.parquet"))
     p.add_argument("--first-shard", type=int, default=0)
+    p.add_argument("--ranges", default="", help="explicit lo:hi,lo:hi (replacement pods)")
+    p.add_argument("--dcs", default="", help="data center ids, comma-separated")
     sub.add_parser("status")
     p = sub.add_parser("pull")
     p.add_argument("--tag", default="k1000")
