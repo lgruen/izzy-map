@@ -226,3 +226,52 @@ Model weights re-uploaded from the laptop's HF cache to `…/au/extra/model/`
   + GCS (3.7 GB model + 0.55 GB embeddings, days) < $0.01 + egress of the
   embeddings to the laptop 0.55 GB × $0.12 ≈ $0.07 → **≈ $0.6–0.9, cap $3**
   (coordinator's cap; at most 3 boots).
+
+### Embedding run: actual
+
+SPOT L4 stockout in us-central1-a/b/c → **us-east1-c**; boot 23:21 UTC,
+**260,501 photos in 2,546 s = 102.3/s**, 261 shards, 0 missing, 0 failed;
+job end 00:04:51 UTC (VM ran ~44 min). Cost ≈ $0.38 VM + ~$0.01 disk +
+~$0.04 model read across regions + ~$0.07 egress (0.57 GB) ≈ **$0.5**
+(bound $0.6–0.9, cap $3). VM and disk deleted, the GCS model copy deleted;
+`gs://leo-superresolution-izzy-plantid/au/extra/` keeps `emb/` (0.54 GB),
+`in/`, `code/`, `log/`. Shards locally in `extra/emb/` (574 MB).
+
+### Stage 2 (embeddings) and the final list
+
+`expand_inat.py dedup-emb` (MPS, ~10 min incl. hashing 59,901 training
+photos streamed from S3 for the confirm band): each extra vs the existing
+training photos (598,115 of 598,125 embedded), vs every evaluation photo
+(84,704 cloud embeddings + 657 C photos via their w8 Core ML embeddings),
+and within the extras (earlier rank wins).
+
+| dropped | photos |
+|---|---|
+| cos ≥ 0.95 vs a training photo of the SAME observation (burst / zoom of the same shot) | 6,588 |
+| cos ≥ 0.95 vs a training photo of another observation | 502 |
+| 0.85 ≤ cos < 0.95 vs a training photo AND hashes agree | 14 |
+| cos ≥ 0.95 vs an evaluation photo | 26 (+ 11 that also matched a training photo) |
+| 0.85 ≤ cos < 0.95 vs an evaluation photo AND hashes agree | 0 (of 44,268 in the band) |
+| cos ≥ 0.95 within the extras | 2,960 |
+
+By eye (15-pair sample from a partial run): cos 1.0 pairs are the same
+image under two photo ids (true duplicates); 0.95–0.98 within an observation
+are burst shots / zooms of the same flower; but the 4 evaluation hits seen
+at 0.950–0.953 were DIFFERENT photos of the same species, i.e. the
+standalone 0.95 is precautionary across observers: no true duplicate of an
+evaluation photo was found in stage 2 (stage 1 found and removed 2). The
+confirm band shows why cosine alone can't decide: 114,706 extras sit at
+0.85–0.95 to some training photo, only 14 are the same image by hash.
+
+**Final list: `extra/extra_photos_final.parquet` — 250,411 photos, 12,688
+classes** (extra-photo 162,796, sa-nd 39,868, needs-id 38,170, name-map
+9,512, rg-unused 65). Photo-less labels: 1,140 gain ≥ 1, 528 ≥ 5; classes
+with ≥ 5 photos 11,243 → 14,575, ≥ 20 7,293 → 10,631. Format =
+`train_v2.py --extra`: `u`, `photo_id`, `source`, `licence`, `shard` (path
+of the local npz), `shard_id`, `lat`, `lon` + all earlier columns and the
+nearest-neighbour cosines. **Sorted by shard**: `add_extra` caches one npz
+at a time and keeps a row view of it, so the list in class order reloaded a
+2 MB shard per row and was OOM-killed at 16 GB; sorted it loads 250,411
+rows in 45 s at 2.5 GB RSS (checked with the current `add_extra`: 0
+rejected, 0 duplicates, all embeddings found, unit norm). Dropped rows:
+`extra/dropped_emb.parquet`. Local photo copies deleted (`url` re-fetches).

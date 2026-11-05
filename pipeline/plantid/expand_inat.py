@@ -818,6 +818,9 @@ def cmd_dedup_emb(a):
     out = F_.drop(columns=["ei", "shard"]).rename(columns={"license": "licence"})
     out = out.rename(columns={"shard_path": "shard"})
     out.insert(out.columns.get_loc("shard") + 1, "shard_id", F_["shard"].to_numpy())
+    # sorted by shard: train_v2.add_extra caches ONE npz at a time and keeps a row
+    # view of each, so a list in class order reloads a shard per row (OOM, seen)
+    out = out.sort_values(["shard_id", "photo_id"])
     pq.write_table(pa.Table.from_pandas(out, preserve_index=False), os.path.join(EX, "extra_photos_final.parquet"))
     Dall = pd.concat(dropped, ignore_index=True)
     pq.write_table(pa.Table.from_pandas(Dall.astype({c: str for c in ("observed_on",) if c in Dall}),
