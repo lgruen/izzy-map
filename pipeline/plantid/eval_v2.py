@@ -418,6 +418,10 @@ def main():
         out = os.environ.get("EVAL_OUT") or os.path.join(V2, "eval-valonly.json")
         json.dump(res, open(out, "w"), indent=1, default=float)
         print(f"val-only eval → {out} ({time.time() - t0:.0f} s)")
+        import provenance as PV
+        PV.record("v2 eval (val only)", inputs=[V.DATA, os.path.join(V2, "runs", final + ".npz"),
+                                                os.environ.get("V2PRIOR") or ""], outputs=[out],
+                  extra={"env_taunorm": os.environ.get("TAUNORM"), "val_reweighted": res["val_reweighted"]})
         return
     rep = {"final": report("final", T=Tf)}
     if os.environ.get("EVAL_LIGHT"):  # prior comparisons: tuning + the final row only
@@ -431,6 +435,10 @@ def main():
         out = os.environ.get("EVAL_OUT") or os.path.join(V2, "eval-light.json")
         json.dump(res, open(out, "w"), indent=1, default=float)
         print(f"light eval → {out} ({time.time() - t0:.0f} s)")
+        import provenance as PV
+        PV.record("v2 eval (light, reads test)", inputs=[V.DATA, os.path.join(V2, "runs", final + ".npz"),
+                                                         os.environ.get("V2PRIOR") or ""], outputs=[out],
+                  extra={"env_taunorm": os.environ.get("TAUNORM"), "prior": bp, "temperature": Tf})
         return
     thr_keep = thr
     thr = thr_plain

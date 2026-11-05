@@ -39,6 +39,7 @@ if [[ $MODE == *embed* ]] && [ ! -f "$W/model-ok" ]; then
   touch "$W/model-ok"
 fi
 export HF_HUB_OFFLINE=1
+export V2_GPU_BYTES=1.6e10  # the L4 has 24 GB: keep up to 16 GB of training photos on the GPU
 if [[ $MODE == *embed* ]]; then
   gcloud storage cp "$B/in/todo.parquet" . --quiet || finish "no todo.parquet"
   $E code/train_australia.py vm-embed --bucket "$B" --todo todo.parquet --work "$W" \
@@ -55,7 +56,8 @@ if [[ $MODE == *train* ]]; then
 fi
 if [[ $MODE == *v2* ]]; then  # train_v2.py: single-model sweep on precomputed arrays
   GRID=$(md izzy-grid || echo "")
-  gcloud storage cp "$B/v2/data*.npz" . --quiet || finish "no v2 data"
+  DATAF=$(md izzy-data || echo "data*.npz")
+  gcloud storage cp "$B/v2/$DATAF" . --quiet || finish "no v2 data"
   echo "uv: $(command -v uv) $(uv --version)"
   $E -c "import torch, numpy, sys; print('env ok', sys.executable, torch.__version__, torch.cuda.is_available())"
   $E -c "print('env ok')" | grep -q "env ok" || { echo "uv env broken → uv cache clean"; uv cache clean; \

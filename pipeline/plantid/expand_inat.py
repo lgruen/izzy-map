@@ -1073,6 +1073,167 @@ def cmd_finalize(a):
     print(json.dumps(summ, indent=1, default=int))
 
 
+def load_shards(dirs):
+    """All shard npz under `dirs` → photo ids, fp16 embeddings, pHash, dHash
+    (0 where the shard has none), shard path, row; first copy of a photo wins."""
+    import glob
+    ids, es, ph, dh, shp, row = [], [], [], [], [], []
+    for d in dirs:
+        for f in sorted(glob.glob(os.path.join(d, "shard-*.npz"))):
+            z = np.load(f)
+            p = z["photo_id"].astype(np.int64)
+            ids.append(p); es.append(z["emb"].astype(np.float16))
+            ph.append(z["phash"].astype(np.uint64) if "phash" in z else np.zeros(len(p), np.uint64))
+            dh.append(z["dhash"].astype(np.uint64) if "dhash" in z else np.zeros(len(p), np.uint64))
+            shp.append(np.full(len(p), f, dtype=object)); row.append(np.arange(len(p)))
+    ids, E, ph, dh = np.concatenate(ids), np.concatenate(es), np.concatenate(ph), np.concatenate(dh)
+    shp, row = np.concatenate(shp), np.concatenate(row)
+    _, first = np.unique(ids, return_index=True)
+    return ids[first], E[first], ph[first], dh[first], shp[first], row[first]
+
+
+def cmd_finalize_sources(a):
+    """ALA + Commons extras (sources/extra_photos_sources.parquet, embedded +
+    hashed on the VM into extra/emb-src/): stage 1 again with the VM's exact
+    hashes (vs eval; vs the K = 1,000 iNat extras of the same class), stage 2
+    (BioCLIP cosine) vs eval (all pairs: ≥ --cross, or ≥ confirm with agreeing
+    hashes), vs the class's training photos and its K = 1,000 iNat extras
+    (≥ --cross: other observations by construction), within the list per class
+    (same ALA occurrence ≥ standalone 0.95, else ≥ --cross; earlier rank wins)
+    → extra/extra_photos_src.parquet (train_v2 --extra format, sorted by shard)."""
+    import pandas as pd
+    import torch
+    import train_australia as TA
+    t0 = time.time()
+    cal = json.load(open(os.path.join(WORK, "calibration.json")))["chosen"]
+    ce = json.load(open(os.path.join(WORK, "calibration-emb.json")))["chosen"]
+    tc, ta = ce["confirm"]["thr"], ce["standalone"]["thr"]
+    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    S = pq.read_table(os.path.join(CACHE, "sources", "extra_photos_sources.parquet")).to_pandas()
+    ids_map = pq.read_table(os.path.join(WORK, "src", "ids-src.parquet")).to_pandas()
+    S = S.merge(ids_map[["photo_id", "source", "image_id"]], on=["source", "image_id"], how="left")
+    assert S["photo_id"].notna().all()
+    S = S.drop(columns=["phash", "dhash"])  # float64 copies (lossy); the VM's exact hashes replace them
+    sid, sE, sph, sdh, sshp, srow = load_shards([os.path.join(EX, "emb-src")])
+    pos = dict(zip(sid.tolist(), range(len(sid))))
+    S["ei"] = [pos.get(int(p), -1) for p in S["photo_id"]]
+    dropped = [S[S["ei"] < 0].assign(reason="not embedded (missing)")]
+    S = S[S["ei"] >= 0].sort_values(["u", "rk"]).reset_index(drop=True)
+    ei = S["ei"].to_numpy()
+    phv, dhv = sph[ei], sdh[ei]
+    S["phash"], S["dhash"] = phv, dhv
+    Qn = sE[ei]
+    reason = np.full(len(S), "", dtype=object)
+    print(f"sources: {len(S):,} embedded ({time.time() - t0:.0f} s)", flush=True)
+    # ---- stage 1 (exact hashes)
+    Eh = read_parts("hashes-eval").to_pandas()
+    Eh = Eh[Eh["status"].isin(["ok", "local"])].drop_duplicates("photo_id")
+    hit, _ = dedup.near_any(phv, dhv, Eh["phash"].to_numpy(np.uint64), Eh["dhash"].to_numpy(np.uint64),
+                            cal["phash"], cal["dhash"])
+    reason[hit] = "hash: eval photo"
+    K = pq.read_table(os.path.join(EX, "extra_photos_k1000.parquet"),
+                      columns=["u", "photo_id", "phash", "dhash", "observation_uuid"]).to_pandas().sort_values("u")
+    ku = K["u"].to_numpy()
+    kb = dict(zip(*np.unique(ku, return_index=True)))
+    kc = dict(zip(*np.unique(ku, return_counts=True)))
+    kp, kd = K["phash"].to_numpy(np.uint64), K["dhash"].to_numpy(np.uint64)
+    uu = S["u"].to_numpy()
+    bounds = np.r_[0, np.nonzero(uu[1:] != uu[:-1])[0] + 1, len(S)]
+    nk = 0
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        u = int(uu[lo])
+        if u in kb:
+            h, _ = dedup.near_any(phv[lo:hi], dhv[lo:hi], kp[kb[u]:kb[u] + kc[u]], kd[kb[u]:kb[u] + kc[u]],
+                                  cal["phash"], cal["dhash"])
+            m = h & (reason[lo:hi] == "")
+            reason[lo:hi][m] = "hash: iNat extra (same class)"
+            nk += m.sum()
+    print(f"  hash: eval {hit.sum():,}, iNat extras {nk:,} ({time.time() - t0:.0f} s)", flush=True)
+    # ---- stage 2: vs eval (all pairs)
+    ev = eval_sets().to_pandas().drop_duplicates("photo_id")
+    aid, aE = TA.all_embeddings()
+    i_, ok = TA.lookup(aid, ev["photo_id"].to_numpy(np.int64))
+    R = torch.from_numpy(aE[i_[ok]]).to(dev)
+    rid = ev["photo_id"].to_numpy(np.int64)[ok]
+    cos_e = np.empty(len(Qn), np.float32)
+    arg = np.empty(len(Qn), np.int64)
+    for lo in range(0, len(Qn), 16384):
+        v, k = (torch.from_numpy(Qn[lo:lo + 16384]).to(dev) @ R.T).float().max(1)
+        cos_e[lo:lo + 16384], arg[lo:lo + 16384] = v.cpu().numpy(), k.cpu().numpy()
+    del R
+    Ehx = Eh.set_index("photo_id")
+    nn = rid[arg]
+    near = (np.bitwise_count(phv ^ Ehx.reindex(nn)["phash"].fillna(0).to_numpy(np.uint64)) <= cal["phash"]) & \
+           (np.bitwise_count(dhv ^ Ehx.reindex(nn)["dhash"].fillna(0).to_numpy(np.uint64)) <= cal["dhash"])
+    m = (reason == "") & ((cos_e >= a.cross) | ((cos_e >= tc) & near))
+    reason[m] = "emb: eval photo"
+    print(f"  emb vs eval: {m.sum():,} (≥ {ta} would be {(cos_e >= ta).sum():,}) ({time.time() - t0:.0f} s)", flush=True)
+    # ---- stage 2: vs the class's training photos + its K = 1,000 iNat extras, within the class
+    tr = pq.read_table(os.path.join(AU, "plan", "train.parquet"), columns=["photo_id", "u"]).to_pandas()
+    rt = pq.read_table(os.path.join(EX, "reassign_train.parquet")).to_pandas()
+    tr.loc[tr["photo_id"].isin(rt["photo_id"]), "u"] = tr["photo_id"].map(dict(zip(rt["photo_id"], rt["u_new"])))
+    i_, ok = TA.lookup(aid, tr["photo_id"].to_numpy(np.int64))
+    tr = tr[ok].assign(ai=i_[ok]).sort_values("u")
+    tu, tai = tr["u"].to_numpy(), tr["ai"].to_numpy()
+    tb = dict(zip(*np.unique(tu, return_index=True)))
+    tcnt = dict(zip(*np.unique(tu, return_counts=True)))
+    xid, xE, _, _, _, _ = load_shards([os.path.join(EX, "emb"), os.path.join(EX, "emb-k1000")])
+    xi, xok = TA.lookup(xid, K["photo_id"].to_numpy(np.int64))
+    assert xok.all()
+    xi = xi  # rows of xE in K's (class-sorted) order
+    obs = S["observation_uuid"].fillna("").astype(str).to_numpy()
+    n_t = n_k = n_w1 = n_w2 = 0
+    cos_t = np.full(len(S), -2.0, np.float32)
+    cos_k = np.full(len(S), -2.0, np.float32)
+    cos_w = np.full(len(S), -2.0, np.float32)
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        u = int(uu[lo])
+        q = torch.from_numpy(Qn[lo:hi]).to(dev)
+        if u in tb:
+            v = (q @ torch.from_numpy(aE[tai[tb[u]:tb[u] + tcnt[u]]]).to(dev).T).float().max(1).values.cpu().numpy()
+            cos_t[lo:hi] = v
+        if u in kb:
+            v = (q @ torch.from_numpy(xE[xi[kb[u]:kb[u] + kc[u]]]).to(dev).T).float().max(1).values.cpu().numpy()
+            cos_k[lo:hi] = v
+        if hi - lo > 1:
+            Sm = (q @ q.T).float()
+            Sm = Sm.masked_fill(torch.ones_like(Sm, dtype=torch.bool).triu(), -2.0)
+            v, k = Sm.max(1)
+            v, k = v.cpu().numpy(), k.cpu().numpy()
+            cos_w[lo:hi] = v
+            same = (obs[lo:hi] != "") & (obs[lo + k] == obs[lo:hi])
+            m1 = (reason[lo:hi] == "") & same & (v >= ta)
+            reason[lo:hi][m1] = "emb: earlier source photo, same occurrence"
+            m2 = (reason[lo:hi] == "") & ~same & (v >= a.cross)
+            reason[lo:hi][m2] = "emb: earlier source photo, other occurrence"
+            n_w1 += m1.sum(); n_w2 += m2.sum()
+    m = (reason == "") & (cos_t >= a.cross)
+    reason[m] = "emb: training photo (same class)"
+    n_t = m.sum()
+    m = (reason == "") & (cos_k >= a.cross)
+    reason[m] = "emb: iNat extra (same class)"
+    n_k = m.sum()
+    print(f"  emb: training {n_t:,}, iNat extras {n_k:,}, within same occurrence {n_w1:,}, other {n_w2:,} "
+          f"({time.time() - t0:.0f} s)", flush=True)
+    S["cos_eval"], S["cos_train"], S["cos_inat_extra"], S["cos_within"] = cos_e, cos_t, cos_k, cos_w
+    drop = reason != ""
+    dropped.append(S[drop].assign(reason=reason[drop]))
+    F_ = S[~drop].copy()
+    F_["shard"] = sshp[F_["ei"].to_numpy()]
+    F_["shard_row"] = srow[F_["ei"].to_numpy()]
+    F_ = F_.drop(columns=["ei"]).rename(columns={"license": "licence"}).sort_values(["shard", "shard_row"])
+    outp = os.path.join(EX, "extra_photos_src.parquet")
+    pq.write_table(pa.Table.from_pandas(F_, preserve_index=False), outp)
+    D = pd.concat(dropped, ignore_index=True)
+    pq.write_table(pa.Table.from_pandas(D, preserve_index=False), os.path.join(EX, "dropped_src.parquet"))
+    con = __import__("duckdb").connect()
+    summ = summarise_sql(con, outp)
+    summ["dropped"] = D.groupby("reason").size().to_dict()
+    summ["seconds"] = round(time.time() - t0)
+    json.dump(summ, open(os.path.join(EX, "extra_photos_src-summary.json"), "w"), indent=1, default=int)
+    print(json.dumps(summ, indent=1, default=int))
+
+
 def pd_na_int(n):
     import pandas as pd
     return pd.array([None] * n, dtype="Int32")
@@ -1347,6 +1508,8 @@ def main():
     p.add_argument("--n", type=int, default=80)
     sub.add_parser("dedup")
     sub.add_parser("dedup-emb")
+    p = sub.add_parser("finalize-sources")
+    p.add_argument("--cross", type=float, default=0.98)
     p = sub.add_parser("finalize")
     p.add_argument("--tag", default="k1000")
     p.add_argument("--cross", type=float, default=0.98, help="cosine threshold across observations")
@@ -1358,7 +1521,7 @@ def main():
     a = ap.parse_args()
     os.makedirs(WORK, exist_ok=True)
     {"scan": cmd_scan, "select": cmd_select, "measure": cmd_measure, "fetch": cmd_fetch, "evalhash": cmd_evalhash,
-     "calibrate": cmd_calibrate, "calibrate-emb": cmd_calibrate_emb, "dedup": cmd_dedup, "dedup-emb": cmd_dedup_emb, "finalize": cmd_finalize, "noise": cmd_noise}[a.cmd](a)
+     "calibrate": cmd_calibrate, "calibrate-emb": cmd_calibrate_emb, "dedup": cmd_dedup, "dedup-emb": cmd_dedup_emb, "finalize": cmd_finalize, "finalize-sources": cmd_finalize_sources, "noise": cmd_noise}[a.cmd](a)
 
 
 if __name__ == "__main__":

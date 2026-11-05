@@ -39,10 +39,12 @@ case "${1:-}" in
     $G storage cp "$C/australia/train/todo.parquet" "$C/australia/plan/train.parquet" \
       "$C/australia/text.npz" "$BUCKET/in/"
     $G storage rsync "$C/emb/bioclip25" "$BUCKET/emb0" --exclude 'text\.npz|info\.json' ;;
-  v2-upload)  # train_v2.py: code + data.npz
+  v2-upload)  # train_v2.py: code + data file(s); recorded in the provenance log
     tar -C "$P" -czf /tmp/izzy-au-code.tgz train_australia.py embed.py train_v2.py
     $G storage cp /tmp/izzy-au-code.tgz "$BUCKET/code/code.tgz"
-    for f in "$C"/australia/v2/data*.npz; do $G storage cp "$f" "$BUCKET/v2/$(basename "$f")"; done ;;
+    uv run --with numpy --with pyarrow python3 -I "$P/provenance.py" note "v2 cloud code+data upload" \
+      in:/tmp/izzy-au-code.tgz gcs_code="$BUCKET/code/code.tgz" gcs_data="$BUCKET/v2/${DATAF:-data*.npz}" || true
+    for f in "$C"/australia/v2/${DATAF:-data*.npz}; do $G storage cp "$f" "$BUCKET/v2/$(basename "$f")"; done ;;
   release)
     tar -C "$P" -czf /tmp/izzy-au-code.tgz train_australia.py embed.py
     $G storage cp /tmp/izzy-au-code.tgz "$BUCKET/code/code.tgz"
@@ -56,7 +58,7 @@ case "${1:-}" in
       --image-family pytorch-2-9-cu129-ubuntu-2204-nvidia-580 \
       --image-project deeplearning-platform-release \
       --boot-disk-size 120GB --boot-disk-type pd-balanced --scopes cloud-platform \
-      --metadata "install-nvidia-driver=True,izzy-bucket=$BUCKET,izzy-mode=$MODE,izzy-shards=$N,izzy-grid=${GRID:-}" \
+      --metadata "install-nvidia-driver=True,izzy-bucket=$BUCKET,izzy-mode=$MODE,izzy-shards=$N,izzy-grid=${GRID:-},izzy-data=${DATAF:-data*.npz}" \
       --metadata-from-file startup-script="$HERE/vm_au.sh" ;;
   again)
     MODE=${2:?mode}; N=${3:?shards}; CAP=${4:?cap}

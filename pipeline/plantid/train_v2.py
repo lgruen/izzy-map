@@ -219,7 +219,7 @@ def cmd_data(a):
     import provenance as PV
     PV.record("v2 data", inputs=[os.path.join(TA.AU, "plan", "train.parquet"), os.path.join(TA.AU, "plan", "eval.parquet"),
                                  os.path.join(CACHE, "sets", "train.parquet"), os.path.join(TA.AU, "labels.parquet"),
-                                 os.path.join(TA.AU, "text.npz"), NAME_MAP, a.extra, a.reassign], outputs=[out],
+                                 os.path.join(TA.AU, "text.npz"), NAME_MAP, *(a.extra or []), a.reassign], outputs=[out],
               extra={"extra_emb": a.extra_emb})
     print(f"val: AU-val {m.sum():,} photos, A-val {len(ya):,}; → {out} "
           f"({os.path.getsize(out) / 1e9:.2f} GB)")
@@ -244,7 +244,11 @@ def add_extra(path, X, y, pid, src, nU, emb_dir=None, tas=None):
     this function rejects ARR licences, unknown classes, duplicate photo ids and
     photos already in training."""
     import pyarrow.parquet as pq
-    t = pq.read_table(path).to_pydict()
+    cols = [c for c in pq.read_schema(path).names
+            if c in ("u", "species", "photo_id", "source", "licence", "license", "shard", "lat", "lon")]
+    t0 = time.time()
+    t = pq.read_table(path, columns=cols).to_pydict()  # only what's needed (lists have 25+ columns, millions of rows)
+    print(f"extra: read {path} ({time.time() - t0:.0f} s)", flush=True)
     n = len(t["photo_id"])
     if "u" not in t:
         L = pq.read_table(os.path.join(CACHE, "australia", "labels.parquet"), columns=["name", "aliases"]).to_pydict()
@@ -276,10 +280,12 @@ def add_extra(path, X, y, pid, src, nU, emb_dir=None, tas=None):
             if "photo_id" in z and "emb" in z:
                 for j, p in enumerate(z["photo_id"].tolist()):
                     index[int(p)] = (f, j)
+    print(f"extra: index of {len(index):,} embeddings, {len(keep):,} rows kept ({time.time() - t0:.0f} s)", flush=True)
     # gather: group the rows by shard file and read every file once (millions of rows)
     by_file = collections.defaultdict(list)
+    shards = t.get("shard") or [None] * n  # (once — not per row)
     for i in keep:
-        sh = t.get("shard", [None] * n)[i]
+        sh = shards[i]
         if isinstance(sh, str) and sh.endswith(".npz"):
             by_file[sh].append((i, None))
         else:

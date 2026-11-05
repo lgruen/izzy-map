@@ -158,5 +158,15 @@ def cmd_ship():
     print(f"provenance merged into {p}")
 
 
+def cmd_note():
+    """provenance.py note STEP [in:PATH …] [out:PATH …] [k=v …] — a step run outside Python
+    (e.g. the code tarball uploaded for a cloud run, a GCS data upload)."""
+    step = sys.argv[2]
+    ins = [a[3:] for a in sys.argv[3:] if a.startswith("in:")]
+    outs = [a[4:] for a in sys.argv[3:] if a.startswith("out:")]
+    kv = dict(a.split("=", 1) for a in sys.argv[3:] if "=" in a and not a.startswith(("in:", "out:")))
+    record(step, inputs=ins, outputs=outs, extra=kv)
+
+
 if __name__ == "__main__":
-    {"inputs": cmd_inputs, "section": cmd_section, "ship": cmd_ship}[sys.argv[1]]()
+    {"inputs": cmd_inputs, "section": cmd_section, "ship": cmd_ship, "note": cmd_note}[sys.argv[1]]()

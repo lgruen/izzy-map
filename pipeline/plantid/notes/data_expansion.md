@@ -392,3 +392,18 @@ attribution / provenance columns and cos_eval/train/within; spot check of
 VIEW of each loaded shard, so loading 3.05M rows holds every shard array
 (~6.4 GB) plus the stacked copy (~6.3 GB) — fine on the VM, tight on the
 laptop. Dropped rows: `extra/dropped_k1000.parquet`.
+
+## ALA + Commons photos: embedding (bound written before launch, 2026-11-05)
+
+Input `sources/extra_photos_sources.parquet` (downloads agent; 253,676
+photos: ALA 238,543, Commons 15,133; all `train_ok`). No iNat photo id →
+synthetic int64 `photo_id` = 2^61 + 60 bits of sha1("source:image_id")
+(unique, asserted; never collides with iNat ids < 1e9); map in
+`extra/work/src/ids-src.parquet`. Photos (16 GB) uploaded to
+`gs://leo-superresolution-izzy-plantid/au/extra-src/photos/`, synced onto the
+VM, embedded + hashed there (`embed_extra.py --photo-dir`, `vm_extra.sh`).
+One SPOT g2-standard-8 + L4 (GCP; no RunPod key any more).
+- Bound: 253,676 / ~102 photos/s = 41 min + ~10 min boot / model / 16 GB
+  GCS → VM sync ≈ **0.9 h ≈ $0.46** (× 1.5 preemptions ≈ $0.7);
+  `--max-run-duration=2h` (≤ $1.1 per boot); cap $2. Afterwards: VM + disk
+  deleted, the uploaded photos and model copy deleted, embeddings kept.
