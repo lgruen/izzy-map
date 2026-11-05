@@ -75,7 +75,7 @@ nonisolated struct CoreArrival: Equatable, Sendable {
 
     /// What is missing, in one word: "Maps" while any map pack is, else
     /// the plant ID model on its own.
-    var noun: String { missing.allSatisfy { $0 == .plantid } ? "Plant ID" : "Maps" }
+    var noun: String { missing.allSatisfy { $0 == .plantid || $0 == .refphotos } ? "Plant ID" : "Maps" }
 
     /// The chip's words: short, figures that don't jump about.
     var text: String {
@@ -111,6 +111,7 @@ extension Pack {
         case .topo: "the topographic map"
         case .relief: "relief shading"
         case .plantid: "the plant identification model"
+        case .refphotos: "the plant reference photos"
         default: rawValue
         }
     }

@@ -59,7 +59,7 @@ final class PlantIDUITests: XCTestCase {
         XCTAssertTrue(answer.label.contains("Silver wattle"), "headline common name: \(answer.label)")
         XCTAssertTrue(app.descendants(matching: .any)["plant-id-crop"].exists, "her crop beside the candidates")
         XCTAssertTrue(app.descendants(matching: .any)["plant-id-ladder"].exists, "the ladder graphic")
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'plant-id-candidate-' AND label CONTAINS 'Recorded within 5 km'")).firstMatch.exists,
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'plant-id-candidate-' AND label CONTAINS 'Recorded within 10 km'")).firstMatch.exists,
                       "the prior's marker")
         attachScreenshot("plant-id-results-species")
         // the top candidate opens the existing plant sheet
@@ -106,6 +106,8 @@ final class PlantIDUITests: XCTestCase {
         let answer = app.descendants(matching: .any)["plant-id-answer"]
         XCTAssertTrue(answer.appears(within: wait))
         XCTAssertTrue(answer.label.contains("species unsure"), "genus answer: \(answer.label)")
+        // the genus's likeliest three, as tiles
+        XCTAssertTrue(app.descendants(matching: .any)["plant-id-genus-top"].exists)
         attachScreenshot("plant-id-results-genus")
         // Eucalyptus nitens has no Understorey Network profile: the minimal sheet
         let nitens = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'plant-id-candidate-' AND label CONTAINS 'nitens'")).firstMatch
@@ -113,13 +115,14 @@ final class PlantIDUITests: XCTestCase {
         for _ in 0 ..< 4 where !nitens.isHittable { app.swipeUp() }
         nitens.tap()
         XCTAssertTrue(app.staticTexts["plant-id-noprofile-name"].appears(within: wait))
-        XCTAssertTrue(app.staticTexts["No Understorey Network profile"].exists)
+        XCTAssertTrue(app.staticTexts["Not in the Understorey Network guide"].exists)
         // Frame Again keeps the photo
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let reframe = app.buttons["plant-id-reframe"]
         for _ in 0 ..< 4 where !reframe.isHittable { app.swipeUp() }
         reframe.tap()
         XCTAssertTrue(app.descendants(matching: .any)["plant-id-frame"].appears(within: wait))
+        XCTAssertTrue(app.descendants(matching: .any)["plant-id-framing-hint"].exists, "framing hint")
     }
 
     @MainActor
@@ -163,7 +166,7 @@ final class PlantIDShotsUITests: XCTestCase {
     @MainActor
     func testRealModelShots() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PLANTID_SHOTS"] == "1", "design shots: TEST_RUNNER_PLANTID_SHOTS=1")
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/head.bin"), "no staged plantid pack")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/v2-head.bin"), "no staged plantid pack")
         let pad = UIDevice.current.userInterfaceIdiom == .pad
         XCUIDevice.shared.orientation = pad ? .landscapeLeft : .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -208,7 +211,7 @@ final class PlantIDShotsUITests: XCTestCase {
             app.terminate()
         }
         // the capture screen with the model still to come
-        let app = run(["-fakePacks", "vector,topo,relief,plantid=downloading:0.42"])
+        let app = run(["-fakePacks", "vector,topo,relief,refphotos,plantid=downloading:0.42"])
         XCTAssertTrue(app.descendants(matching: .any)["plant-id-model-status"].waitForExistence(timeout: 30))
         sleep(1)
         shot("capture-downloading")
@@ -230,7 +233,7 @@ final class PlantIDShotsUITests: XCTestCase {
     @MainActor
     func testRealModelResultsScroll() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PLANTID_SCROLL"] == "1", "TEST_RUNNER_PLANTID_SCROLL=1")
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/head.bin"), "no staged plantid pack")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/v2-head.bin"), "no staged plantid pack")
         let photos = [("637002849", " -43.475,146.642"), ("474508960", " -41.907,146.062"), ("594582089", " -41.806,147.507")]
         var worst = 0.0
         for (id, loc) in photos {

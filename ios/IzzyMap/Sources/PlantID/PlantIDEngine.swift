@@ -68,9 +68,9 @@ nonisolated final class CoreMLPlantEncoder: PlantEncoding, @unchecked Sendable {
 /// the main thread. One per open Identify screen.
 actor PlantIDEngine {
     let source: PlantIDSource
-    private var scorer: PlantIDScorer?
+    private var scorer: PlantIDModel?
     private var encoder: (any PlantEncoding)?
-    private var loading: Task<(PlantIDScorer, any PlantEncoding), Error>?
+    private var loading: Task<(PlantIDModel, any PlantEncoding), Error>?
     private var busy = 0
     nonisolated private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "PlantID")
 
@@ -80,12 +80,12 @@ actor PlantIDEngine {
 
     /// Loads everything (a no-op when loaded; joins a load in flight).
     @discardableResult
-    func prepare() async throws -> (PlantIDScorer, any PlantEncoding) {
+    func prepare() async throws -> (PlantIDModel, any PlantEncoding) {
         if let scorer, let encoder { return (scorer, encoder) }
         if let loading { return try await loading.value }
         let source = source
         let known = scorer
-        let task = Task.detached(priority: .userInitiated) { () throws -> (PlantIDScorer, any PlantEncoding) in
+        let task = Task.detached(priority: .userInitiated) { () throws -> (PlantIDModel, any PlantEncoding) in
             let start = ContinuousClock.now
             let pair = try await Self.load(source, scorer: known)
             Self.logger.info("loaded in \(start.duration(to: .now), privacy: .public)")
@@ -105,17 +105,20 @@ actor PlantIDEngine {
         }
     }
 
-    private static func load(_ source: PlantIDSource, scorer known: PlantIDScorer?) async throws -> (PlantIDScorer, any PlantEncoding) {
+    private static func load(_ source: PlantIDSource, scorer known: PlantIDModel?) async throws -> (PlantIDModel, any PlantEncoding) {
         switch source {
         case let .files(dir):
             let encoderURL = dir.appending(path: PlantIDFiles.encoder, directoryHint: .isDirectory)
             guard FileManager.default.fileExists(atPath: encoderURL.appending(path: "coremldata.bin").path(percentEncoded: false))
             else { throw PlantIDFailure.missingFiles }
-            let scorer: PlantIDScorer
+            guard PlantIDModel.available(in: dir) else { throw PlantIDFailure.missingFiles }
+            let scorer: PlantIDModel
             if let known { scorer = known } else {
-                do { scorer = try PlantIDScorer(directory: dir, bank: PlantIDFiles.bank) } catch {
+                do { scorer = try PlantIDModel(directory: dir) } catch {
                     throw PlantIDFailure.model(error.localizedDescription)
                 }
+                let m = scorer.parameters
+                Self.logger.info("model: \(scorer.labels.count) classes, T \(m.temperature), ladder \(m.ladder.species) / \(m.ladder.genus)")
             }
             return (scorer, try await CoreMLPlantEncoder.load(encoderURL))
         #if DEBUG

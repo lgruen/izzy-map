@@ -1408,8 +1408,8 @@ protocol ContinuedWork: AnyObject {
 /// like the real queue (`FakePackSystem`).
 nonisolated struct FakePacks: Sendable {
     static let key = "fakePacks"
-    static let mixed = "vector,topo=updating:0.4,relief,plantid=downloading:0.83,aerial,season-2023,season-2024,season-2025=downloading:0.62,season-2026=paused"
-    static let settled = "vector,topo,relief,plantid,aerial=failed,tasmap=downloading:0.41,season-2024,season-2025=paused"
+    static let mixed = "vector,topo=updating:0.4,relief,refphotos,plantid=downloading:0.83,aerial,season-2023,season-2024,season-2025=downloading:0.62,season-2026=paused"
+    static let settled = "vector,topo,relief,plantid,refphotos,aerial=failed,tasmap=downloading:0.41,season-2024,season-2025=paused"
 
     var states: [Pack: PackState]
     var updates: [Pack: Double] = [:]

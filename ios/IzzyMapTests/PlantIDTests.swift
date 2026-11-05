@@ -100,26 +100,28 @@ struct PlantIDPhotoTests {
 
     @Test func packListsEveryPlantIDFile() {
         let paths = Set(PlantIDFiles.packPaths)
-        for f in [PlantIDFiles.head, PlantIDFiles.bank, PlantIDFiles.prior, PlantIDFiles.labels, PlantIDFiles.pipeline,
-                  PlantIDFiles.credits, PlantIDFiles.photoCredits] {
+        for f in PlantIDModel.files + [PlantIDFiles.bank, PlantIDFiles.pipeline, PlantIDFiles.credits, PlantIDFiles.photoCredits] {
             #expect(paths.contains("\(PlantIDFiles.folder)/\(f)"), "\(f)")
         }
         #expect(paths.contains("\(PlantIDFiles.folder)/\(PlantIDFiles.encoder)/"))
+        #expect(PlantIDModel.files.contains(PlantIDFiles.head))
         #expect(Pack.plantid.otherFiles == PlantIDFiles.packPaths && Pack.plantid.archives.isEmpty)
+        #expect(Pack.refphotos.otherFiles == RefPhotoFiles.packPaths && Pack.refphotos.policy == .prefetch)
     }
 
     #if DEBUG
-    @Test(arguments: ["species", "genus", "unsure"])
+    @Test(arguments: ["species", "genus", "unsure", "mainland"])
     func fakeEngineGivesEachLadderStep(mode: String) async throws {
         let engine = PlantIDEngine(source: .fake(mode))
         let image = RGBImage(width: 300, height: 300, pixels: [UInt8](repeating: 90, count: 300 * 300 * 3))
         let r = try await engine.identify(image, location: GeoPoint(longitude: 147.32, latitude: -42.88))
         #expect(r.usedLocation)
         switch (mode, r.answer) {
-        case ("species", .species), ("genus", .genus("Eucalyptus", _)), ("unsure", .notSure): break
+        case ("species", .species), ("genus", .genus("Eucalyptus", _)), ("unsure", .notSure), ("mainland", .species(8, _)): break
         default: Issue.record("\(mode): \(r.answer)")
         }
         #expect(r.candidates.count == 5)
+        if case .genus = r.answer { #expect(r.genusSpecies.count == 3) }
         #expect(r.candidates.contains { $0.nearbyRecords > 0 })
         await engine.release()
         #expect(await !engine.isLoaded)
@@ -127,6 +129,24 @@ struct PlantIDPhotoTests {
     #endif
 
     // MARK: The real model (local: the cache is gitignored)
+
+    /// The staged pack (build_packs.py plantid): the single model loads,
+    /// the credits and the model identity decode, and the Tasmania box
+    /// takes the Tasmanian-bank path.
+    @Test(.enabled(if: PlantIDModel.available(in: staged), "needs data/packs/stage-plantid (build_packs.py plantid)"))
+    func stagedPack() throws {
+        let m = try PlantIDModel(directory: Self.staged)
+        #expect(m.labels.count == 22122 && m.dimension == 1024)
+        let credits = try PlantIDCredits.load(Self.staged)
+        #expect(credits.observers.count > 100_000 && credits.photos >= credits.observers.count)
+        #expect(credits.sources?["ala"] != nil && credits.sources?["commons"] != nil)
+        let id = try #require(PlantIDModelIdentity.load(Self.staged))
+        #expect(id.id == "final-cb50-s1" && id.classes == 22122 && id.line.contains("git "))
+        let e = [Float](repeating: 0.03, count: m.dimension)
+        #expect(m.identify(embedding: e, location: GeoPoint(longitude: 151.21, latitude: -33.87)).scope == .australia)
+        #expect(m.identify(embedding: e, location: GeoPoint(longitude: 147.33, latitude: -42.88)).scope == .tasmania)
+        #expect(m.identify(embedding: e, location: nil).scope == .australia)
+    }
 
     nonisolated static let ship = repo.appending(path: "pipeline/cache/plantid/ship")
     nonisolated static let staged = repo.appending(path: "data/packs/stage-plantid/plantid")

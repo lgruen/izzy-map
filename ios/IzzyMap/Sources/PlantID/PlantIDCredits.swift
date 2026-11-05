@@ -1,19 +1,52 @@
+import IzzyKit
 import SwiftUI
 
-/// credits.json (pipeline/plantid/build_ship.py `build_credits`): every
-/// observer whose iNaturalist photos trained the head and the kNN bank.
+/// The installed model's identity: pipeline.json `model` (build_ship.py v2):
+/// run id, scripts' git commit, build date, classes, a parameter summary.
+nonisolated struct PlantIDModelIdentity: Decodable, Sendable {
+    var id: String
+    var git: String?
+    var git_clean: Bool?
+    var built: String?
+    var classes: Int?
+    var summary: String?
+
+    private struct Pipeline: Decodable { var model: PlantIDModelIdentity? }
+
+    static func load(_ dir: URL) -> PlantIDModelIdentity? {
+        (try? JSONDecoder().decode(Pipeline.self, from: Data(contentsOf: dir.appending(path: PlantIDFiles.pipeline))))?.model
+    }
+
+    /// "final-cb50-s1 · git 85d6f486d6 · 2026-11-05 · 22,122 classes"
+    var line: String {
+        [id, git.map { "git \($0)\(git_clean == false ? "+" : "")" }, built,
+         classes.map { "\($0.formatted()) classes" }].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+/// credits.json (pipeline/plantid/build_ship.py `v2_credits`): every
+/// creator whose photos trained the model (iNaturalist observers, ALA
+/// providers incl. APII photographers, Wikimedia Commons authors).
 nonisolated struct PlantIDCredits: Decodable, Sendable {
     struct Observer: Decodable, Sendable, Identifiable {
         var login: String
         var name: String?
         var photos: Int
         var licences: [String: Int]
-        var id: String { login }
+        /// "ala" / "commons"; nil = iNaturalist.
+        var source: String?
+        var id: String { "\(source ?? "inat")/\(login)" }
+    }
+
+    struct Source: Decodable, Sendable {
+        var photos: Int
+        var credited: Int?
     }
 
     var about: String?
     var photos: Int
     var licences: [String: Int]
+    var sources: [String: Source]?
     var observers: [Observer]
 
     static func load(_ dir: URL) throws -> PlantIDCredits {
@@ -33,6 +66,7 @@ struct PlantIDCreditsView: View {
     @State private var credits: PlantIDCredits?
     @State private var failed = false
     @State private var query = ""
+    @State private var identity: PlantIDModelIdentity?
 
     private var observers: [PlantIDCredits.Observer] {
         guard let credits else { return [] }
@@ -50,7 +84,7 @@ struct PlantIDCreditsView: View {
                         .foregroundStyle(DesignColor.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("plant-id-credits-headline")
-                    Text("The image model is BioCLIP 2.5 (Imageomics Institute), run on this device. IzzyMap’s classifier and its comparison photos were trained for Tasmania’s plants on photos from the iNaturalist Open Dataset; each photo © its observer under the licence shown — CC0, CC BY or CC BY-NC (non-commercial, which IzzyMap is). Photos under ND or SA licences were left out.")
+                    Text("The image model is BioCLIP 2.5 (Imageomics Institute), run on this device. IzzyMap’s classifier for Australia’s plants was trained on photos from the iNaturalist Open Dataset, the Atlas of Living Australia (including the Australian Plant Image Index, Australian National Botanic Gardens) and Wikimedia Commons; each photo © its creator under the licence shown. Non-commercial licences bind IzzyMap to non-commercial use, which it is.")
                         .font(.subheadline)
                         .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -61,10 +95,25 @@ struct PlantIDCreditsView: View {
                             .monospacedDigit()
                             .foregroundStyle(DesignColor.secondaryInk)
                     }
-                    Text("Location ranking uses iNaturalist research-grade records in Tasmania. Photo pages: inaturalist.org/photos/<id>; the per-photo list ships with the model (credits-photos.tsv.gz).")
+                    if let sources = credits?.sources {
+                        Text(sourceLine(sources))
+                            .font(.footnote)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignColor.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("Location ranking uses iNaturalist and Atlas of Living Australia records across Australia. Photo pages: inaturalist.org/photos/<id>; the per-photo list ships with the model (credits-photos.tsv.gz).")
                         .font(.footnote)
                         .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let identity {
+                        Text("Model \(identity.line)")
+                            .font(.caption2)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignColor.secondaryInk)
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("plant-id-model-identity")
+                    }
                 }
                 .padding(.vertical, 4)
             }
@@ -122,6 +171,7 @@ struct PlantIDCreditsView: View {
         .searchable(text: $query, prompt: "Find an observer")
         .task {
             guard credits == nil, case let .files(dir) = source else { failed = true; return }
+            identity = await Task.detached(priority: .utility) { PlantIDModelIdentity.load(dir) }.value
             do { credits = try await Task.detached(priority: .userInitiated) { try PlantIDCredits.load(dir) }.value } catch {
                 failed = true
             }
@@ -129,8 +179,14 @@ struct PlantIDCreditsView: View {
         .accessibilityIdentifier("plant-id-credits-screen")
     }
 
+    private func sourceLine(_ s: [String: PlantIDCredits.Source]) -> String {
+        [("inat", "iNaturalist"), ("ala", "ALA"), ("commons", "Wikimedia Commons")].compactMap { key, name in
+            s[key].map { "\(name) \($0.photos.formatted()) photos" + ($0.credited.map { " by \($0.formatted())" } ?? "") }
+        }.joined(separator: " · ")
+    }
+
     private var headline: String {
-        guard let credits else { return "Identification by BioCLIP 2.5, trained on iNaturalist photos" }
-        return "Identification by BioCLIP 2.5, trained on iNaturalist photos by \(credits.observers.count.formatted()) observers"
+        guard let credits else { return "Identification by BioCLIP 2.5, trained on photos of Australia’s plants" }
+        return "Identification by BioCLIP 2.5, trained on \(credits.photos.formatted()) photos by \(credits.observers.count.formatted()) photographers"
     }
 }

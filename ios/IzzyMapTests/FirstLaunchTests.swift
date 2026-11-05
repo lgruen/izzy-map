@@ -13,10 +13,10 @@ struct FirstLaunchTests {
         return s
     }
 
-    private let sizes: [Pack: Int] = [.vector: 400, .topo: 2000, .relief: 1300, .plantid: 700]
+    private let sizes: [Pack: Int] = [.vector: 400, .topo: 2000, .relief: 1300, .plantid: 700, .refphotos: 300]
 
     @Test func nothingToSayWhenTheCorePacksAreHere() {
-        let all = states([.vector: .installed, .topo: .installed, .relief: .installed, .plantid: .installed])
+        let all = states([.vector: .installed, .topo: .installed, .relief: .installed, .plantid: .installed, .refphotos: .installed])
         #expect(CoreArrival.of(states: all, sizes: sizes, resolved: true, canFetch: true, online: true) == nil)
         // on-demand packs never raise the chip
         var more = all
@@ -34,7 +34,7 @@ struct FirstLaunchTests {
     /// only (topo half-way at 2000 + relief at 0.1 of 1300 = 1130 of 3300 =
     /// 34 %): installed, waiting and failed packs never fold in.
     @Test func arrivingIsWeightedByBytes() throws {
-        let s = states([.vector: .installed, .topo: .downloading(0.5), .relief: .downloading(0.1)])
+        let s = states([.vector: .installed, .topo: .downloading(0.5), .relief: .downloading(0.1), .refphotos: .installed])
         let a = try #require(CoreArrival.of(states: s, sizes: sizes, resolved: true, canFetch: true, online: true))
         guard case let .arriving(f?) = a.phase else { Issue.record("\(a.phase)"); return }
         #expect(abs(f - 1130.0 / 3300) < 1e-9)
@@ -56,7 +56,7 @@ struct FirstLaunchTests {
         #expect(failed.text.hasSuffix("Retry"))
         // only the plant ID model missing: it says so, not "Maps"
         let model = try #require(CoreArrival.of(states: states([.vector: .installed, .topo: .installed, .relief: .installed,
-                                                                .plantid: .downloading(0.5)]),
+                                                                .plantid: .downloading(0.5), .refphotos: .installed]),
                                                 sizes: sizes, resolved: true, canFetch: true, online: true))
         // its OWN progress: the maps already here don't count
         #expect(model.text == "Plant ID arriving · 50\u{00A0}%")
@@ -72,7 +72,7 @@ struct FirstLaunchTests {
     /// bytes) and never moved. Nothing reporting progress shows no figure,
     /// and a pack the App Store doesn't offer raises no chip at all.
     @Test func noPhantomPercentages() throws {
-        let maps = [Pack.vector: PackState.installed, .topo: .installed, .relief: .installed]
+        let maps = [Pack.vector: PackState.installed, .topo: .installed, .relief: .installed, .refphotos: .installed]
         var asked = maps
         asked[.plantid] = .notInstalled
         let queued = try #require(CoreArrival.of(states: states(asked), sizes: sizes, resolved: true, canFetch: true, online: true))

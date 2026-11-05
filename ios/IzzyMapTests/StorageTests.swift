@@ -258,16 +258,17 @@ struct StorageTests {
     /// The core section folds into one row only while all four are simply
     /// here; plant ID's bytes are its own gauge segment.
     @Test func coreFoldsOnlyWhenSettled() {
-        let settled = StorageModel(packs: PackStore(fake: FakePacks(spec: "vector,topo,relief,plantid")), trees: nil)
+        let settled = StorageModel(packs: PackStore(fake: FakePacks(spec: "vector,topo,relief,plantid,refphotos")), trees: nil)
         settled.refreshPacks()
         #expect(settled.coreAllHere)
-        #expect(settled.coreBytes == [Pack.vector, .topo, .relief, .plantid].reduce(0) { $0 + PackSizes.nominal[$1]! })
-        #expect(settled.gauge.segments.first { $0.kind == .izzy(.plantID) }?.bytes == Int64(PackSizes.nominal[.plantid]!))
+        #expect(settled.coreBytes == [Pack.vector, .topo, .relief, .plantid, .refphotos].reduce(0) { $0 + PackSizes.nominal[$1]! })
+        #expect(settled.gauge.segments.first { $0.kind == .izzy(.plantID) }?.bytes
+            == Int64(PackSizes.nominal[.plantid]! + PackSizes.nominal[.refphotos]!))
         let mixed = StorageModel(packs: PackStore(fake: FakePacks(spec: "mixed")), trees: nil)
         #expect(!mixed.coreAllHere)
         #expect(mixed.status(.plantid) == .downloading(0.83))
         // an update unfolds it too
-        #expect(!StorageModel(packs: PackStore(fake: FakePacks(spec: "vector,topo=updating:0.2,relief,plantid")), trees: nil).coreAllHere)
+        #expect(!StorageModel(packs: PackStore(fake: FakePacks(spec: "vector,topo=updating:0.2,relief,plantid,refphotos")), trees: nil).coreAllHere)
     }
 
     @Test func stopDuringADownloadStaysStopped() async throws {

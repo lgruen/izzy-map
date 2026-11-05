@@ -58,7 +58,7 @@ final class StatesTests: XCTestCase {
     /// Every core pack here: no chip. Opening Layers dismisses the welcome.
     @MainActor
     func testNoChipOnceTheMapsAreHereAndLayersDismissesTheWelcome() {
-        let app = launch(["-welcomeSeen", "NO", "-fakePacks", "vector,topo,relief,plantid"], data: false)
+        let app = launch(["-welcomeSeen", "NO", "-fakePacks", "vector,topo,relief,plantid,refphotos"], data: false)
         XCTAssertTrue(app.descendants(matching: .any)["welcome"].waitForExistence(timeout: patience(5)))
         XCTAssertFalse(app.buttons["maps-arriving"].exists)
         app.buttons["layers-button"].tap()
@@ -91,7 +91,7 @@ final class StatesTests: XCTestCase {
         if ProcessInfo.processInfo.environment["SHOT_LANDSCAPE"] == "1" {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
-        let core = "vector,topo,relief,plantid"
+        let core = "vector,topo,relief,plantid,refphotos"
         let state = Self.camera(-42.0, 146.6, 7.2)
         let hobart = Self.camera(-42.905, 147.245, 14)
         let hobart11 = Self.camera(-42.86, 147.3, 11)
@@ -107,7 +107,7 @@ final class StatesTests: XCTestCase {
             ("first-launch-z11", ["-fakePacks", "vector,topo=downloading:0.62,relief=downloading:0.1",
                                   "-fakePackSeconds", "900"], hobart11, 5, nil),
             ("maps-waiting-offline", ["-fakePacks", "vector,topo=paused,relief"], hobart11, 4, nil),
-            ("maps-failed", ["-fakePacks", "vector,topo=failed,relief,plantid"], hobart11, 4, nil),
+            ("maps-failed", ["-fakePacks", "vector,topo=failed,relief,plantid,refphotos"], hobart11, 4, nil),
             ("maps-arriving-storage", ["-fakePacks", "vector,topo=downloading:0.62,relief=downloading:0.1",
                                        "-fakePackSeconds", "900"], hobart11, 3, { app in
                 app.buttons["maps-arriving"].tap()
@@ -138,7 +138,7 @@ final class StatesTests: XCTestCase {
             ("search-empty", ["-fakePacks", core, "-debugSearch", "Mt Welingtonn"], hobart11, 5, nil),
             ("areas-empty", ["-fakePacks", core, "-resetAreas", "YES", "-openLayers", "YES", "-openStorage", "YES",
                              "-storageScroll", "areas"], hobart11, 5, nil),
-            ("storage-pack-failed", ["-fakePacks", "vector,topo=failed,relief,plantid=paused", "-openLayers", "YES",
+            ("storage-pack-failed", ["-fakePacks", "vector,topo=failed,relief,refphotos,plantid=paused", "-openLayers", "YES",
                                      "-openStorage", "YES"], hobart11, 5, nil),
             // Storage (2026-11-04 redesign): the chip's target row, and the
             // settled screen (core folded; failed / downloading / paused)
@@ -146,10 +146,10 @@ final class StatesTests: XCTestCase {
                                      "-openStorage", "YES", "-storageScroll", "pack-plantid"], hobart11, 4, nil),
             ("storage-settled", ["-fakePacks", "settled", "-fakePackSeconds", "900", "-openLayers", "YES",
                                  "-openStorage", "YES"], hobart11, 4, nil),
-            ("plantid-model-unpublished", ["-fakePacks", "vector,topo,relief,plantid=unpublished",
+            ("plantid-model-unpublished", ["-fakePacks", "vector,topo,relief,refphotos,plantid=unpublished",
                                            "-debugPlantID", "YES"], hobart11, 5, nil),
             ("plantid-model-missing", ["-fakePacks", "vector,topo,relief", "-debugPlantID", "YES"], hobart11, 5, nil),
-            ("plantid-model-arriving", ["-fakePacks", "vector,topo,relief,plantid=downloading:0.42",
+            ("plantid-model-arriving", ["-fakePacks", "vector,topo,relief,refphotos,plantid=downloading:0.42",
                                         "-fakePackSeconds", "900", "-debugPlantID", "YES"], hobart11, 5, nil),
             ("location-denied", ["-fakePacks", core, "-debugNotice", "denied"], hobart11, 4, nil),
             ("location-nofix", ["-fakePacks", core, "-debugNotice", "noFix"], hobart11, 4, nil),

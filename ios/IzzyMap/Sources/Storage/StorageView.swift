@@ -695,7 +695,7 @@ private struct LayerThumb: View {
     var body: some View {
         ZStack {
             Rectangle().fill(.fill.tertiary)
-            Image(systemName: pack == .plantid ? "leaf" : "map")
+            Image(systemName: pack == .plantid || pack == .refphotos ? "leaf" : "map")
                 .foregroundStyle(DesignColor.secondaryInk)
         }
         .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)

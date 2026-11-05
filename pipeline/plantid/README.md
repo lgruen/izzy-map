@@ -1217,8 +1217,28 @@ $E pipeline/plantid/provenance.py section    # then, when the v2 files are stage
 ```
 
 The exact argv of the shipped build is in `provenance.steps`; the command list
-above is the template. The v2 ship step (writing the head / prior / ladder into
-`ship/`) is not written yet — it lands with the app scorer change.
+above is the template. Ship step: `V2DATA=$D $E pipeline/plantid/build_ship.py v2`
+(records "v2 ship", runs `provenance.py section` + `ship`, writes the `model`
+identity into pipeline.json; see "Single model (v2): shipping" below).
+
+### Single model (v2): shipping (2026-11-05)
+
+`build_ship.py v2` writes the pack files from run `final-cb50-s1` with every
+parameter read from the evaluation outputs (asserted to name the same run):
+τ-norm 0.5 baked into the weights, int8 rows × per-row scale + fp32 bias (the
+19 merged twins at −1e4), prior = `prior-ship-inatall+ala-noinat.bin` with
+log1p counts, σ 10 km, α 64, λ 1.0, T 1.532 (eval.json — NB the README's
+v2fix rows used √counts / λ 0.75; the final run's sweep chose log1p / λ 1.0);
+inside the Tasmania box tas_gap F5: the Tasmanian bank's kNN, ω 2.0, floor −30,
+and the prior re-tuned (√counts, σ 5 km, α 16, λ 1.0); ladder v3 species 0.60 /
+0.50 / 0.50 / 0.75 by training-photo bucket of the named class, genus 0.55,
+floor 0, congener rule off. No location = K 0 (the country-wide frequency).
+Check of the WRITTEN files with the leak-free eval prior (`v2-check.json`):
+A-test natural top-1 93.16 main path (eval 93.18) / 94.80 with the box (tas_gap
+F5 94.79); int8 vs fp32 head top-1 agreement 99.8 %. Not re-tuned: the ladder
+inside the box (stated-wrong natural 3.0 % vs 2.5 % main on A-test).
+Pack 0.81 GB (encoder 0.63, bank 85 MB, head 23 MB, prior 25 MB, labels 2.8 MB,
+credits 13 MB + 29 MB per-photo list for 3,897,289 photos by 179,651 creators).
 
 ## Licences
 

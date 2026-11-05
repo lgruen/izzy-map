@@ -74,9 +74,12 @@ def check_app_mirror(table: list[dict]) -> None:
     app = {}
     for name, archives in re.findall(r"case \.(\w+): \[([^\]]*)\]", body):
         app[raw.get(name, name)] = sorted(file_of[a] for a in re.findall(r"\.(\w+)", archives))
-    other = re.search(r"static let packPaths = \[(.*?)\]", packs_swift, re.S)
-    if other:
-        app["plantid"] = sorted(app.get("plantid", []) + re.findall(r'"([^"]+)"', other.group(1)))
+    # packs whose files aren't map archives: `enum <X>Files { … static let packPaths = [ … ] }`
+    for enum_name, pack_id in (("PlantIDFiles", "plantid"), ("RefPhotoFiles", "refphotos")):
+        block = re.search(rf"enum {enum_name} \{{(.*?)\n\}}", packs_swift, re.S)
+        other = block and re.search(r"static let packPaths = \[(.*?)\]", block.group(1), re.S)
+        if other:
+            app[pack_id] = sorted(app.get(pack_id, []) + re.findall(r'"([^"]+)"', other.group(1)))
     want = {p["id"]: sorted(p["files"]) for p in table}
     if app != want:
         diff = {k: (want.get(k), app.get(k)) for k in set(app) | set(want) if want.get(k) != app.get(k)}

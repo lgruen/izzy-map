@@ -1,0 +1,86 @@
+{
+"version": 1,
+"count": 9,
+"labels": [
+{
+"name": "Alpha prima",
+"genus": "Alpha",
+"family": "Alphaaceae",
+"native": true,
+"photos": 120,
+"inat": 1000,
+"ship": 3
+},
+{
+"name": "Alpha secunda",
+"genus": "Alpha",
+"family": "Alphaaceae",
+"native": true,
+"photos": 30,
+"inat": 1001,
+"ship": 0,
+"common": "second alpha"
+},
+{
+"name": "Alpha tertia",
+"genus": "Alpha",
+"family": "Alphaaceae",
+"native": true,
+"photos": 4,
+"inat": 1002,
+"ship": 5
+},
+{
+"name": "Beta una",
+"genus": "Beta",
+"family": "Betaaceae",
+"native": true,
+"photos": 0,
+"inat": 1003
+},
+{
+"name": "Beta duo",
+"genus": "Beta",
+"family": "Betaaceae",
+"native": true,
+"photos": 60,
+"inat": 1004,
+"ship": 1
+},
+{
+"name": "Gamma sola",
+"genus": "Gamma",
+"family": "Gammaaceae",
+"native": true,
+"photos": 9,
+"inat": 1005,
+"ship": 4
+},
+{
+"name": "Delta borealis",
+"genus": "Delta",
+"family": "Deltaaceae",
+"native": true,
+"photos": 55,
+"inat": 1006
+},
+{
+"name": "Delta australis",
+"genus": "Delta",
+"family": "Deltaaceae",
+"native": true,
+"photos": 2,
+"inat": 1007,
+"ship": 2
+},
+{
+"name": "Alpha gemina",
+"genus": "Alpha",
+"family": "Alphaaceae",
+"native": true,
+"photos": 0,
+"inat": 1008,
+"merged_into": 0
+}
+]
+}

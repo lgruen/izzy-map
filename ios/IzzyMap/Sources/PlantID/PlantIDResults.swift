@@ -73,6 +73,18 @@ struct PlantIDResults: View {
         return nil
     }
 
+    /// The common name as a headline: the UN profile's, else the label table's.
+    private func headlineCommon(_ i: Int) -> String? {
+        plant(i)?.headlineCommon ?? label(i)?.common.flatMap(CommonName.headline)
+    }
+
+    /// The class's reference photo (the `refphotos` pack), if any.
+    private func refPhoto(_ i: Int) -> PlantIDRefPhoto? { PlantIDRefPhotos.shared.photo(for: i, name: label(i)?.name) }
+
+    private func threshold(_ i: Int) -> Double {
+        (result.candidates + result.genusSpecies).first { $0.label == i }?.threshold ?? PlantIDResult.defaultThreshold
+    }
+
     private func route(_ i: Int) -> PlantIDRoute {
         if let p = plant(i) { return .plant(id: p.id, key: p.species ?? p.name) }
         return .noProfile(label: i)
@@ -97,7 +109,7 @@ struct PlantIDResults: View {
                 TabView(selection: $page) {
                     ForEach(Array(result.candidates.enumerated()), id: \.offset) { i, c in
                         Button { open(route(c.label)) } label: {
-                            CandidatePhoto(plant: plant(c.label), side: s)
+                            CandidatePhoto(plant: plant(c.label), label: label(c.label), ref: refPhoto(c.label), side: s)
                         }
                         .buttonStyle(.plain)
                         .hoverEffect(.highlight)
@@ -132,6 +144,12 @@ struct PlantIDResults: View {
                     .frame(width: s)
                     .offset(x: s + 8)
             }
+            // the reference photo's credit, under it
+            if result.candidates.indices.contains(current), let ref = refPhoto(result.candidates[current].label) {
+                RefPhotoCredit(photo: ref)
+                    .frame(width: s, alignment: .leading)
+                    .offset(x: s + 8)
+            }
         }
     }
 
@@ -148,12 +166,15 @@ struct PlantIDResults: View {
                         .foregroundStyle(DesignColor.ink)
                     // a headline: first letter up ("Christmas bells");
                     // the candidate rows below keep UN's lowercase
-                    if let common = plant(i)?.headlineCommon {
+                    if let common = headlineCommon(i) {
                         Text(common)
                             .font(.title3)
                             .foregroundStyle(DesignColor.ink)
                     }
-                    ConfidenceBar(p: p, emphasis: true)
+                    if plant(i) == nil {
+                        NotInGuideLine(label: l)
+                    }
+                    ConfidenceBar(p: p, threshold: threshold(i), emphasis: true)
                         .padding(.top, 4)
                 }
             case let .genus(g, p):
@@ -161,16 +182,18 @@ struct PlantIDResults: View {
                     .font(.title2)
                     .fontDesign(.serif)
                     .foregroundStyle(DesignColor.ink)
-                Text("No single species reaches 50\u{00A0}%, but together the \(g) candidates make \(Self.percent(p)).")
+                Text("No single species is sure enough, but together the \(g) candidates make \(Self.percent(p)). The likeliest:")
                     .font(.subheadline)
                     .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
+                GenusTop(species: result.genusSpecies, label: label, plant: plant, ref: refPhoto) { open(route($0)) }
+                    .padding(.top, 4)
             case .notSure:
                 Text("Not sure — here are the closest matches")
                     .font(.title2)
                     .fontDesign(.serif)
                     .foregroundStyle(DesignColor.ink)
-                Text("No species or genus reaches 50\u{00A0}%. Framing one leaf, flower or fruit more closely often helps.")
+                Text("No species or genus is sure enough. Framing flowers or a whole branch more closely often helps.")
                     .font(.subheadline)
                     .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
@@ -181,12 +204,13 @@ struct PlantIDResults: View {
     }
 
     private var locationLine: some View {
+        let km = result.scope == .tasmania ? 5 : 10
         let text: String = switch session.place {
-        case .photo: result.usedLocation ? "Location from the photo: plants recorded within 5 km rank higher."
-            : "The photo was taken outside Tasmania’s records: ranked on the photo alone."
-        case .current: result.usedLocation ? "Using where you are now: plants recorded within 5 km rank higher."
-            : "You’re outside Tasmania’s records: ranked on the photo alone."
-        case .none: "No location: ranked on the photo alone."
+        case .none: "No location: ranked on the photo and how common each plant is across Australia."
+        case .photo: result.usedLocation ? "Location from the photo: plants recorded within about \(km) km rank higher."
+            : "The photo was taken outside Australia’s records: ranked on the photo alone."
+        case .current: result.usedLocation ? "Using where you are now: plants recorded within about \(km) km rank higher."
+            : "You’re outside Australia’s records: ranked on the photo alone."
         }
         return Label {
             Text(text).fixedSize(horizontal: false, vertical: true)
@@ -208,9 +232,9 @@ struct PlantIDResults: View {
                 .foregroundStyle(DesignColor.ink)
                 .accessibilityAddTraits(.isHeader)
             ForEach(Array(genera.enumerated()), id: \.element.id) { i, g in
-                GenusBar(share: g, labels: session.labels, showsThreshold: i == 0)
+                GenusBar(share: g, labels: session.labels, threshold: result.ladder.genus, showsThreshold: i == 0)
             }
-            Text("A genus bar is its species’ shares added up; the line marks 50\u{00A0}%, where IzzyMap names a species or genus.")
+            Text(ladderCaption)
                 .font(.caption)
                 .foregroundStyle(DesignColor.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
@@ -230,7 +254,8 @@ struct PlantIDResults: View {
                 .accessibilityAddTraits(.isHeader)
             ForEach(Array(result.candidates.enumerated()), id: \.element.id) { i, c in
                 Button { open(route(c.label)) } label: {
-                    CandidateRow(candidate: c, label: label(c.label), plant: plant(c.label), showing: i == page)
+                    CandidateRow(candidate: c, label: label(c.label), plant: plant(c.label), ref: refPhoto(c.label),
+                                 showing: i == page, nearbyKm: result.nearbyKm)
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -263,6 +288,13 @@ struct PlantIDResults: View {
         .padding(.top, 8)
     }
 
+    private var ladderCaption: String {
+        let t = result.ladder
+        let lo = t.species.min() ?? 0.5, hi = t.species.max() ?? 0.5
+        let species = lo == hi ? Self.percent(lo) : "\(Int((lo * 100).rounded()))–\(Self.percent(hi))"
+        return "A genus bar is its species’ shares added up; the line marks \(Self.percent(t.genus)), where IzzyMap names a genus. A species is named at \(species) — the more photos the model learnt it from, the higher its line."
+    }
+
     static func percent(_ p: Double) -> String {
         let v = p * 100
         if v >= 99.5 { return ">\u{00A0}99\u{00A0}%" }
@@ -272,29 +304,32 @@ struct PlantIDResults: View {
 }
 
 /// One candidate's UN photo, square, at her crop's size: the large file
-/// (thumbnails are 150 px), the growth-form pictogram until it arrives or
-/// when there is none.
+/// (thumbnails are 150 px), the growth-form pictogram until it arrives —
+/// and for a plant the guide doesn't have, its name set as a plate.
 struct CandidatePhoto: View {
     let plant: Plant?
+    var label: PlantIDLabel?
+    /// The reference photo (refphotos pack): shown first when there is one.
+    var ref: PlantIDRefPhoto?
     let side: CGFloat
     @Environment(\.displayScale) private var scale
     @State private var image: UIImage?
 
     var body: some View {
+        if let ref {
+            RefPhotoImage(photo: ref, side: side)
+                .overlay { Rectangle().strokeBorder(DesignColor.keyline.opacity(0.5), lineWidth: 0.5) }
+        } else {
+            guidePhoto
+        }
+    }
+
+    private var guidePhoto: some View {
         ZStack {
             if let plant {
                 FormPlaceholder(shape: plant.silhouette)
             } else {
-                Rectangle().fill(Color(uiColor: .tertiarySystemFill))
-                    .overlay {
-                        VStack(spacing: 6) {
-                            Image(systemName: "leaf")
-                                .font(.title)
-                            Text("No photo")
-                                .font(.caption)
-                        }
-                        .foregroundStyle(DesignColor.secondaryInk)
-                    }
+                NamePlate(label: label, side: side)
             }
             if let image {
                 Image(uiImage: image)
@@ -322,6 +357,8 @@ struct CandidatePhoto: View {
 /// p as an ink bar with the 50 % line, the percentage beside it.
 struct ConfidenceBar: View {
     let p: Double
+    /// Where the ladder names it (0.5 in Tasmania).
+    var threshold = 0.5
     var emphasis = false
 
     var body: some View {
@@ -332,7 +369,7 @@ struct ConfidenceBar: View {
                     Rectangle().fill(DesignColor.keyline.opacity(0.25))
                     Rectangle().fill(DesignColor.ink).frame(width: w * min(max(p, 0), 1))
                     ThresholdMark(height: geo.size.height)
-                        .offset(x: w * 0.5 - 0.75)
+                        .offset(x: w * threshold - 0.75)
                 }
             }
             .frame(height: emphasis ? 8 : 5)
@@ -352,6 +389,7 @@ struct ConfidenceBar: View {
 struct GenusBar: View {
     let share: PlantIDResult.GenusShare
     let labels: [PlantIDLabel]
+    var threshold = 0.5
     let showsThreshold: Bool
 
     private static let tones: [Double] = [1, 0.62, 0.42, 0.3, 0.22, 0.16]
@@ -380,12 +418,12 @@ struct GenusBar: View {
             if showsThreshold {
                 // the threshold's label, over the hairline
                 GeometryReader { geo in
-                    Text("50\u{00A0}%")
+                    Text(PlantIDResults.percent(threshold))
                         .font(.caption2)
                         .monospacedDigit()
                         .foregroundStyle(DesignColor.secondaryInk)
                         .fixedSize()
-                        .position(x: geo.size.width * 0.5, y: 7)
+                        .position(x: geo.size.width * threshold, y: 7)
                 }
                 .frame(height: 14)
                 .accessibilityHidden(true)
@@ -402,7 +440,7 @@ struct GenusBar: View {
                         }
                     }
                     ThresholdMark(height: geo.size.height)
-                        .offset(x: w * 0.5 - 0.75)
+                        .offset(x: w * threshold - 0.75)
                 }
             }
             .frame(height: 12)
@@ -425,18 +463,20 @@ struct CandidateRow: View {
     let candidate: PlantIDResult.Candidate
     let label: PlantIDLabel?
     let plant: Plant?
+    var ref: PlantIDRefPhoto?
     let showing: Bool
+    var nearbyKm = 10.0
     @ScaledMetric(relativeTo: .body) private var thumb = 52
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Group {
-                if let plant {
+                if let ref {
+                    RefPhotoImage(photo: ref, side: thumb)
+                } else if let plant {
                     PlantThumb(plant: plant, side: thumb)
                 } else {
-                    Rectangle().fill(Color(uiColor: .tertiarySystemFill))
-                        .overlay { Image(systemName: "leaf").foregroundStyle(DesignColor.secondaryInk) }
-                        .frame(width: thumb, height: thumb)
+                    NamePlate(label: label, side: thumb)
                 }
             }
             .overlay(alignment: .leading) {
@@ -449,19 +489,18 @@ struct CandidateRow: View {
                     .fontDesign(.serif)
                     .foregroundStyle(DesignColor.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                if let common = plant?.common {
+                if let common = plant?.common ?? label?.common {
                     Text(common)
                         .font(.subheadline)
                         .foregroundStyle(DesignColor.secondaryInk)
-                } else if plant == nil {
-                    Text("No Understorey Network profile")
-                        .font(.subheadline)
-                        .foregroundStyle(DesignColor.secondaryInk)
                 }
-                ConfidenceBar(p: candidate.p)
+                if plant == nil, let label {
+                    NotInGuideLine(label: label, compact: true)
+                }
+                ConfidenceBar(p: candidate.p, threshold: candidate.threshold)
                     .padding(.top, 2)
                 if candidate.nearbyRecords > 0 {
-                    Label("Recorded within 5 km", systemImage: "mappin.and.ellipse")
+                    Label("Recorded within \(Int(nearbyKm)) km", systemImage: "mappin.and.ellipse")
                         .font(.caption)
                         .foregroundStyle(DesignColor.secondaryInk)
                         .accessibilityIdentifier("plant-id-nearby")
@@ -491,5 +530,117 @@ struct ThresholdMark: View {
             Rectangle().fill(DesignColor.ink).frame(width: 1.5, height: 4)
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// A plant the guide has no photo of: its name set as a plate — the genus
+/// initial on a small tile, the full name (and family) on a large one.
+/// Typographic and quiet, never a broken image.
+struct NamePlate: View {
+    let label: PlantIDLabel?
+    let side: CGFloat
+
+    private var initial: String { String((label?.genusName ?? "?").prefix(1)) }
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(Color(uiColor: .tertiarySystemFill))
+            if side >= 120, let label {
+                VStack(spacing: 8) {
+                    Image(systemName: "leaf")
+                        .font(.title3)
+                        .foregroundStyle(DesignColor.secondaryInk)
+                    Text(BotanicalNames.species(label.name))
+                        .font(.title3)
+                        .fontDesign(.serif)
+                        .foregroundStyle(DesignColor.ink)
+                        .multilineTextAlignment(.center)
+                        .minimumScaleFactor(0.7)
+                    if let family = label.family {
+                        Text(family)
+                            .font(.caption)
+                            .foregroundStyle(DesignColor.secondaryInk)
+                    }
+                    Text("No photo in the guide")
+                        .font(.caption2)
+                        .foregroundStyle(DesignColor.secondaryInk)
+                        .padding(.top, 2)
+                }
+                .padding(12)
+            } else {
+                Text(initial)
+                    .font(.system(size: side * 0.5, design: .serif))
+                    .italic()
+                    .foregroundStyle(DesignColor.secondaryInk)
+            }
+        }
+        .frame(width: side, height: side)
+        .accessibilityHidden(true)
+    }
+}
+
+/// For a plant with no Understorey Network profile (most of the 22,000
+/// Australian natives): its family and that fact, said once, quietly —
+/// "Myrtaceae · not in the guide" in a row; family, then "Not in the
+/// Understorey Network guide" under a headline.
+struct NotInGuideLine: View {
+    let label: PlantIDLabel
+    var compact = false
+
+    var body: some View {
+        Group {
+            if compact {
+                Text([label.family, "not in the guide"].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    if let family = label.family {
+                        Text(family).font(.subheadline)
+                    }
+                    Text("Not in the Understorey Network guide").font(.footnote)
+                }
+            }
+        }
+        .foregroundStyle(DesignColor.secondaryInk)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("plant-id-not-in-guide")
+    }
+}
+
+/// A genus answer's likeliest species: three tiles — the reference photo
+/// (else the guide's photo or a name plate), the name, its share. A tap
+/// opens the species.
+struct GenusTop: View {
+    let species: [PlantIDResult.Candidate]
+    let label: (Int) -> PlantIDLabel?
+    let plant: (Int) -> Plant?
+    let ref: (Int) -> PlantIDRefPhoto?
+    let open: (Int) -> Void
+    @ScaledMetric(relativeTo: .body) private var side = 92
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ForEach(species) { c in
+                Button { open(c.label) } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        CandidatePhoto(plant: plant(c.label), label: label(c.label), ref: ref(c.label), side: side)
+                        Text(BotanicalNames.species(label(c.label)?.name ?? "?"))
+                            .font(.footnote)
+                            .fontDesign(.serif)
+                            .foregroundStyle(DesignColor.ink)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(PlantIDResults.percent(c.p))
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignColor.secondaryInk)
+                    }
+                    .frame(width: side, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+            }
+        }
+        .accessibilityIdentifier("plant-id-genus-top")
     }
 }

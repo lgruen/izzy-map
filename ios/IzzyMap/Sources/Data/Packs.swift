@@ -5,7 +5,7 @@ import Foundation
 /// decision): the raw value is the asset-pack ID in App Store Connect, the
 /// files are the archives' `fileName`s at the pack root.
 nonisolated enum Pack: String, CaseIterable, Sendable, Identifiable {
-    case vector, topo, relief, plantid, aerial, tasmap
+    case vector, topo, relief, plantid, refphotos, aerial, tasmap
     case season2020 = "season-2020", season2021 = "season-2021", season2022 = "season-2022"
     case season2023 = "season-2023", season2024 = "season-2024", season2025 = "season-2025"
     case season2026 = "season-2026"
@@ -25,7 +25,7 @@ nonisolated enum Pack: String, CaseIterable, Sendable, Identifiable {
     var policy: Policy {
         switch self {
         case .vector: .essential
-        case .topo, .relief, .plantid: .prefetch
+        case .topo, .relief, .plantid, .refphotos: .prefetch
         default: .onDemand
         }
     }
@@ -37,6 +37,7 @@ nonisolated enum Pack: String, CaseIterable, Sendable, Identifiable {
         case .topo: [.topo]
         case .relief: [.relief]
         case .plantid: []
+        case .refphotos: []
         case .aerial: [.aerial]
         case .tasmap: [.tasmap]
         case .season2020: [.season2020]
@@ -55,6 +56,7 @@ nonisolated enum Pack: String, CaseIterable, Sendable, Identifiable {
     var otherFiles: [String] {
         switch self {
         case .plantid: PlantIDFiles.packPaths
+        case .refphotos: RefPhotoFiles.packPaths
         default: []
         }
     }
@@ -66,17 +68,18 @@ nonisolated enum Pack: String, CaseIterable, Sendable, Identifiable {
 
 /// The `plantid` pack's files (pipeline/build_packs.py stages them from
 /// pipeline/cache/plantid/ship: the 8-bit encoder compiled to .mlmodelc,
-/// the scorer's tables and the training-photo credits). They sit in a
+/// the single model's tables (IzzyKit `PlantIDModel.files`), the
+/// Tasmanian photo bank and the training-photo credits). They sit in a
 /// `plantid/` folder: every pack shares ONE namespace on the device.
 nonisolated enum PlantIDFiles {
     static let folder = "plantid"
     /// The image encoder, compiled (`xcrun coremlcompiler`): Core ML loads
     /// it in place — no on-device compile, no second 0.6 GB copy.
     static let encoder = "PlantEncoder-w8.mlmodelc"
-    static let head = "head.bin"
+    /// The single model's head: its presence marks a staged pack (DEBUG `-dataDir`).
+    static let head = "v2-head.bin"
+    /// The Tasmanian photo bank (the model's Tasmania-box term).
     static let bank = "bank-int8.bin"
-    static let prior = "prior.bin"
-    static let labels = "labels.json"
     static let pipeline = "pipeline.json"
     static let credits = "credits.json"
     static let photoCredits = "credits-photos.tsv.gz"
@@ -89,13 +92,34 @@ nonisolated enum PlantIDFiles {
 
     static let packPaths = [
         "plantid/PlantEncoder-w8.mlmodelc/",
-        "plantid/head.bin",
         "plantid/bank-int8.bin",
-        "plantid/prior.bin",
-        "plantid/labels.json",
         "plantid/pipeline.json",
         "plantid/credits.json",
         "plantid/credits-photos.tsv.gz",
+        "plantid/v2-head.bin",
+        "plantid/v2-prior.bin",
+        "plantid/v2-labels.json",
+    ]
+}
+
+/// The `refphotos` pack (prefetch): one reference photo per plant-ID class
+/// in a `refphotos/` folder with its `index.json` (file, licence,
+/// attribution; pipeline/plantid/build_refphotos_v2.py). Until it has
+/// arrived Identify shows a placeholder.
+nonisolated enum RefPhotoFiles {
+    static let folder = "refphotos"
+    static let index = "index.json"
+
+    /// Where a developer's photos sit (DEBUG `-dataDir` runs): the staged
+    /// pack, else the pipeline's output beside `data/`.
+    static func staged(in data: URL) -> [URL] {
+        [data.appending(path: "packs/stage-refphotos/\(folder)", directoryHint: .isDirectory),
+         data.appending(path: "../pipeline/cache/plantid/refphotos/pack-v2/\(folder)", directoryHint: .isDirectory),
+         data.appending(path: "../pipeline/cache/plantid/refphotos/pack/\(folder)", directoryHint: .isDirectory)]
+    }
+
+    static let packPaths = [
+        "refphotos/",
     ]
 }
 

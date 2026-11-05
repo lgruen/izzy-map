@@ -24,6 +24,20 @@ enum PackDiagnostics {
         for entry in store.catalogueLog { lines.append("catalogue: \(entry)") }
         lines.append("plant ID folder: \(store.plantIDDirectory?.path(percentEncoded: false) ?? "none")")
         lines.append("plant ID source: \(PlantIDSession.source(packs: store).map { "\($0)" } ?? "none")")
+        if case let .files(dir)? = PlantIDSession.source(packs: store) {
+            let id = await Task.detached { PlantIDModelIdentity.load(dir) }.value
+            lines.append("plant ID model: \(id.map { "\($0.line)\($0.summary.map { " · \($0)" } ?? "")" } ?? "no pipeline.json model block")")
+        }
+        if let dir = PlantIDRefPhotos.locate(packs: store) {
+            let index = await Task.detached {
+                try? JSONDecoder().decode(PlantIDRefIndex.self, from: Data(contentsOf: dir.appending(path: RefPhotoFiles.index)))
+            }.value
+            let modified = (try? dir.appending(path: RefPhotoFiles.index).resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate.map { $0.formatted(.iso8601.year().month().day()) }
+            lines.append("reference photos: \(index.map { "\($0.photos.count.formatted()) species with a photo · built \($0.built ?? modified ?? "?")" } ?? "index.json unreadable") · \(dir.path(percentEncoded: false))")
+        } else {
+            lines.append("reference photos: none")
+        }
         lines.append(contentsOf: queueLines(store))
         let system = store.usesBackgroundAssets
         for pack in Pack.allCases {

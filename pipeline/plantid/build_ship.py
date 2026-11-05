@@ -18,6 +18,11 @@ Subcommands (run in order; each is resumable / cheap to repeat):
   bench      load time + one prediction (run under /usr/bin/time -l by
              `report` for the peak memory footprint).
   report     encoder variants end to end + sizes/timings → ship/results.json.
+  v2         the single model (README "Single model (v2)", run V2_RUN):
+             v2-head.bin, v2-prior.bin, v2-labels.json, credits for every
+             training photo, pipeline.json "v2" + provenance, then a check
+             of the written files against the evaluation (eval env with
+             V2DATA=…/data-final.npz; ~3 min).
   fixture    numbers-only test fixtures for the Swift scorer/preprocessing
              (ios/IzzyKit/Tests/Fixtures/plantid-*; needs only numpy,
              pyarrow, pillow: `uv run --with numpy --with pyarrow --with
@@ -41,6 +46,7 @@ File format of every *.bin here ("IZPL" blob): little-endian
   that file's parameters.
 """
 import argparse
+import collections
 import glob
 import gzip
 import hashlib
@@ -1149,13 +1155,13 @@ def synthetic_rgb(w, h):
 def cmd_fixture(a):
     """Test fixtures for the Swift port (numbers only — never a photo):
 
-    - plantid-mini/ + plantid-mini.json: a tiny synthetic model (6 labels,
-      8 dims; int8, fp16-with-weights and head-only banks; a prior near
-      Hobart) and Ship's log p for 12 embeddings — runs in CI.
-    - plantid-real.json: N test-photo embeddings from the shipped w8 Core ML
-      encoder (ship/eval/coreml-w8), location rounded to 3 dp (some
-      without), and Ship's top 10 + ladder with bank-int8 — the Swift test
-      reads the real files from ship/ and skips when they're absent.
+    - plantid-mini/bank-int8.bin: a tiny synthetic Tasmanian photo bank (6
+      labels, 8 dims), the Tasmania-box term of the mini single model.
+    - plantid-mini/v2-* + plantid-v2-mini.json: a 9-class single model and
+      V2Ship's log p / ladder for 14 embeddings — runs in CI.
+    - plantid-v2-real.json: w8 Core ML embeddings of test photos (Tasmania,
+      mainland, eucalypts; some without a location) and V2Ship's top 10 +
+      ladder on ship/ — the Swift test skips when the files are absent.
     - plantid-preprocess.{json,bin}: Pillow's resize + centre crop of a
       synthetic image (whole, and a square crop), uint8 224×224×3 each."""
     from PIL import Image
@@ -1163,17 +1169,12 @@ def cmd_fixture(a):
     os.makedirs(FIX, exist_ok=True)
     rng = np.random.default_rng(7)
 
-    # ---- mini model
+    # ---- mini Tasmanian bank (its query centre goes into the mini v2 head)
     md = os.path.join(FIX, "plantid-mini")
     os.makedirs(md, exist_ok=True)
     C, D = 6, 8
-    genus = ["Alpha", "Alpha", "Alpha", "Beta", "Beta", "Gamma"]
-    names = ["Alpha prima", "Alpha secunda", "Alpha tertia", "Beta una", "Beta duo", "Gamma sola"]
     W = rng.normal(size=(C, D)).astype(np.float16)
     mu = (0.1 * rng.normal(size=D)).astype(np.float32)
-    write_blob(os.path.join(md, "head.bin"), {"kind": "plantid-head", "version": 1, "labels": C,
-                                              "temp": 7.5, "bias": None},
-               {"weight": W, "centre": mu})
     protos = unit(W.astype(np.float32))
     rows, labs = [], []
     for c in range(C):
@@ -1188,74 +1189,6 @@ def cmd_fixture(a):
     write_blob(os.path.join(md, "bank-int8.bin"),
                {"kind": "plantid-bank", "variant": "int8", "rows": len(X), "scoring": sc},
                {"vectors": q8, "scale": scale.astype(np.float16), "labels": labs})
-    write_blob(os.path.join(md, "bank-fp16w.bin"),
-               {"kind": "plantid-bank", "variant": "proto", "rows": len(X),
-                "scoring": {**sc, "k": 7, "rho": 0.5, "omega": 1.0}},
-               {"vectors": X.astype(np.float16), "labels": labs,
-                "weight": rng.integers(1, 9, len(X)).astype(np.uint16)})
-    write_blob(os.path.join(md, "bank-none.bin"),
-               {"kind": "plantid-bank", "variant": "none", "rows": 0,
-                "scoring": {"head_only": True, "lam": 0.5}},
-               {"vectors": np.zeros((0, D), np.float16), "labels": np.zeros(0, np.uint16)})
-    # prior: records scattered around Hobart (and none of "Gamma sola")
-    plat = -42.88 + 0.15 * rng.normal(size=60)
-    plon = 147.33 + 0.15 * rng.normal(size=60)
-    pcls = rng.integers(0, C - 1, 60)
-    write_prior(os.path.join(md, "prior.bin"), plat, plon, pcls, C, "synthetic test records")
-    json.dump({"version": 1, "count": C, "labels": [
-        {"name": n, "genus": g, "family": g + "aceae", "tas_records": 1,
-         **({"un": {"key": n, "ids": [i + 1]}} if i < 4 else {})}
-        for i, (n, g) in enumerate(zip(names, genus))]},
-        open(os.path.join(md, "labels.json"), "w"), indent=0)
-    E = rng.normal(size=(12, D)).astype(np.float32)
-    E[:4] = 3 * protos[[0, 3, 5, 1]] + 0.3 * E[:4]  # some confident ones
-    locs = [(-42.88, 147.33), (-42.95, 147.2), (-41.4, 146.8), None] * 3
-    mini = {"version": 1, "embeddings": E.tolist(), "locations": [list(l) if l else None for l in locs],
-            "banks": {}}
-    for bank in ("bank-int8.bin", "bank-fp16w.bin", "bank-none.bin"):
-        sh = Ship(md, bank)
-        out = []
-        for e, l in zip(E, locs):
-            if l is None:  # no location: lam = 0
-                lp = log_softmax(sh.image_logp(sh.query(e[None])))[0]
-            else:
-                lp = sh.logp(e[None], [l[0]], [l[1]])[0]
-            out.append({"logp": lp.tolist(), "ladder": ladder_of(lp, genus)})
-        mini["banks"][bank] = out
-    json.dump(mini, open(os.path.join(FIX, "plantid-mini.json"), "w"), indent=0)
-    print(f"mini model → {md}")
-
-    # ---- real embeddings (w8 Core ML) with the shipped files
-    ids, embs = load_parts(os.path.join(SHIP, "eval", "coreml-w8"))
-    te = pq.read_table(os.path.join(CACHE, "sets", "test.parquet"),
-                       columns=["photo_id", "lat", "lon"]).to_pydict()
-    where = {p: (la, lo) for p, la, lo in zip(te["photo_id"], te["lat"], te["lon"])}
-    pick = np.sort(np.random.default_rng(3).permutation(len(ids))[:a.n])
-    sh = Ship(SHIP, "bank-int8.bin")
-    labels = json.load(open(os.path.join(SHIP, "labels.json")))["labels"]
-    rgen = [l["genus"] for l in labels]
-    cases = []
-    for j, i in enumerate(pick):
-        e = embs[i].astype(np.float32)
-        la, lo = where[int(ids[i])]
-        loc = None if j % 5 == 4 else (round(float(la), 3), round(float(lo), 3))
-        if loc is None:
-            lp = log_softmax(sh.image_logp(sh.query(e[None])))[0]
-        else:
-            lp = sh.logp(e[None], [loc[0]], [loc[1]])[0]
-        top = np.argsort(-lp)[:10]
-        cases.append({"embedding": __import__("base64").b64encode(e.astype("<f4").tobytes()).decode(),
-                      "location": list(loc) if loc else None,
-                      "top": [[int(t), float(lp[t])] for t in top],
-                      "ladder": ladder_of(lp, rgen)})
-    json.dump({"version": 1, "bank": "bank-int8.bin", "encoder": "w8",
-               "note": "embeddings = PlantEncoder-w8 Core ML outputs of test photos (numbers only); "
-                       "expected = build_ship.Ship on ship/ (head, bank-int8, prior)",
-               "files": {f: json.load(open(os.path.join(SHIP, "pipeline.json")))["files"][f]["sha256"]
-                         for f in ("head.bin", "bank-int8.bin", "prior.bin", "labels.json")},
-               "cases": cases}, open(os.path.join(FIX, "plantid-real.json"), "w"), indent=0)
-    print(f"real: {len(cases)} cases, ladders "
-          f"{ {k: sum(c['ladder']['kind'] == k for c in cases) for k in ('species', 'genus', 'notSure')} }")
 
     # ---- preprocessing
     src = synthetic_rgb(317, 241)
@@ -1274,110 +1207,141 @@ def cmd_fixture(a):
               open(os.path.join(FIX, "plantid-preprocess.json"), "w"), indent=1)
     print(f"fixtures → {FIX}")
 
-    # ---- Australia-wide model (only when its files exist in ship/)
-    if not os.path.exists(os.path.join(SHIP, "au-head.bin")):
-        print(f"fixtures → {FIX} (no au-head.bin: no Australia-wide fixtures)")
+    # ---- single model v2 (only when its files exist in ship/)
+    v2_fixtures(FIX, md, rng, a.n, mu, real=os.path.exists(os.path.join(SHIP, "v2-head.bin")))
+
+
+def v2_write_prior(path, cy, cx, cls, cnt, C, grid, sigma, alpha, about):
+    """A v2-prior.bin from (cell, class, count) rows (fixtures)."""
+    write_deg_prior(path + ".deg", cy, cx, cls, cnt, C, grid, sigma, alpha, about)
+    h, a = read_blob(path + ".deg")
+    raw = a["count"].astype(np.float64)
+    fr = {}
+    for t in ("log1p", "sqrt"):
+        tot = np.bincount(a["species"].astype(np.int64), V2Prior.T[t](raw), minlength=C) + 1.0
+        fr["freq_" + t] = tot / tot.sum()
+    write_blob(path, {k: v for k, v in h.items() if k != "arrays"},
+               {"rowptr": a["rowptr"], "species": a["species"], "count": a["count"],
+                "species_total": a["species_total"], **fr})
+    os.remove(path + ".deg")
+
+
+def v2_case(sh, e, loc):
+    lat, lon = (None, None) if loc is None else ([loc[0]], [loc[1]])
+    L, Li, path = sh.logp(e[None], lat, lon)
+    return L[0], Li[0], str(path[0])
+
+
+def v2_fixtures(FIX, md, rng, n_real, tas_centre, real=True):
+    """plantid-mini/v2-* + plantid-v2-mini.json (a 9-class model on top of the
+    mini Tasmanian bank; CI) and plantid-v2-real.json (w8 embeddings of
+    Tasmanian, mainland and eucalypt test photos, some without a location;
+    V2Ship on ship/ — the Swift test skips without the files)."""
+    C, D = 9, 8
+    genus = ["Alpha", "Alpha", "Alpha", "Beta", "Beta", "Gamma", "Delta", "Delta", "Alpha"]
+    names = ["Alpha prima", "Alpha secunda", "Alpha tertia", "Beta una", "Beta duo", "Gamma sola",
+             "Delta borealis", "Delta australis", "Alpha gemina"]
+    photos = [120, 30, 4, 0, 60, 9, 55, 2, 0]
+    ship_of = [3, 0, 5, -1, 1, 4, -1, 2, -1]      # mini bank labels (6 Tasmanian classes)
+    W = rng.normal(size=(C, D)).astype(np.float32)
+    W[6] = 0.8 * W[7] + 0.3 * rng.normal(size=D)    # close congeners (Delta)
+    q8, sc8 = int8_rows(4.0 * W)
+    bias = (0.2 * rng.normal(size=C)).astype(np.float32)
+    bias[8] = -1e4                                  # a merged twin
+    mu = (0.1 * rng.normal(size=D)).astype(np.float32)
+    s2u = np.zeros(6, np.int64)
+    for u, j in enumerate(ship_of):
+        if j >= 0:
+            s2u[j] = u
+    s2u[4] = 2                                      # two Tasmanian labels on one class: the last wins
+    prm = {"temperature": 1.4, "lam": 0.8, "prior": {"transform": "log1p", "sigma_km": 10.0, "alpha": 8.0},
+           "tasmania": {"box": list(TAS_BOX), "omega": 1.5, "knn_floor": -30.0, "lam": 1.0,
+                        "prior": {"transform": "sqrt", "sigma_km": 5.0, "alpha": 4.0}, "bank": "bank-int8.bin"},
+           "ladder": {"species": [0.6, 0.5, 0.5, 0.75], "bucket_edges": list(BUCKET_EDGES), "genus": 0.55,
+                      "image_floor": 0.0, "congener_ratio": 1.0}}
+    write_blob(os.path.join(md, "v2-head.bin"), {"kind": "plantid-head-v2", "version": 1, "labels": C,
+                                                 "variant": "int8 per-row", "scoring": prm},
+               {"weight": q8, "scale": sc8.astype(np.float32), "bias": bias, "centre": mu,
+                "tas_centre": np.asarray(tas_centre, np.float32), "tas_classes": s2u.astype(np.int32)})
+    g = {"cell": 0.1, "lat0": -44.0, "lon0": 144.0, "ny": 110, "nx": 80}
+    pts = [(-42.88 + 0.1 * rng.normal(), 147.33 + 0.1 * rng.normal(), int(rng.integers(0, 6))) for _ in range(50)] + \
+          [(-33.87 + 0.1 * rng.normal(), 151.21 + 0.1 * rng.normal(), int(rng.choice([3, 6, 7]))) for _ in range(40)]
+    key = {}
+    for la, lo, c in pts:
+        k_ = (int((la - g["lat0"]) // g["cell"]), int((lo - g["lon0"]) // g["cell"]), c)
+        key[k_] = key.get(k_, 0) + int(rng.integers(1, 30))
+    kk = np.array(list(key))
+    v2_write_prior(os.path.join(md, "v2-prior.bin"), kk[:, 0], kk[:, 1], kk[:, 2], np.array(list(key.values())),
+                   C, g, 10.0, 8.0, "synthetic test records near Hobart and Sydney")
+    lab = []
+    for u in range(C):
+        r = {"name": names[u], "genus": genus[u], "family": genus[u] + "aceae", "native": True, "photos": photos[u],
+             "inat": 1000 + u}
+        if ship_of[u] >= 0:
+            r["ship"] = ship_of[u]
+        if u == 1:
+            r["common"] = "second alpha"
+        if u == 8:
+            r["merged_into"] = 0
+        lab.append(r)
+    json.dump({"version": 1, "count": C, "labels": lab}, open(os.path.join(md, "v2-labels.json"), "w"), indent=0)
+    sh = V2Ship(md)
+    E = rng.normal(size=(14, D)).astype(np.float32)
+    Wn = unit(W)
+    E[:6] = 3 * Wn[[0, 3, 6, 1, 4, 7]] + 0.3 * E[:6]
+    locs = [(-42.88, 147.33), (-33.87, 151.21), (-42.95, 147.2), None, (-37.8, 145.0), (-39.9, 144.0), (-41.4, 146.8)] * 2
+    cases = []
+    for e, l in zip(E, locs):
+        L, Li, path = v2_case(sh, e, l)
+        alt = dict(sh.sc["ladder"], image_floor=0.3, congener_ratio=0.5)
+        sh.sc["ladder"], keep = alt, sh.sc["ladder"]
+        lad_alt = sh.ladder(L, Li)
+        sh.sc["ladder"] = keep
+        cases.append({"embedding": e.tolist(), "location": list(l) if l else None, "path": path,
+                      "logp": L.tolist(), "image": Li.tolist(), "ladder": sh.ladder(L, Li), "ladder_alt": lad_alt})
+    json.dump({"version": 1, "ladder_alt": {"image_floor": 0.3, "congener_ratio": 0.5}, "cases": cases},
+              open(os.path.join(FIX, "plantid-v2-mini.json"), "w"), indent=0)
+    if not real:
+        print(f"v2 fixtures: mini only (no ship/v2-head.bin) → {FIX}")
         return
-    # mini: 9 classes on top of the mini Tasmanian model (classes 0–5 = its labels in a
-    # shuffled order, 6–8 mainland-only), 8 dims, int8 head, int8 prototypes, a prior
-    # with records near Hobart and Sydney
-    Ca = 9
-    ship_of = [3, 0, 5, -1, 1, 4, -1, 2, -1]
-    Wa = rng.normal(size=(Ca, D)).astype(np.float32)
-    q8, sc8 = int8_rows(Wa)
-    mua = (0.1 * rng.normal(size=D)).astype(np.float32)
-    write_blob(os.path.join(md, "au-head.bin"), {"kind": "plantid-head", "version": 1, "labels": Ca,
-                                                 "temp": 6.0, "bias": None, "variant": "int8 per-row"},
-               {"weight": q8, "scale": sc8, "centre": mua})
-    pl = np.array([0, 1, 2, 3, 4, 6, 7], np.int64)  # classes 5 and 8: no photos → no prototype
-    pv = unit(Wa[pl] + 0.4 * rng.normal(size=(len(pl), D)).astype(np.float32))
-    p8, ps = int8_rows(pv)
-    write_blob(os.path.join(md, "au-protos.bin"),
-               {"kind": "plantid-bank", "variant": "proto1-int8", "rows": len(pl),
-                "scoring": {"k": 4, "tau": 0.05, "rho": 0.5, "knn_temp": 0.8, "omega": 1.0, "blend_temp": 0.6,
-                            "zs_kappa": 20.0, "zs_omega": 0.5, "image_weight": 0.6, "lam": 0.75, "final_temp": 1.3},
-                "hybrid": {"tau": 1.0, "b": 1.0, "m": 1.0, "final_temp": 1.2}},
-               {"vectors": p8, "scale": ps, "labels": pl.astype(np.uint16),
-                "weight": rng.integers(1, 99, len(pl)).astype(np.uint16)})
-    t8, tsc = int8_rows(unit(Wa + 0.5 * rng.normal(size=(Ca, D)).astype(np.float32)))
-    write_blob(os.path.join(md, "au-text.bin"), {"kind": "plantid-text", "version": 1, "rows": Ca},
-               {"vectors": t8, "scale": tsc})
-    lat = np.r_[-42.88 + 0.2 * rng.normal(size=40), -33.87 + 0.2 * rng.normal(size=40)]
-    lon = np.r_[147.33 + 0.2 * rng.normal(size=40), 151.21 + 0.2 * rng.normal(size=40)]
-    cls = np.r_[rng.integers(0, 6, 40), rng.integers(3, 9, 40)]
-    g = {"cell": 0.05, "lat0": -44.0, "lon0": 112.0, "ny": 690, "nx": 850}
-    cy, cx = np.floor((lat - g["lat0"]) / g["cell"]).astype(int), np.floor((lon - g["lon0"]) / g["cell"]).astype(int)
-    key, cnt = np.unique(np.c_[cy, cx, cls], axis=0, return_counts=True)
-    write_deg_prior(os.path.join(md, "au-prior.bin"), key[:, 0], key[:, 1], key[:, 2], cnt, Ca, g, 25.0, 16.0,
-                    "synthetic test records")
-    an = names + ["Delta prima", "Delta secunda", "Epsilon una"]
-    ag = genus + ["Delta", "Delta", "Epsilon"]
-    order = [1, 4, 7, 0, 5, 2]  # au class of ship label j: ship_of[order[j]] == j
-    alab = []
-    for u in range(Ca):
-        j = ship_of[u]
-        alab.append({"name": names[j] if j >= 0 else an[6 + [3, 6, 8].index(u)],
-                     "genus": genus[j] if j >= 0 else ag[6 + [3, 6, 8].index(u)], "ship": j})
-    json.dump({"version": 1, "count": Ca, "labels": alab}, open(os.path.join(md, "au-labels.json"), "w"), indent=0)
-    ash = AuShip(md, Ship(md, "bank-int8.bin"))
-    agen = [l["genus"] for l in alab]
-    Ea = rng.normal(size=(12, D)).astype(np.float32)
-    Ea[:4] = 3 * unit(Wa[[0, 6, 3, 8]]) + 0.3 * Ea[:4]
-    alocs = [(-42.88, 147.33), (-33.87, 151.21), (-27.5, 153.0), None] * 3
-    am = {"version": 1, "embeddings": Ea.tolist(), "locations": [list(l) if l else None for l in alocs],
-          "bank": "bank-int8.bin", "cases": []}
-    for e, l in zip(Ea, alocs):
-        la, lo = (None, None) if l is None else ([l[0]], [l[1]])
-        L1 = ash.logp_au(e[None], la, lo)[0]
-        Lh, nmd = ash.hybrid(e[None], la, lo)
-        La, na = ash.answer(e[None], la, lo)
-        am["cases"].append({"au_logp": L1.tolist(), "hybrid_logp": Lh[0].tolist(), "named": int(nmd[0]),
-                            "ladder": ladder_named(Lh[0], int(nmd[0]), agen),
-                            "answer_logp": La[0].tolist(), "answer_named": int(na[0]),
-                            "answer_ladder": answer_ladder(La[0], int(na[0]), agen, None if l is None else l[0],
-                                                           None if l is None else l[1], au_ladder())})
-    am["ladder_au"] = list(au_ladder())
-    json.dump(am, open(os.path.join(FIX, "plantid-au-mini.json"), "w"), indent=0)
-    # real: w8 embeddings of A-test (Tasmania) and C (mainland) photos with the shipped files
-    sh = Ship(SHIP, "bank-int8.bin")
-    ash = AuShip(SHIP, sh)
-    alj = json.load(open(os.path.join(SHIP, "au-labels.json")))["labels"]
-    agen = [l["genus"] for l in alj]
+    # ---- real: Tasmania (A-test), mainland + eucalypts (C report half), some without a location
+    sh = V2Ship(SHIP)
+    ids, embs = load_parts(os.path.join(SHIP, "eval", "coreml-w8"))
+    te = pq.read_table(os.path.join(CACHE, "sets", "test.parquet"), columns=["photo_id", "lat", "lon"]).to_pydict()
+    where = {p: (la, lo) for p, la, lo in zip(te["photo_id"], te["lat"], te["lon"])}
     au_dir = os.path.join(CACHE, "australia")
     cid, cemb = load_parts(os.path.join(au_dir, "emb-w8"))
-    C_ = pq.read_table(os.path.join(au_dir, "C.parquet"), columns=["photo_id", "lat", "lon"]).to_pydict()
-    cwhere = {p: (la, lo) for p, la, lo in zip(C_["photo_id"], C_["lat"], C_["lon"])}
-    picks = [(embs[i], where[int(ids[i])]) for i in pick[:a.n // 2]] + \
-            [(cemb[i], cwhere[int(cid[i])]) for i in np.sort(np.random.default_rng(4).permutation(len(cid))[:a.n - a.n // 2])]
+    C_ = pq.read_table(os.path.join(au_dir, "C.parquet"), columns=["photo_id", "lat", "lon", "subset", "half"]).to_pydict()
+    cinfo = {p: (la, lo, s_, h_) for p, la, lo, s_, h_ in zip(C_["photo_id"], C_["lat"], C_["lon"], C_["subset"], C_["half"])}
+    r3 = np.random.default_rng(3)
+    n_tas, n_euc = n_real * 3 // 10, n_real * 3 // 10
+    pick = [("tasmania", embs[i], where[int(ids[i])]) for i in np.sort(r3.permutation(len(ids))[:n_tas])]
+    rep = [i for i in range(len(cid)) if cinfo.get(int(cid[i]), (0, 0, "", ""))[3] == "report"]
+    euc = [i for i in rep if cinfo[int(cid[i])][2] == "euc"]
+    main = [i for i in rep if cinfo[int(cid[i])][2] == "main"]
+    pick += [("eucalypt", cemb[i], cinfo[int(cid[i])][:2]) for i in sorted(r3.choice(euc, n_euc, replace=False))]
+    pick += [("mainland", cemb[i], cinfo[int(cid[i])][:2])
+             for i in sorted(r3.choice(main, n_real - n_tas - n_euc, replace=False))]
     cases = []
-    for j, (e, (la, lo)) in enumerate(picks):
-        e = e.astype(np.float32)
-        loc = None if j % 5 == 4 else (round(float(la), 3), round(float(lo), 3))
-        lat_, lon_ = (None, None) if loc is None else ([loc[0]], [loc[1]])
-        Lh, nmd = ash.hybrid(e[None], lat_, lon_)
-        L1 = ash.logp_au(e[None], lat_, lon_)[0]
-        top = np.argsort(-Lh[0])[:10]
-        Lg, ng = ash.answer(e[None], lat_, lon_)
-        cases.append({"answer_top": [[int(t), float(Lg[0][t])] for t in np.argsort(-Lg[0])[:10]],
-                      "answer_named": int(ng[0]),
-                      "answer_ladder": answer_ladder(Lg[0], int(ng[0]), agen, None if loc is None else loc[0],
-                                                     None if loc is None else loc[1], au_ladder()),"embedding": __import__("base64").b64encode(e.astype("<f4").tobytes()).decode(),
-                      "location": list(loc) if loc else None,
-                      "hybrid_top": [[int(t), float(Lh[0][t])] for t in top], "named": int(nmd[0]),
-                      "au_top": [[int(t), float(L1[t])] for t in np.argsort(-L1)[:10]],
-                      "ladder": ladder_named(Lh[0], int(nmd[0]), agen)})
+    for j, (kind, e, (la, lo)) in enumerate(pick):
+        e = np.asarray(e, np.float32)
+        loc = None if j % 6 == 5 else (round(float(la), 3), round(float(lo), 3))
+        L, Li, path = v2_case(sh, e, loc)
+        top = np.argsort(-L)[:10]
+        cases.append({"set": kind, "embedding": __import__("base64").b64encode(e.astype("<f4").tobytes()).decode(),
+                      "location": list(loc) if loc else None, "path": path,
+                      "top": [[int(t), float(L[t])] for t in top], "image_named": float(Li[top[0]]),
+                      "ladder": sh.ladder(L, Li)})
     pj = json.load(open(os.path.join(SHIP, "pipeline.json")))["files"]
-    json.dump({"version": 1, "encoder": "w8", "bank": "bank-int8.bin",
-               "ladder_au": list(au_ladder()), "ladder_tas": [0.5, 0.5],
-               "note": "embeddings = PlantEncoder-w8 Core ML outputs (A-test Tasmania, then C mainland; "
-                       "numbers only); expected = build_ship.AuShip on ship/: answer = the default "
-                       "(hybrid inside the Tasmania box / no location, else standalone), plus hybrid "
-                       "and standalone (au_top) separately",
-               "files": {f: pj[f]["sha256"] for f in ("head.bin", "bank-int8.bin", "prior.bin", "labels.json",
-                                                       "au-head.bin", "au-protos.bin", "au-prior.bin",
-                                                       "au-text.bin", "au-labels.json") if f in pj},
-               "cases": cases}, open(os.path.join(FIX, "plantid-au-real.json"), "w"), indent=0)
-    print(f"au fixtures: mini {len(am['cases'])} cases, real {len(cases)} cases → {FIX}")
+    json.dump({"version": 1, "encoder": "w8",
+               "note": "embeddings = PlantEncoder-w8 Core ML outputs of test photos (A-test Tasmania, C report half "
+                       "eucalypts / mainland; numbers only); expected = build_ship.V2Ship on ship/ (v2-head, "
+                       "v2-prior, v2-labels, bank-int8 inside the Tasmania box)",
+               "files": {f: pj[f]["sha256"] for f in V2_FILES + ("bank-int8.bin",)},
+               "cases": cases}, open(os.path.join(FIX, "plantid-v2-real.json"), "w"), indent=0)
+    kinds = collections.Counter((c["set"], c["ladder"]["kind"]) for c in cases)
+    print(f"v2 fixtures: mini {len(json.load(open(os.path.join(FIX, 'plantid-v2-mini.json')))['cases'])} cases, "
+          f"real {len(cases)} cases {dict(kinds)} → {FIX}")
 
 
 def ladder_named(lp, named, genus, thr=(0.5, 0.5)):
@@ -1619,6 +1583,461 @@ def cmd_au_common(a):
           f"{fetched} fetched now) → {path}")
 
 
+
+# ------------------------------------------- single model v2 (train_v2.py)
+#
+# README "Single model (v2)": ONE trained head over the 22,122 classes
+# (Tasmanian labels ∪ Australian natives; 19 twins merged), the location prior
+# from iNat + ALA, and inside the Tasmania box the Tasmanian bank's kNN term
+# with a re-tuned prior (tas_gap.py F5). Every parameter comes from the
+# evaluation outputs of the chosen run (eval.json, ladder_v3.json,
+# tas_gap.json); `v2` asserts they agree with each other and with V2_RUN.
+
+V2DIR = os.path.join(CACHE, "australia", "v2")
+V2_RUN = "final-cb50-s1"            # provenance "v2 K choice on the re-weighted val"
+V2_TAU_NORM = 0.5                   # scale-kept τ-normalisation (eval_v2 / ladder_v3 env TAUNORM)
+V2_PRIOR_SHIP = os.path.join(V2DIR, "prior-ship-inatall+ala-noinat.bin")   # built from ALL data (shipped)
+V2_PRIOR_EVAL = os.path.join(V2DIR, "prior-eval-inatpool+ala-noinat.bin")  # leak-free (measuring only)
+# tas_gap.py F5's prior term is its `Lv_pri[5.0]`: √counts, σ 5 km, α 16 (fixed in
+# that script); ω and λ were chosen on A-val (tas_gap.json "F5 …" prm)
+V2_TAS_PRIOR = {"transform": "sqrt", "sigma_km": 5.0, "alpha": 16.0}
+V2_KNN_FLOOR = -30.0                # tas_gap F4/F5: ω · max(L_knn, −30)
+V2_FILES = ("v2-head.bin", "v2-prior.bin", "v2-labels.json")
+BUCKET_EDGES = (0, 10, 50)          # ladder_v3: 0 | 1–9 | 10–49 | 50+ training photos
+
+
+def v2_bucket(n):
+    n = np.asarray(n)
+    return np.select([n == 0, n < 10, n < 50], [0, 1, 2], 3)
+
+
+def v2_params():
+    """The chosen run's parameters from the evaluation outputs (asserted
+    consistent): prior + temperature (eval.json), ladder (ladder_v3.json),
+    Tasmania-box add-on (tas_gap.json F5)."""
+    ev = json.load(open(os.path.join(V2DIR, "eval.json")))
+    lad = json.load(open(os.path.join(V2DIR, "ladder_v3.json")))
+    tg = json.load(open(os.path.join(V2DIR, "tas_gap.json")))
+    assert ev["final_run"] == V2_RUN and lad["run"] == V2_RUN and tg["run"] == V2_RUN, \
+        (ev["final_run"], lad["run"], tg["run"])
+    f5 = [v for k, v in tg.items() if k.startswith("F5")]
+    assert len(f5) == 1, "tas_gap.json: one F5 row expected"
+    steps = [json.loads(l) for l in open(os.path.join(V2DIR, "provenance-steps.jsonl"))]
+    ladder_steps = [s for s in steps if s["step"] == "v2 ladder" and s["argv"][-1] == V2_RUN]
+    assert ladder_steps and float(ladder_steps[-1]["env"].get("TAUNORM", 0)) == V2_TAU_NORM, "TAUNORM of the ladder step"
+    pr, ch = ev["prior"], lad["chosen"]
+    return {
+        "temperature": float(ev["temperature"]),
+        "lam": float(pr["lam"]),
+        "prior": {"transform": pr["kind"], "sigma_km": float(pr["sigma"]), "alpha": float(pr["alpha"])},
+        "tasmania": {"box": list(TAS_BOX), "omega": float(f5[0]["prm"]["om"]), "knn_floor": V2_KNN_FLOOR,
+                     "lam": float(f5[0]["prm"]["lam"]), "prior": dict(V2_TAS_PRIOR), "bank": "bank-int8.bin",
+                     "centre": "tas_centre (head.bin's centre: the bank's query space)"},
+        "ladder": {"species": [float(x) for x in ch["s"]], "bucket_edges": list(BUCKET_EDGES),
+                   "genus": float(ch["g"]), "image_floor": float(ch["f"]), "congener_ratio": float(ch["r"])},
+    }
+
+
+class V2Prior:
+    """v2-prior.bin: DegPrior's grid + raw counts, plus the frequency vector of
+    each count transform (f = (Σ_cells t(count) + 1) / Σ(…), computed over ALL
+    22,122 classes as eval_v2 / ladder_v3 do)."""
+    T = {"count": lambda c: c, "sqrt": np.sqrt, "log1p": np.log1p, "presence": np.ones_like}
+
+    def __init__(self, path):
+        self.h, a = read_blob(path)
+        self.rowptr, self.sp = a["rowptr"], a["species"]
+        self.raw = a["count"].astype(np.float64)
+        self.freqs = {k[5:]: a[k].astype(np.float64) for k in a if k.startswith("freq_")}
+        if not self.freqs:  # an eval prior (prior_v2.py output): compute them
+            C = len(a["species_total"])
+            for t in ("log1p", "sqrt"):
+                tot = np.bincount(self.sp.astype(np.int64), self.T[t](self.raw), minlength=C) + 1.0
+                self.freqs[t] = tot / tot.sum()
+
+    def log_prior(self, lat, lon, transform, sigma, alpha):
+        """log((K + α f) / (ΣK + α)); K = 0 (→ log f) without a location."""
+        f = self.freqs[transform]
+        if lat is None:
+            return np.log(f)[None, :]
+        P = DegPrior.__new__(DegPrior)
+        P.h, P.rowptr, P.sp, P.cnt, P.freq = self.h, self.rowptr, self.sp, self.T[transform](self.raw), f
+        K = P.density(lat, lon, sigma)
+        return np.log((K + alpha * f[None]) / (K.sum(1, keepdims=True) + alpha))
+
+
+class V2Ship:
+    """The single model, from the shipped files only (the spec for the Swift
+    side, IzzyKit PlantIDModel). emb = raw encoder output; lat/lon = None for
+    no location. Returns (log p displayed, image-only log p, path)."""
+
+    def __init__(self, d, prior=None):
+        self.h, a = read_blob(os.path.join(d, "v2-head.bin"))
+        self.sc = self.h["scoring"]
+        self.W = a["weight"].astype(np.float32) * a["scale"].astype(np.float32)[:, None]
+        self.b, self.mu = a["bias"].astype(np.float32), a["centre"].astype(np.float32)
+        self.tmu, self.tcls = a["tas_centre"].astype(np.float32), a["tas_classes"].astype(np.int64)
+        self.prior = V2Prior(prior or os.path.join(d, "v2-prior.bin"))
+        self.bh, ba = read_blob(os.path.join(d, self.sc["tasmania"]["bank"]))
+        self.B, self.bl, self.bs = ba["vectors"], ba["labels"], ba["scale"].astype(np.float32)
+        lab = json.load(open(os.path.join(d, "v2-labels.json")))["labels"]
+        gn = {}
+        self.genus = np.array([gn.setdefault(l["genus"], len(gn)) for l in lab])
+        self.gnames = list(gn)
+        self.photos = np.array([l["photos"] for l in lab])
+        self.C = len(lab)
+
+    def logp(self, emb, lat=None, lon=None, box=True):
+        """box=False: the Australia-wide path everywhere (as eval_v2 measured it)."""
+        e = np.asarray(emb, np.float32)
+        q = unit(unit(e) - self.mu[None]).astype(np.float32)
+        Lh = log_softmax(q @ self.W.T + self.b[None])
+        T, s = self.sc["temperature"], self.sc
+        if lat is None or not box:
+            tas = np.zeros(len(e), bool)
+        else:
+            tas = in_tas(lat, lon)
+        pm = s["prior"]
+        Lp = self.prior.log_prior(lat, lon, pm["transform"], pm["sigma_km"], pm["alpha"])
+        L = log_softmax(log_softmax(Lh + s["lam"] * Lp) / T)
+        Limg = log_softmax(Lh / T)
+        if tas.any():
+            t = s["tasmania"]
+            i = np.nonzero(tas)[0]
+            qs = unit(unit(e[i]) - self.tmu[None]).astype(np.float32)
+            p = self.bh["scoring"]
+            sims, idx = knn_neighbours(qs, self.B, self.bs, p["k"])
+            nb = len(self.tcls)
+            Lk = np.full((len(i), self.C), -1e4, np.float32)
+            Lk[:, self.tcls] = log_softmax(p["knn_temp"] * knn_vote(sims, idx, self.bl, nb, p["k"], p["tau"]))
+            Li = log_softmax(Lh[i] + t["omega"] * np.maximum(Lk, t["knn_floor"]))
+            tp = t["prior"]
+            Lpt = self.prior.log_prior(np.asarray(lat)[i], np.asarray(lon)[i], tp["transform"], tp["sigma_km"], tp["alpha"])
+            L[i] = log_softmax(log_softmax(Li + t["lam"] * Lpt) / T)
+            Limg[i] = log_softmax(Li / T)
+        return L, Limg, np.where(tas, "tasmania", "australia")
+
+    def ladder(self, lp, lpi):
+        """ladder_v3 on one photo's displayed log p (lp) and image-only log p (lpi)."""
+        lad = self.sc["ladder"]
+        p = np.exp(lp)
+        o = np.argsort(-p)
+        n1, n2 = int(o[0]), int(o[1])
+        thr = lad["species"][int(v2_bucket(self.photos[n1]))]
+        close = lad["congener_ratio"] < 1 and self.genus[n1] == self.genus[n2] and p[n2] >= lad["congener_ratio"] * p[n1]
+        if p[n1] >= thr and np.exp(lpi[n1]) >= lad["image_floor"] and not close:
+            return {"kind": "species", "label": n1, "p": float(p[n1]), "threshold": thr}
+        gp = np.bincount(self.genus, p, minlength=len(self.gnames))
+        g = int(gp.argmax())
+        if gp[g] >= lad["genus"]:
+            top = [int(u) for u in o if self.genus[u] == g][:3]
+            return {"kind": "genus", "genus": self.gnames[g], "p": float(gp[g]), "top": top}
+        return {"kind": "notSure"}
+
+
+def v2_labels(run_photos, merge):
+    """The display table (22,122 rows, the head's order): ship/au-labels.json
+    (names, families, iNat ids, common names from `au-common`, UN profiles)
+    with the Tasmanian names on Tasmanian rows (tas_named_labels), the run's
+    training-photo counts after merges (the ladder's buckets), merged twins
+    marked `merged_into`."""
+    j = json.load(open(os.path.join(SHIP, "au-labels.json")))
+    tas = json.load(open(os.path.join(SHIP, "labels.json")))["labels"]
+    rows, changed = tas_named_labels(j["labels"], tas)
+    U = pq.read_table(os.path.join(CACHE, "australia", "labels.parquet"), columns=["name", "genus", "native"]).to_pydict()
+    assert len(rows) == len(U["name"]) == len(run_photos)
+    out = []
+    for u, l in enumerate(rows):
+        assert (l.get("apc_name") or l["name"]) == U["name"][u], (u, l["name"], U["name"][u])
+        r = {"name": l["name"], "genus": l["genus"], "family": l.get("family")}
+        for k in ("common", "apc_name", "un"):
+            if l.get(k):
+                r[k] = l[k]
+        if l.get("inat"):
+            r["inat"] = int(l["inat"][0])
+        if l.get("ship", -1) >= 0:
+            r["ship"] = int(l["ship"])
+        r["native"] = bool(l.get("native"))
+        r["photos"] = int(run_photos[u])
+        if u in merge:
+            r["merged_into"] = int(merge[u])
+        out.append(r)
+    return out, changed
+
+
+def v2_credits(pid, src, observers):
+    """credits.json (old shape + `sources`) and credits-photos.tsv.gz for EVERY
+    training photo of the run's data (data-final.npz pid/src): the iNat
+    open-data photos (plan train ∪ the Tasmanian run's; logins from the
+    observers table), the extras (iNat incl. SA/ND: their own login column;
+    ALA incl. APII and Wikimedia Commons: creator + provider)."""
+    import re
+    tags = re.compile(r"<[^>]+>")
+    rows = []  # (source, id, login, name, licence, attribution)
+    base = set(int(p) for p in pid[src == 0])
+    seen = set()
+    obs = {}
+    for f, cols in ((os.path.join(CACHE, "australia", "plan", "train.parquet"), ["photo_id", "observer_id", "license"]),
+                    (os.path.join(CACHE, "sets", "train.parquet"), ["photo_id", "observer_id", "license"])):
+        t = pq.read_table(f, columns=cols).to_pydict()
+        for p, o, lic in zip(t["photo_id"], t["observer_id"], t["license"]):
+            p = int(p)
+            if p in base and p not in seen:
+                seen.add(p)
+                obs[p] = (int(o), lic)
+    assert len(obs) == len(base), f"credits: {len(base) - len(obs)} base photos without an observer"
+    want = {o for o, _ in obs.values()}
+    logins = {}
+    with gzip.open(observers, "rt") as f:
+        next(f)
+        for line in f:
+            i, login, *name = line.rstrip("\n").split("\t")
+            if int(i) in want:
+                logins[int(i)] = (login, name[0] if name else "")
+    for p, (o, lic) in obs.items():
+        lg, nm = logins.get(o, ("?", ""))
+        rows.append(("inat", str(p), lg, nm, lic, ""))
+    extra = set(int(p) for p in pid[src == 1])
+    k = pq.read_table(os.path.join(CACHE, "extra", "extra_photos_k1000.parquet"),
+                      columns=["photo_id", "login", "observer_name", "licence", "source"]).to_pydict()
+    for p, lg, nm, lic, s in zip(k["photo_id"], k["login"], k["observer_name"], k["licence"], k["source"]):
+        if int(p) in extra:
+            extra.discard(int(p))
+            rows.append(("inat", str(p), lg or "?", nm or "", lic, ""))
+    s = pq.read_table(os.path.join(CACHE, "extra", "extra_photos_src.parquet"),
+                      columns=["photo_id", "image_id", "source", "login", "licence", "attribution", "dr_name"]).to_pydict()
+    for p, iid, so, lg, lic, att, dr in zip(s["photo_id"], s["image_id"], s["source"], s["login"], s["licence"],
+                                            s["attribution"], s["dr_name"]):
+        if int(p) in extra:
+            extra.discard(int(p))
+            who = " ".join(tags.sub("", lg or "").split())
+            rows.append(("commons" if so == "commons" else "ala", str(iid), who or dr, dr, lic,
+                         " ".join(tags.sub("", att or "").split())))
+    assert not extra, f"credits: {len(extra)} extra photos without a source row"
+    assert len(rows) == len(pid), (len(rows), len(pid))
+    with gzip.open(os.path.join(SHIP, "credits-photos.tsv.gz"), "wt") as f:
+        f.write("photo_id\tobserver_login\tlicense\tsource\tattribution\n")
+        for so, i, lg, _, lic, att in sorted(rows, key=lambda r: (r[0], r[1])):
+            f.write(f"{i}\t{lg}\t{lic}\t{so}\t{att}\n")
+    per, names, lic_tot, by_src = {}, {}, {}, {}
+    for so, _, lg, nm, lic, _ in rows:
+        key = (so if so != "inat" else "inat", lg)
+        d = per.setdefault(key, {})
+        d[lic] = d.get(lic, 0) + 1
+        names[key] = nm
+        lic_tot[lic] = lic_tot.get(lic, 0) + 1
+        b = by_src.setdefault(so, {"photos": 0, "licences": {}})
+        b["photos"] += 1
+        b["licences"][lic] = b["licences"].get(lic, 0) + 1
+    for so in by_src:
+        by_src[so]["credited"] = sum(1 for k_ in per if k_[0] == so)
+    obs_rows = sorted(([k_[1], names[k_] if k_[0] == "inat" else (names[k_] if names[k_] != k_[1] else None),
+                        sum(d.values()), d, k_[0]] for k_, d in per.items()), key=lambda r: (-r[2], r[0].lower()))
+    json.dump({"version": 1,
+               "about": "The plant-ID model was trained on these photos: the iNaturalist Open Dataset (2026-10 "
+                        "snapshot, research grade and more photos of the same observations, incl. CC BY-SA / "
+                        "BY-ND / BY-NC-SA / BY-NC-ND), field photos from the Atlas of Living Australia (incl. "
+                        "the Australian Plant Image Index, Australian National Botanic Gardens) and Wikimedia "
+                        "Commons. Each photo © its creator, under the licence listed. CC BY-NC binds IzzyMap to "
+                        "non-commercial use. Per-photo list: credits-photos.tsv.gz (iNat photo page "
+                        "https://www.inaturalist.org/photos/<id>; ALA image https://images.ala.org.au/image/<id>; "
+                        "Commons page id).",
+               "photos": len(rows), "licences": lic_tot, "sources": by_src,
+               "observers": [{"login": r[0], **({"name": r[1]} if r[1] else {}), "photos": r[2], "licences": r[3],
+                              **({"source": r[4]} if r[4] != "inat" else {})} for r in obs_rows]},
+              open(os.path.join(SHIP, "credits.json"), "w"), ensure_ascii=False, separators=(",", ":"))
+    return {"photos": len(rows), "credited": len(per), "missing_logins": len(want - logins.keys()),
+            "sources": {k_: {"photos": v["photos"], "credited": v["credited"]} for k_, v in by_src.items()},
+            "licences": lic_tot}
+
+
+def cmd_v2(a):
+    """The single model's pack files (V2_RUN) → ship/: v2-head.bin (int8 rows ×
+    per-row scale, bias, centres, the Tasmanian bank's class map, every scoring
+    parameter + the ladder in its header), v2-prior.bin, v2-labels.json, the
+    credits of every training photo, pipeline.json "v2" + provenance. Then
+    checks the WRITTEN files (V2Ship) against the evaluation's numbers with
+    the leak-free eval prior. Env: the eval env (train_v2/eval_v2's;
+    V2DATA=…/data-final.npz)."""
+    sys.path.insert(0, HERE)
+    import train_v2 as V
+    assert os.path.abspath(V.DATA) == os.path.abspath(os.path.join(V2DIR, "data-final.npz")), \
+        f"V2DATA must be data-final.npz (is {V.DATA})"
+    prm = v2_params()
+    z = np.load(os.path.join(V2DIR, "runs", V2_RUN + ".npz"))
+    W, b, n_c = z["W"].astype(np.float32), z["b"].astype(np.float32), z["n_c"].astype(np.int64)
+    nr = np.linalg.norm(W, axis=1, keepdims=True).clip(1e-6)
+    W = W * (nr.mean() / nr) ** V2_TAU_NORM  # baked in (scale kept: mean norm unchanged)
+    D = np.load(V.DATA, mmap_mode="r")
+    mf, mt = D["merge_from"].astype(np.int64), D["merge_to"].astype(np.int64)
+    if a.check_only:
+        b = b.copy()
+        b[mf] = -1e4
+        return v2_check(W, b)
+    ev = json.load(open(os.path.join(V2DIR, "eval.json")))
+    merge = dict(zip(mf.tolist(), mt.tolist()))
+    assert merge == {int(k): int(v) for k, v in ev["merged_classes"].items()}, "merges differ from eval.json"
+    for f_, t_ in merge.items():
+        n_c[t_] += n_c[f_]
+        n_c[f_] = 0
+    b = b.copy()
+    b[mf] = -1e4  # eval's column mask, baked into the bias
+    C = len(W)
+    q8, sc8 = int8_rows(W)
+    labels, changed = v2_labels(n_c, merge)
+    ship_h, ship_a = read_blob(os.path.join(SHIP, "head.bin"))
+    tas_lab = json.load(open(os.path.join(SHIP, "labels.json")))["labels"]
+    mapv = np.arange(C)
+    mapv[mf] = mt
+    s2u = np.full(len(tas_lab), -1, np.int64)
+    for u, l in enumerate(json.load(open(os.path.join(SHIP, "au-labels.json")))["labels"]):
+        if l.get("ship", -1) >= 0:
+            assert s2u[l["ship"]] < 0
+            s2u[l["ship"]] = mapv[u]
+    assert (s2u >= 0).all(), "every Tasmanian label maps to a class"
+    hdr = {"kind": "plantid-head-v2", "version": 1, "labels": C, "run": V2_RUN,
+           "variant": "int8 per-row (scale = max|w|/127)", "tau_norm": V2_TAU_NORM,
+           "scoring": prm,
+           "recipe": [
+               "q = normalise(normalise(embedding) − centre)",
+               "L_head = log_softmax(scale ⊙ (weight · q) + bias)   (merged twins: bias −1e4)",
+               "prior(t, σ, α) = log((K + α f_t) / (ΣK + α)), K[c] = Σ_cells t(count)·exp(−d²/2σ²) (v2-prior.bin, "
+               "DegPrior's grid; f_t = v2-prior freq_<t>); no location: K = 0 → log f_t",
+               "outside the Tasmania box or without a location: L = log_softmax(log_softmax(L_head + lam · "
+               "prior(prior.transform, prior.sigma_km, prior.alpha)) / temperature)",
+               "inside the box [W, S, E, N]: q_t = normalise(normalise(embedding) − tas_centre); L_knn over "
+               "bank-int8.bin exactly as the Tasmanian scorer (k, tau, knn_temp from its header; C = its 2,675 "
+               "labels), placed at columns tas_classes (others −1e4; repeated column: the last wins); L_img = "
+               "log_softmax(L_head + omega · max(L_knn, knn_floor)); L = log_softmax(log_softmax(L_img + "
+               "tasmania.lam · prior(tasmania.prior…)) / temperature)",
+               "image-only (the ladder's floor): log_softmax(L_head or L_img / temperature)",
+               "ladder (ladder_v3): named = argmax L; species if p[named] ≥ species[bucket(photos[named])] "
+               "(bucket edges 0 | 1–9 | 10–49 | 50+), image-only p[named] ≥ image_floor and not close congeners "
+               "(congener_ratio < 1: top-2 share a genus and p2 ≥ ratio · p1); else genus (v2-labels genus) "
+               "with summed p ≥ genus → that genus + its top 3; else not sure"]}
+    write_blob(os.path.join(SHIP, "v2-head.bin"), hdr,
+               {"weight": q8, "scale": sc8.astype(np.float32), "bias": b.astype(np.float32),
+                "centre": np.asarray(D["mu"], np.float32), "tas_centre": ship_a["centre"].astype(np.float32),
+                "tas_classes": s2u.astype(np.int32)})
+    # prior: the shipped (all-data) counts + each transform's frequency over all classes
+    ph, pa = read_blob(V2_PRIOR_SHIP)
+    assert len(pa["species_total"]) == C
+    raw = pa["count"].astype(np.float64)
+    freqs = {}
+    for t in ("log1p", "sqrt"):
+        tot = np.bincount(pa["species"].astype(np.int64), V2Prior.T[t](raw), minlength=C) + 1.0
+        freqs["freq_" + t] = tot / tot.sum()
+    ph2 = {k: v for k, v in ph.items() if k != "arrays"}
+    ph2.update({"sigma_km": prm["prior"]["sigma_km"], "alpha": prm["prior"]["alpha"],
+                "source_file": os.path.basename(V2_PRIOR_SHIP), "transforms": ["log1p", "sqrt"],
+                "freq": "freq_<t> = (bincount(species, t(count)) + 1) / Σ, over all classes (float64)"})
+    write_blob(os.path.join(SHIP, "v2-prior.bin"), ph2,
+               {"rowptr": pa["rowptr"], "species": pa["species"], "count": pa["count"],
+                "species_total": pa["species_total"], **freqs})
+    lj = {"version": 1, "model": HF, "run": V2_RUN, "count": C,
+          "note": "index = row of v2-head.bin / class id of v2-prior.bin; ship = row of the Tasmanian labels.json "
+                  "(un = its Understorey Network profile); photos = training photos after merges (the ladder's "
+                  "bucket); merged_into = a twin merged at training (never shown); apc_name = the APC name "
+                  "where the Tasmanian label's spelling is shown instead",
+          "labels": labels}
+    json.dump(lj, open(os.path.join(SHIP, "v2-labels.json"), "w"), ensure_ascii=False, separators=(",", ":"))
+    print(f"v2: head {C:,} × {W.shape[1]} int8, prior {len(pa['species']):,} pairs, labels (Tasmanian names: "
+          f"{changed}), {int((n_c > 0).sum()):,} classes with photos")
+    cred = v2_credits(np.asarray(D["pid"]), np.asarray(D["src"]), a.observers)
+    print(f"credits: {cred}")
+    # pipeline.json: the single model only (the Tasmanian scorer's tables are gone from the pack;
+    # its bank stays: the Tasmania-box term)
+    pp = os.path.join(SHIP, "pipeline.json")
+    pipe = json.load(open(pp))
+    for k in ("australia", "labels", "head", "prior", "bank_default", "banks", "steps", "ladder"):
+        pipe.pop(k, None)
+    if isinstance(pipe.get("model"), str):
+        pipe["encoder_model"] = pipe.pop("model")
+    pipe["v2"] = {"built": time.strftime("%Y-%m-%d"), "run": V2_RUN, "files": list(V2_FILES),
+                  "classes": C, "classes_with_photos": int((n_c > 0).sum()), "merged": len(merge),
+                  "scoring": prm, "recipe": hdr["recipe"], "credits": cred,
+                  "note": "v2-head/v2-prior/v2-labels + bank-int8.bin (Tasmania box) + the encoder; "
+                          "build_ship.V2Ship is the reference scorer"}
+    keep = set(V2_FILES) | {"bank-int8.bin", "credits.json", "credits-photos.tsv.gz"}
+    pipe["files"] = {f: v for f, v in pipe["files"].items() if f in keep}
+    for f in V2_FILES + ("credits.json", "credits-photos.tsv.gz"):
+        p = os.path.join(SHIP, f)
+        pipe["files"][f] = {"bytes": size_of(p), "sha256": sha256(p)}
+    pipe["built"] = time.strftime("%Y-%m-%d")
+    json.dump(pipe, open(pp, "w"), indent=1, ensure_ascii=False)
+    import provenance as PV
+    PV.record("v2 ship", inputs=[os.path.join(V2DIR, "runs", V2_RUN + ".npz"), V2_PRIOR_SHIP, V.DATA,
+                                 os.path.join(V2DIR, "eval.json"), os.path.join(V2DIR, "ladder_v3.json"),
+                                 os.path.join(V2DIR, "tas_gap.json"), os.path.join(SHIP, "au-labels.json"),
+                                 os.path.join(SHIP, "labels.json"), os.path.join(SHIP, "head.bin")],
+              outputs=[os.path.join(SHIP, f) for f in V2_FILES + ("credits.json", "credits-photos.tsv.gz")],
+              extra={"run": V2_RUN, "scoring": prm})
+    subprocess.run([sys.executable, "-I", os.path.join(HERE, "provenance.py"), "section"], check=True)
+    subprocess.run([sys.executable, "-I", os.path.join(HERE, "provenance.py"), "ship"], check=True)
+    # the compact identity the app shows (Diagnostics, Model & training photos)
+    pipe = json.load(open(pp))
+    g = pipe["provenance"]["git"]
+    lad = prm["ladder"]
+    pipe["model"] = {"id": V2_RUN, "git": g["commit"][:10], "git_clean": bool(g.get("plantid_clean")),
+                     "built": pipe["built"], "classes": C, "classes_with_photos": int((n_c > 0).sum()),
+                     "encoder": "BioCLIP 2.5 ViT-H/14, 8-bit (w8)",
+                     "summary": f"T {prm['temperature']:.2f} · prior {prm['prior']['transform']} σ "
+                                f"{prm['prior']['sigma_km']:g} km λ {prm['lam']:g} · ladder species "
+                                f"{'/'.join(f'{x:g}' for x in lad['species'])} genus {lad['genus']:g} · "
+                                f"Tasmania kNN ω {prm['tasmania']['omega']:g}"}
+    json.dump(pipe, open(pp, "w"), indent=1, ensure_ascii=False)
+    print(f"model: {pipe['model']}")
+    if not a.no_check:
+        v2_check(W, b)
+
+
+def v2_check(W_fp32, b):
+    """The written files against the evaluation (leak-free eval prior): A-test
+    natural top-1 of tas_gap F5 (Tasmania-box path), the main path's top-1
+    and ladder_v3's species rate on AU-test; int8 vs fp32 head agreement."""
+    import eval_v2 as E2
+    import train_v2 as V
+    D, U, genus, euc, sets, ship, ash = E2.load_sets()
+    sh = V2Ship(SHIP, prior=V2_PRIOR_EVAL)
+    mapv = np.arange(sh.C)
+    mf = np.asarray(np.load(V.DATA, mmap_mode="r")["merge_from"], np.int64)
+    mapv[mf] = np.asarray(np.load(V.DATA, mmap_mode="r")["merge_to"], np.int64)
+    res = {}
+    rep = json.load(open(os.path.join(V2DIR, "eval.json")))["report"]["final"]
+    for nm, n_max in (("A-test", None), ("AU-test", 12000)):
+        S = sets[nm]
+        n = S.n if n_max is None else min(S.n, n_max)
+        y = np.where(S.y[:n] >= 0, mapv[np.maximum(S.y[:n], 0)], -1)
+        w = S.w[:n]
+        inl = y >= 0
+        for box in (False, True):
+            pred, kinds, path = [], [], []
+            for i in range(0, n, 1024):
+                j = slice(i, min(i + 1024, n))
+                l_, li_, p_ = sh.logp(S.emb[j].astype(np.float32), S.lat[j], S.lon[j], box=box)
+                pred.append(l_.argmax(1))
+                path.append(p_)
+                kinds += [sh.ladder(l_[k], li_[k])["kind"] for k in range(len(l_))]
+            pred, path, kinds = np.concatenate(pred), np.concatenate(path), np.array(kinds)
+            hit = (pred == y) & inl
+            res[f"{nm} {'box' if box else 'main'}"] = {
+                "n": int(n), "top1_nat": round(float((hit * w)[inl].sum() / w[inl].sum()), 4),
+                "in_box": int((path == "tasmania").sum()),
+                "species_answers": round(float((kinds == "species").mean()), 4),
+                "species_wrong_nat": round(float((((kinds == "species") & ~hit) * w)[inl].sum() / w[inl].sum()), 4)}
+    res["expect"] = {"A-test main top1_nat (eval.json final)": round(rep["A-test"]["top1_w"], 4),
+                     "A-test box top1_nat (tas_gap F5)": 0.9479,
+                     "AU-test main top1_nat (eval.json final, all photos)": round(rep.get("AU-test", {}).get("top1_w", float("nan")), 4)}
+    # int8 vs fp32 head on AU-test embeddings (head + bias only)
+    e = sets["AU-test"].emb[:4000].astype(np.float32)
+    q = unit(unit(e) - sh.mu[None])
+    a8, a32 = q @ sh.W.T + sh.b, q @ W_fp32.T + b
+    res["int8_vs_fp32"] = {"top1_agree": round(float((a8.argmax(1) == a32.argmax(1)).mean()), 5),
+                           "max_abs_logit_diff": round(float(np.abs(a8 - a32).max()), 4)}
+    print("v2 check:", json.dumps(res, indent=1))
+    json.dump(res, open(os.path.join(SHIP, "v2-check.json"), "w"), indent=1)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1654,10 +2073,14 @@ def main():
     p.add_argument("--out")
     p = sub.add_parser("au")
     p.add_argument("--observers", default=os.path.join(CACHE, "meta", "observers.csv.gz"))
+    p = sub.add_parser("v2")
+    p.add_argument("--observers", default=os.path.join(CACHE, "meta", "observers.csv.gz"))
+    p.add_argument("--no-check", action="store_true", help="skip the check against the evaluation (~2 min)")
+    p.add_argument("--check-only", action="store_true", help="only the check, on the files already in ship/")
     a = ap.parse_args()
     {"data": cmd_data, "encoders": cmd_encoders, "embed": cmd_embed, "fp32ref": cmd_fp32ref,
      "bench": cmd_bench, "benchall": cmd_benchall, "report": cmd_report, "fixture": cmd_fixture,
-     "au": cmd_au, "au-common": cmd_au_common, "au-labels": cmd_au_labels}[a.cmd](a)
+     "au": cmd_au, "au-common": cmd_au_common, "au-labels": cmd_au_labels, "v2": cmd_v2}[a.cmd](a)
 
 
 if __name__ == "__main__":

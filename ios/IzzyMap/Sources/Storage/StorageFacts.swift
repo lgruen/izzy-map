@@ -14,8 +14,10 @@ nonisolated enum PackSizes {
         .vector: 368_297_665 + 5_702_849 + 24_146_929,
         .topo: 2_044_499_329,
         .relief: 1_287_558_760,
-        // plant ID's files as staged by build_packs.py (w8 encoder + tables, 2026-11-04)
-        .plantid: 726_966_623,
+        // plant ID's files as staged by build_packs.py (w8 encoder + the single model, 2026-11-05)
+        .plantid: 811_495_488,
+        // reference photos, one per species (build_refphotos.py v1 staging, 2026-11-05)
+        .refphotos: 362_000_000,
         .aerial: 1_929_244_001,
         .tasmap: 3_242_875_247,
         .season2020: 282_812_458,
@@ -55,7 +57,7 @@ extension Pack {
 
     nonisolated var storageSection: StorageSection {
         switch self {
-        case .vector, .topo, .relief, .plantid: .maps
+        case .vector, .topo, .relief, .plantid, .refphotos: .maps
         case .aerial, .tasmap: .moreMaps
         default: .seasons
         }
@@ -65,7 +67,7 @@ extension Pack {
     nonisolated var gaugeCategory: StorageGauge.Category {
         switch self {
         case .vector, .topo, .relief: .maps
-        case .plantid: .plantID
+        case .plantid, .refphotos: .plantID
         default: .moreMaps
         }
     }
@@ -79,6 +81,7 @@ extension Pack {
         case .topo: "Topographic map"
         case .relief: "Relief shading"
         case .plantid: "Plant identification"
+        case .refphotos: "Plant reference photos"
         case .aerial: "Aerial photos"
         case .tasmap: "Paper map"
         default: season.map { "\($0.label) photos" } ?? rawValue
@@ -93,6 +96,7 @@ extension Pack {
         case .topo: "theLIST topographic basemap"
         case .relief: "theLIST hillshade"
         case .plantid: "On-device plant model"
+        case .refphotos: "One photo per species, credited"
         case .aerial: "theLIST statewide mosaic"
         case .tasmap: "Tasmap scans, 1:25,000–1:500,000"
         default: "theLIST flying season"
@@ -110,7 +114,7 @@ extension Pack.StorageSection {
     /// Its packs, in the order the screen lists them (seasons newest first).
     nonisolated var packs: [Pack] {
         switch self {
-        case .maps: [.vector, .topo, .relief, .plantid]
+        case .maps: [.vector, .topo, .relief, .plantid, .refphotos]
         case .moreMaps: [.aerial, .tasmap]
         case .seasons: Season.all.reversed().map(\.archive.pack)
         }

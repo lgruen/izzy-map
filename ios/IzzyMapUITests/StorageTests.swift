@@ -135,7 +135,7 @@ final class StorageTests: XCTestCase {
     /// (Leo, 2026-11-04: it opened Storage and the model wasn't listed).
     @MainActor
     func testPlantIDChipOpensItsRow() {
-        let app = offlineApp(["-fakePacks", "vector,topo,relief,plantid=downloading:0.83", "-fakePackSeconds", "600"])
+        let app = offlineApp(["-fakePacks", "vector,topo,relief,refphotos,plantid=downloading:0.83", "-fakePackSeconds", "600"])
         app.launch()
         let chip = app.buttons["maps-arriving"]
         XCTAssertTrue(chip.waitForExistence(timeout: patience(15)))
@@ -154,7 +154,7 @@ final class StorageTests: XCTestCase {
     /// All core packs here: one folded row that unfolds to the four.
     @MainActor
     func testSettledCorePacksFold() {
-        let app = launch(packs: "vector,topo,relief,plantid")
+        let app = launch(packs: "vector,topo,relief,plantid,refphotos")
         openStorage(app)
         let summary = app.descendants(matching: .any)["core-summary"]
         reveal(summary, in: app)

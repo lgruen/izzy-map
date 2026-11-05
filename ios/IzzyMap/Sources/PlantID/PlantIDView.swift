@@ -50,8 +50,12 @@ struct PlantIDView: View {
         }
         // Escape: plant sheet / credits → the suggestions, then closes
         .modalEscape(model, depth: path.count) { if !path.isEmpty { path.removeLast() } }
-        .onAppear { session.use(source) }
+        .onAppear {
+            session.use(source)
+            PlantIDRefPhotos.shared.use(packs: packs)
+        }
         .onChange(of: source) { _, new in session.use(new) }
+        .onChange(of: packs.state(.refphotos)) { _, _ in PlantIDRefPhotos.shared.use(packs: packs) }
         // not while the camera covers Identify: that is still Identify
         .onDisappear { if !session.cameraOpen { session.close() } }
         // DESIGN.md "Haptics": success only for a species; a genus gets a
@@ -97,14 +101,18 @@ struct PlantIDView: View {
     @ViewBuilder private func destination(_ route: PlantIDRoute) -> some View {
         switch route {
         case let .plant(id, key):
+            // the sheet's records and mini-map are Tasmania's: a mainland
+            // place would only ring a point off the map
+            let here = session.place.point.flatMap { PlantIDModel.inTasmania($0) ? $0 : nil }
             PlantSheet(model: model, plantID: id, key: key,
-                       context: PlantContext(code: nil, latitude: session.place.point?.latitude,
-                                             longitude: session.place.point?.longitude),
+                       context: PlantContext(code: nil, latitude: here?.latitude, longitude: here?.longitude),
                        source: "plant-id-\(id)", onClose: { dismiss() })
                 .navigationTitle("")
         case let .noProfile(label):
             if let l = session.label(label) {
-                PlantIDNoProfile(label: l)
+                PlantIDNoProfile(label: l, crop: session.cropImage,
+                                 p: session.result.flatMap { r in (r.candidates + r.genusSpecies).first { $0.label == label }?.p },
+                                 ref: PlantIDRefPhotos.shared.photo(for: label, name: l.name))
             }
         case .credits:
             PlantIDCreditsView(source: source)
@@ -393,35 +401,111 @@ struct PlantIDModelStatus: View {
     }
 }
 
-/// A plant the identifier knows but the Understorey Network has no page for.
+/// A plant the identifier knows but the Understorey Network has no page
+/// for — most of the Australia-wide model's 22,000 natives, and the
+/// Tasmanian model's mosses, weeds and spelling variants. Her photo is the
+/// visual (there is no reference photo to show), then the name set
+/// properly, the family and genus, and one honest line about the guide.
 struct PlantIDNoProfile: View {
     let label: PlantIDLabel
+    var crop: UIImage?
+    var p: Double?
+    /// Its reference photo (refphotos pack), shown beside hers.
+    var ref: PlantIDRefPhoto?
+    @Environment(\.horizontalSizeClass) private var widthClass
+
+    private var explanation: String {
+        label.isTasmanian
+            ? "IzzyMap’s plant pages come from the Understorey Network Tasmania database, which has no page for this species. Many of these are mosses, liverworts, weeds or names the database spells differently."
+            : "The guide covers Tasmania’s plants; this one grows elsewhere in Australia. IzzyMap recognises it from photos taken across the country — compare your photo with the reference before relying on the name."
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(BotanicalNames.species(label.name))
-                    .font(.title2)
-                    .fontDesign(.serif)
-                    .foregroundStyle(DesignColor.ink)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("plant-id-noprofile-name")
-                if let family = label.family {
-                    Text(family)
-                        .font(.subheadline)
+            VStack(alignment: .leading, spacing: 14) {
+                if let ref {
+                    VStack(alignment: .leading, spacing: 6) {
+                        GeometryReader { geo in
+                            let s = (geo.size.width - 8) / 2
+                            HStack(spacing: 8) {
+                                Group {
+                                    if let crop {
+                                        Image(uiImage: crop).resizable().aspectRatio(contentMode: .fill)
+                                    } else {
+                                        Rectangle().fill(Color(uiColor: .tertiarySystemFill))
+                                    }
+                                }
+                                .frame(width: s, height: s)
+                                .clipped()
+                                .accessibilityLabel("Your photo")
+                                RefPhotoImage(photo: ref, side: s)
+                                    .accessibilityIdentifier("plant-id-noprofile-ref")
+                            }
+                        }
+                        .aspectRatio(2, contentMode: .fit)
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("Your photo")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Reference")
+                                RefPhotoCredit(photo: ref)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.caption)
                         .foregroundStyle(DesignColor.secondaryInk)
+                    }
+                    .frame(maxWidth: widthClass == .regular ? 620 : .infinity)
+                } else if let crop {
+                    Image(uiImage: crop)
+                        .resizable()
+                        .aspectRatio(1, contentMode: .fill)
+                        .frame(maxWidth: widthClass == .regular ? 420 : .infinity)
+                        .clipped()
+                        .overlay { Rectangle().strokeBorder(DesignColor.keyline.opacity(0.5), lineWidth: 0.5) }
+                        .overlay(alignment: .bottomLeading) {
+                            Text("Your photo")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(.black.opacity(0.45))
+                                .padding(8)
+                        }
+                        .accessibilityLabel("Your photo")
                 }
-                Text("No Understorey Network profile")
-                    .font(.headline)
-                    .foregroundStyle(DesignColor.ink)
-                    .padding(.top, 8)
-                Text("IzzyMap’s plant pages come from the Understorey Network Tasmania database, which has no page for this species. Many of these are mosses, liverworts, weeds or names the database spells differently.")
-                    .font(.body)
-                    .foregroundStyle(DesignColor.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let id = label.inat, let url = URL(string: "https://www.inaturalist.org/taxa/\(id)") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(BotanicalNames.species(label.name))
+                        .font(.title2)
+                        .fontDesign(.serif)
+                        .foregroundStyle(DesignColor.ink)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("plant-id-noprofile-name")
+                    if let common = label.common.flatMap(CommonName.headline) {
+                        Text(common)
+                            .font(.title3)
+                            .foregroundStyle(DesignColor.ink)
+                    }
+                }
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+                    if let family = label.family { fact("Family", Text(family)) }
+                    fact("Genus", Text(label.genusName).italic().fontDesign(.serif))
+                    if let p { fact("Match", Text(PlantIDResults.percent(p)).monospacedDigit()) }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Not in the Understorey Network guide")
+                        .font(.headline)
+                        .foregroundStyle(DesignColor.ink)
+                    Text(explanation)
+                        .font(.body)
+                        .foregroundStyle(DesignColor.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
+                // a web link only while it can open
+                if Connectivity.shared.online, let id = label.inat, let url = URL(string: "https://www.inaturalist.org/taxa/\(id)") {
                     Link(destination: url) {
-                        Label("iNaturalist page", systemImage: "arrow.up.right.square")
+                        Label("Photos on iNaturalist", systemImage: "arrow.up.right.square")
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DesignColor.ink)
@@ -429,6 +513,18 @@ struct PlantIDNoProfile: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityIdentifier("plant-id-noprofile")
+    }
+
+    private func fact(_ name: String, _ value: Text) -> some View {
+        GridRow {
+            Text(name)
+                .font(.subheadline)
+                .foregroundStyle(DesignColor.secondaryInk)
+            value
+                .font(.body)
+                .foregroundStyle(DesignColor.ink)
         }
     }
 }

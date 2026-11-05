@@ -516,15 +516,21 @@ milestones, map-proof results); the design brief and language is
 - **Plant-ID evaluation:** `pipeline/plantid/README.md`; the UN species
   list comes from the bundled `ios/IzzyMap/Resources/Data/plants.json`
   (`--un-plants`).
-- **Plant-ID pack (rebuild after a retrain / new encoder):**
-  `pipeline/plantid/build_ship.py data` (+ `encoders`; one uv env, see its
-  docstring) → `pipeline/cache/plantid/ship/` (gitignored) → `python3
-  pipeline/build_packs.py plantid --verify plantid` (stages ship/ files
-  sha256-checked against `pipeline.json`, compiles the w8 `.mlpackage` to
-  `.mlmodelc`) → `pipeline/upload_packs.sh plantid` (LOCAL, Leo approves;
-  every upload = a new pack version every device re-downloads, ~0.7 GB).
-  If the scorer's tables change shape, regenerate the Swift fixtures
-  (`build_ship.py fixture`) in the same commit.
+- **Plant-ID pack (rebuild after a retrain / new encoder):** the single
+  Australia-wide model (README "Single model (v2)"): `V2DATA=…/data-final.npz
+  <eval env> pipeline/plantid/build_ship.py v2` (V2_RUN, params read from
+  eval.json / ladder_v3.json / tas_gap.json, ~20 s; then a check of the
+  WRITTEN files against the evaluation, `--check-only`, ~70 s) →
+  `ship/v2-head.bin` (int8 + τ-norm baked in), `v2-prior.bin`,
+  `v2-labels.json`, credits of every training photo, pipeline.json `v2` +
+  `provenance` + the `model` identity the app shows (Diagnostics, Model &
+  training photos) → `python3 pipeline/build_packs.py plantid --verify
+  plantid` (encoder + v2-* + bank-int8.bin, sha256-checked; 0.81 GB) →
+  `pipeline/upload_packs.sh plantid` (LOCAL, Leo approves; every device
+  re-downloads it). The app's scorer is IzzyKit `PlantIDModel` (port of
+  `build_ship.V2Ship`); regenerate the Swift fixtures (`build_ship.py
+  fixture`) when its tables change shape. Reference photos are the
+  separate `refphotos` prefetch pack (`RefPhotoFiles`).
 - **Plant-ID provenance (Leo, 2026-11-05): no weights we can't regenerate.**
   Every script that produced data, embeddings, weights, thresholds or an
   evaluation number is committed (pipeline/plantid/, its notes/ folder and

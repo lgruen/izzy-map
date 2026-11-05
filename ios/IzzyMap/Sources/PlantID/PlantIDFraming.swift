@@ -181,6 +181,13 @@ struct PlantIDFraming: View {
                 .font(.subheadline)
                 .foregroundStyle(DesignColor.ink)
                 .fixedSize(horizontal: false, vertical: true)
+            // pipeline/plantid/notes/preprocessing.md: a single leaf, a bud
+            // or a patch of bark loses 15–25 points against flowers
+            Label("Frame flowers or a whole branch — not a single leaf or bark", systemImage: "camera.macro")
+                .font(.footnote)
+                .foregroundStyle(DesignColor.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("plant-id-framing-hint")
             if !hasSource {
                 PlantIDModelStatus(packs: packs)
             } else if let failed = session.prepareFailed {
