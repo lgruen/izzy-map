@@ -377,7 +377,7 @@ def prior_counts(cell=PRIOR_GRID["cell"]):
                    count(*)::INTEGER AS n
             FROM o JOIN imap_v m USING (species_id)
             WHERE o.role = 'pool' AND {q(EA.AUS)} AND (o.pacc IS NULL OR o.pacc <= 5000)
-            GROUP BY ALL""").arrow()
+            GROUP BY ALL""").to_arrow_table()
         pq.write_table(t, path)
     return pq.read_table(path).to_pydict()
 

@@ -972,6 +972,114 @@ eval_v2 / ladder_v3 / tas_gap to it. The default (iNat) rebuild is identical
 to `ship/au-prior.bin` (rowptr, classes and counts checked). An ALA pull
 (build_records' facet method, nationally) would write (lat, lon, u, n) rows.
 
+### Imbalance ablation (uncapped direction; bound written before launch, 2026-11-05)
+
+Data: current 598k + the 250,411 capped extras (`extra_photos_final.parquet`,
+`--reassign`, 19 merges) = 848,526 photos over 16,909 classes
+(`v2/data-extras.npz`, 1.84 GB) — more skewed than the cap-100 set. Grid
+(`train_v2.grid_imbalance`, 10 configs × seeds 0 and 1 = 20 runs, 12-epoch
+cosine, v2fix otherwise): (i) balanced softmax + uniform sampling; (ii) BS with
+log π from the data + class-balanced sampling (50 / class / epoch, with
+replacement — the double correction); (iii) BS + √n class sampling (log π from
+the sampler); (iv) plain CE + loss weights 1/n; (v) CE + 1/√n; (vi) plain CE
+(+ post-hoc logit adjustment τ' chosen on val at evaluation); (vii) BS τ 0.5 and
+1.5; (viii) (i) with the no-extras step budget (292 steps/epoch); (ix) (i)
+without the extras. Bound: one SPOT L4, 10.3 s/epoch per 598k photos measured
+→ ~14.6 s/epoch here, ~3.2 min per run (2.1 for viii/ix) → ~60 min + ~10 min
+boot/data ≈ 1.2 h ≈ $0.6 VM + ~$0.1 egress (20 heads) ≈ **$0.75**; cap
+`--max-run-duration=3h` (≤ $1.6). Evaluated locally as each head lands
+(`eval_v2.py` light mode + ECE).
+
+**Imbalance ablation — results** (one SPOT L4 us-east1-c, 01:34–03:00 UTC,
+20 runs × 172 s = 14.4 s/epoch for 848k photos measured, ≈ $0.75; VM and disk
+deleted). Evaluated with the leak-free prior (iNat pool + ALA − iNat +
+generalised), T and prior weight re-fitted per run on val; mean ± half-range
+over seeds 0 / 1; `_sp` per species, `_w` natural mix; b19 = AU-test classes
+with 1–9 training photos IN THAT RUN'S DATA (so ix's bucket holds different
+classes); ECE on AU-test (%):
+
+| run (seeds) | val_sp | AU_sp | AU_w | AU_top5_sp | A_sp | A_w | Ceuc_sp | Ceuc_top5 | b19_sp | b19_w | ece_sp | ece_w |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| g-i-bs-uniform (2) | 89.2 ± 0.0 | 82.7 ± 0.0 | 92.7 ± 0.0 | 94.5 ± 0.1 | 87.9 ± 0.1 | 94.1 ± 0.0 | 60.1 ± 0.8 | 86.9 ± 0.2 | 55.6 ± 0.5 | 60.0 ± 0.1 | 1.4 ± 0.1 | 1.5 ± 0.0 |
+| g-ii-bs-classbalanced (2) | 89.1 ± 0.2 | 83.4 ± 0.3 | 92.5 ± 0.0 | 95.0 ± 0.2 | 88.5 ± 0.3 | 94.1 ± 0.1 | 63.1 ± 0.6 | 87.0 ± 0.2 | 63.4 ± 0.4 | 67.5 ± 0.7 | 1.5 ± 0.3 | 1.4 ± 0.2 |
+| g-iii-bs-sqrt (2) | 89.0 ± 0.0 | 82.2 ± 0.3 | 92.7 ± 0.0 | 94.3 ± 0.2 | 87.8 ± 0.6 | 94.1 ± 0.1 | 61.4 ± 0.8 | 86.7 ± 0.4 | 54.5 ± 1.2 | 59.0 ± 0.9 | 1.9 ± 0.3 | 1.4 ± 0.3 |
+| g-iv-ce-iw1 (2) | 89.0 ± 0.0 | 81.9 ± 0.0 | 92.8 ± 0.0 | 93.7 ± 0.0 | 87.7 ± 0.0 | 94.2 ± 0.0 | 59.0 ± 0.5 | 86.2 ± 0.1 | 51.3 ± 0.3 | 55.9 ± 0.2 | 1.8 ± 0.0 | 1.6 ± 0.0 |
+| g-ix-no-extras (2) | 88.8 ± 0.0 | 81.2 ± 0.1 | 92.8 ± 0.1 | 94.1 ± 0.0 | 87.5 ± 0.0 | 94.0 ± 0.2 | 57.1 ± 0.3 | 83.7 ± 0.4 | 59.7 ± 0.3 | 63.5 ± 0.3 | 1.6 ± 0.1 | 1.7 ± 0.1 |
+| g-v-ce-iw0.5 (2) | 88.9 ± 0.0 | 81.7 ± 0.2 | 92.8 ± 0.0 | 93.6 ± 0.2 | 87.6 ± 0.5 | 94.2 ± 0.1 | 58.0 ± 0.6 | 86.1 ± 0.2 | 46.1 ± 1.0 | 51.6 ± 1.2 | 2.2 ± 0.1 | 1.4 ± 0.1 |
+| g-vi-ce-plain (2) | 88.8 ± 0.0 | 81.1 ± 0.3 | 92.5 ± 0.1 | 93.1 ± 0.2 | 87.3 ± 0.1 | 93.9 ± 0.1 | 57.9 ± 1.2 | 85.6 ± 0.1 | 42.5 ± 0.3 | 45.3 ± 0.4 | 1.9 ± 0.1 | 1.8 ± 0.2 |
+| g-vi-ce-plain-posthoc1 (2) | 89.2 ± 0.0 | 82.7 ± 0.0 | 92.7 ± 0.0 | 94.3 ± 0.0 | 87.9 ± 0.0 | 94.1 ± 0.0 | 60.0 ± 0.7 | 86.8 ± 0.1 | 56.1 ± 0.5 | 60.6 ± 0.1 | 1.5 ± 0.0 | 1.4 ± 0.0 |
+| g-vii-bs-tau0.5 (2) | 89.0 ± 0.0 | 81.9 ± 0.0 | 92.7 ± 0.0 | 94.2 ± 0.0 | 87.6 ± 0.1 | 94.1 ± 0.1 | 58.1 ± 0.6 | 86.1 ± 0.0 | 49.0 ± 0.5 | 53.9 ± 0.7 | 2.3 ± 0.3 | 1.3 ± 0.2 |
+| g-vii-bs-tau1.5 (2) | 89.2 ± 0.1 | 83.2 ± 0.0 | 92.5 ± 0.1 | 94.8 ± 0.0 | 88.0 ± 0.0 | 94.1 ± 0.1 | 61.5 ± 0.6 | 86.7 ± 0.0 | 61.5 ± 0.3 | 65.5 ± 0.3 | 1.2 ± 0.1 | 1.7 ± 0.0 |
+| g-viii-bs-budget292 (2) | 89.4 ± 0.0 | 82.9 ± 0.1 | 92.9 ± 0.1 | 94.9 ± 0.1 | 88.3 ± 0.0 | 94.2 ± 0.1 | 61.9 ± 0.5 | 87.1 ± 1.0 | 57.9 ± 0.0 | 61.8 ± 0.1 | 1.4 ± 0.4 | 1.6 ± 0.3 |
+
+- **Per species, the strongest tail correction wins**: balanced softmax with
+  log π from the data PLUS class-balanced sampling (ii — the "double
+  correction" of Ren et al. 2020) gives the best AU-test (83.4 vs 82.7), C-euc
+  (63.1 vs 60.1) and 1–9-photo bucket (63.4 vs 55.6), A 88.5 vs 87.9, for −0.2
+  pt natural mix and equal ECE; τ 1.5 points the same way (83.2 / 61.5 / 61.5).
+  The "over-correction" is what a per-species objective wants. Val (unweighted
+  per species, 76 % well-photographed classes) does not separate them (89.1 vs
+  89.2) — the tail is under-represented on val, as in the ladder analysis.
+- **Extras help**: i vs ix (same recipe, without the 250k extras): AU-test
+  82.7 vs 81.2 per species, C-euc 60.1 vs 57.1 (top-5 86.9 vs 83.7), A 87.9 vs
+  87.5; natural mix unchanged (92.7 vs 92.8).
+- Frequent classes don't eat the step budget harmfully: viii (the no-extras
+  step budget, 70 % of the steps) ties or slightly beats i (82.9 vs 82.7).
+- Plain CE + post-hoc logit adjustment (τ' 1 on val) = balanced softmax
+  (82.7); importance weights (1/n 81.9, 1/√n 81.7), √n sampling (82.2), τ 0.5
+  (81.9) and plain CE (81.1; 1–9 bucket 42.5) are worse per species.
+
+### Location prior from ALA (2026-11-05)
+
+ALA occurrence counts (`sources/ala_counts/`, 20.2M records, 19,484 labels;
+filters as build_records.py) via `prior_v2.py`. **Leak:** ALA contains 3.35M
+iNaturalist-Australia records (dr1411), including the val/test observations
+themselves, so a raw ALA prior "knows" the test photo's own record — raw ALA
+gave AU-test 82.9 per species and A 89.7 / 95.0, which are NOT valid. Leak-free
+variants (v2fix head, everything tuned on val; per species / natural):
+
+| prior | val sp | A | C-main | C-euc top-1 / top-5 | AU-test | AU-test euc top-1 / top-5 | 1–9 bucket |
+|---|---|---|---|---|---|---|---|
+| iNat pool √counts (v2) | 0.882 | 85.3 / 93.4 | 77.4 | 56.1 / 80.4 | 78.2 / 92.7 | 58.0 / 81.7 | 49.9 |
+| ALA − all iNat records (subtracted per cell × class) | 0.874 | 87.0 / 93.4 | 78.2 | 55.7 / 82.0 | 79.7 / 91.8 | 57.3 / 82.0 | 56.3 |
+| … + ALA generalised (2,498 labels without precise records) | 0.877 | 86.2 / 93.3 | 79.3 | 56.3 / 81.9 | 79.8 / 92.0 | 57.1 / 81.6 | 58.9 |
+| **iNat pool + ALA − iNat + generalised** | **0.887** | 86.8 / **94.0** | **80.5** | 56.9 / 82.0 | **80.9 / 92.6** | **59.6 / 82.2** | **59.9** |
+
+(√counts, σ 5 km, α 64, λ 1.0 chosen on val; ECE 1.5 % natural / 1.8 % per
+species.) The generalised table only covers labels without precise records,
+so "all labels" and "only those" are the same. The subtraction leaves ALA's
+iNat records that are not in our snapshot (~0.5M: ARR photos, newer); the
+exact fix — a re-pull with `-dataResourceUid:dr1411` — is the evaluation
+prior once it lands, the subtraction stays as a cross-check.
+Exact fix, landed: ALA re-pulled with `-data_resource_uid:dr1411`
+(16.88M records): **iNat pool + ALA(no iNat) + generalised(no iNat)** → val
+0.885 (√, σ 10 km, α 64, λ 0.75; σ 5 / λ 1 scores 0.884 — a tie), A 87.0 /
+93.5, C-main 80.7, C-euc 55.7 / 82.4, AU-test 80.9 / 92.5, AU-test eucalypts
+58.6 / 83.0, 1–9 bucket 58.2, ECE 1.1 % natural / 2.5 % per species — the
+subtraction version agrees within noise (80.9 / 80.9 on AU-test, ±1.7 pt on
+the smaller sets). Builds: `prior-eval-inatpool+ala-noinat.bin` (evaluation),
+`prior-ship-inatall+ala-noinat.bin` (19.8M records, 5.58M cell × class pairs,
+24.8 MB — the shipped one, see below).
+**Shipped prior** (decided): built from ALL data — iNat records of every
+observer + ALA without dr1411 (= de-duplicated against iNat) + generalised —
+with the parameters chosen on the leak-free val (leakage only matters for
+measuring). Both builds are recorded in provenance (`prior_v2.py` steps).
+
+### Final training at full scale (plan; measured basis)
+
+Expected data: ~3.4M photos (K = 1,000 uncapped iNat set 3.15M + ALA field
+photos + Commons) → `v2/data-final.npz` ≈ 7 GB (fp16) + val arrays.
+Measured: 14.4 s per epoch for 848,526 photos on one L4 (imbalance grid,
+2026-11-05) → **~58 s/epoch → 12 epochs ≈ 12 min** on the L4; the M4 (MPS,
+87 s per 598k-photo epoch) would need ~8 min/epoch ≈ 1.7 h — so the L4.
+Memory: 3.4M × 1,024 fp16 = 7 GB fits the L4's 24 GB (`V2_GPU_BYTES` default 8 GB
+keeps it on the GPU; larger sets stream batches from RAM automatically); the
+g2-standard-8 has 32 GB RAM for the npz. Overheads measured this week: VM
+boot + uv env 5–25 min (PyPI speed varies), laptop → GCS upload ~12 MB/s
+(7 GB ≈ 10 min). Bound per final run ≈ 0.75 h ≈ $0.4; a 2-seed final + the
+with/without-bank comparison ≈ $1. Sampling: uniform over ALL photos +
+balanced softmax (see the imbalance ablation), no dataset cap.
+
 ### Rebuild (provenance; CLAUDE.md "Plant-ID provenance")
 
 Every v2 step (`train_v2.py data / local`, `prior_v2.py`, `eval_v2.py`,

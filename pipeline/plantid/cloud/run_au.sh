@@ -42,7 +42,7 @@ case "${1:-}" in
   v2-upload)  # train_v2.py: code + data.npz
     tar -C "$P" -czf /tmp/izzy-au-code.tgz train_australia.py embed.py train_v2.py
     $G storage cp /tmp/izzy-au-code.tgz "$BUCKET/code/code.tgz"
-    $G storage cp "$C/australia/v2/data.npz" "$BUCKET/v2/data.npz" ;;
+    for f in "$C"/australia/v2/data*.npz; do $G storage cp "$f" "$BUCKET/v2/$(basename "$f")"; done ;;
   release)
     tar -C "$P" -czf /tmp/izzy-au-code.tgz train_australia.py embed.py
     $G storage cp /tmp/izzy-au-code.tgz "$BUCKET/code/code.tgz"
@@ -56,7 +56,7 @@ case "${1:-}" in
       --image-family pytorch-2-9-cu129-ubuntu-2204-nvidia-580 \
       --image-project deeplearning-platform-release \
       --boot-disk-size 120GB --boot-disk-type pd-balanced --scopes cloud-platform \
-      --metadata "install-nvidia-driver=True,izzy-bucket=$BUCKET,izzy-mode=$MODE,izzy-shards=$N" \
+      --metadata "install-nvidia-driver=True,izzy-bucket=$BUCKET,izzy-mode=$MODE,izzy-shards=$N,izzy-grid=${GRID:-}" \
       --metadata-from-file startup-script="$HERE/vm_au.sh" ;;
   again)
     MODE=${2:?mode}; N=${3:?shards}; CAP=${4:?cap}

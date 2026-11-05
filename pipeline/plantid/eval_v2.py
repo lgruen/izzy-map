@@ -211,7 +211,12 @@ def main():
     def logits(run, S, rows=slice(None)):
         W = torch.from_numpy(runs[run]["W"].astype(np.float32)).to(DEV)
         b = torch.from_numpy(runs[run]["b"].astype(np.float32)).to(DEV)
-        return S.q[rows].to(DEV).float() @ W.T + b + colmask
+        L = S.q[rows].to(DEV).float() @ W.T + b + colmask
+        pt = float(os.environ.get("POSTHOC_TAU", 0))  # post-hoc logit adjustment (plain-CE heads)
+        if pt:
+            n = torch.from_numpy(runs[run]["n_c"].astype(np.float32)).to(DEV)
+            L = L - pt * torch.where(n > 0, torch.log(n), torch.zeros_like(n))[None]
+        return L
 
     # ---- location prior variants (abundance vs range), on AU-vtune per species
     pc = TA.prior_counts()
@@ -388,6 +393,18 @@ def main():
                 out["A-test"] = mets(S, top, p1, genus, None, thr)
         return out
     rep = {"final": report("final", T=Tf)}
+    if os.environ.get("EVAL_LIGHT"):  # prior comparisons: tuning + the final row only
+        res["report"] = {"final": rep["final"]}
+        S = sets["AU-test"]
+        top, p1 = run_set(S, T=Tf)
+        corr = (top[:, 0] == S.y).astype(float)
+        _, inv = np.unique(S.y, return_inverse=True)
+        res["ece_AU-test"] = {"natural": ece(p1, corr, S.w)[0], "per_species": ece(p1, corr, 1.0 / np.bincount(inv)[inv])[0]}
+        res["n_train_buckets"] = {bn: int(((n_tr >= lo) & (n_tr <= hi)).sum()) for lo, hi, bn in BUCKETS}
+        out = os.environ.get("EVAL_OUT") or os.path.join(V2, "eval-light.json")
+        json.dump(res, open(out, "w"), indent=1, default=float)
+        print(f"light eval → {out} ({time.time() - t0:.0f} s)")
+        return
     thr_keep = thr
     thr = thr_plain
     rep["final_plain_ladder"] = report("final_pl", T=Tf)

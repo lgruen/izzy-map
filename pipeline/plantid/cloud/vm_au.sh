@@ -54,12 +54,13 @@ if [[ $MODE == *train* ]]; then
   $E code/train_australia.py vm-train --bucket "$B" --work "$W" || finish "train failed"
 fi
 if [[ $MODE == *v2* ]]; then  # train_v2.py: single-model sweep on precomputed arrays
-  gcloud storage cp "$B/v2/data.npz" . --quiet || finish "no v2 data"
+  GRID=$(md izzy-grid || echo "")
+  gcloud storage cp "$B/v2/data*.npz" . --quiet || finish "no v2 data"
   echo "uv: $(command -v uv) $(uv --version)"
   $E -c "import torch, numpy, sys; print('env ok', sys.executable, torch.__version__, torch.cuda.is_available())"
   $E -c "print('env ok')" | grep -q "env ok" || { echo "uv env broken → uv cache clean"; uv cache clean; \
     $E -c "import torch; print('env ok after clean', torch.__version__)"; }
-  $E code/train_v2.py vm --bucket "$B" --work "$W"; rc=$?
+  $E code/train_v2.py vm --bucket "$B" --work "$W" ${GRID:+--grid "$GRID"}; rc=$?
   echo "train_v2 exit $rc"; [ $rc = 0 ] || finish "v2 failed"
 fi
 finish ok

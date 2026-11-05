@@ -359,10 +359,62 @@ def train(c, D, dev, log=print, max_steps=None):
             if n:
                 keep.append(order[starts[k]:starts[k] + max(1, math.ceil(c["frac"] * n))])
         idx = np.sort(np.concatenate(keep))
-    Xc = centre(D["Xtr"][idx])
+    # uncapped data: keep the centred photos on the GPU only if they fit (V2_GPU_BYTES,
+    # default 8 GB), else in RAM and stream each batch over
+    on_dev = len(idx) * 1024 * 2 <= float(os.environ.get("V2_GPU_BYTES", 8e9))
+    Xc = centre(D["Xtr"][idx]) if on_dev else torch.cat([centre(D["Xtr"][idx[i:i + 262144]]).cpu()
+                                                          for i in range(0, len(idx), 262144)])
     yt = torch.from_numpy(y[idx]).to(dev)
     n_c = torch.bincount(yt, minlength=C).float()
-    logpi = torch.where(n_c > 0, torch.log(n_c / n_c.sum()), torch.full_like(n_c, -1e4))
+    # per-epoch sampler (the DATA is uncapped; frequent classes are thinned per epoch):
+    #   uniform   every photo once per epoch (v2fix)
+    #   cap:K     ≤ K random photos per class per epoch (fresh draw each epoch)
+    #   pow:a:K   m_c = min(n_c, K·(n_c/K)^a) random photos per class per epoch
+    # logit adjustment uses the class frequencies the SAMPLER produces
+    smp = c.get("sampler", "uniform")
+    nc_np = n_c.cpu().numpy()
+    if smp == "uniform":
+        m_c = nc_np
+    elif smp.startswith("cap:"):
+        m_c = np.minimum(nc_np, float(smp.split(":")[1]))
+    elif smp.startswith("balanced:"):  # K per class per epoch, with replacement for small classes
+        m_c = np.where(nc_np > 0, float(smp.split(":")[1]), 0.0)
+    elif smp == "sqrt":  # class sampled ∝ √n, same epoch size, with replacement
+        r_ = np.sqrt(nc_np)
+        m_c = np.round(r_ / r_.sum() * nc_np.sum())
+        m_c[(nc_np > 0) & (m_c < 1)] = 1
+    elif smp.startswith("pow:"):
+        _, a_, K_ = smp.split(":")
+        m_c = np.minimum(nc_np, np.maximum(1.0, np.round(float(K_) * (np.maximum(nc_np, 1) / float(K_)) ** float(a_))))
+        m_c[nc_np == 0] = 0
+    else:
+        raise ValueError(smp)
+    # logit adjustment from the sampler's class frequencies (consistent), or — to show the
+    # double correction of balanced sampling + balanced softmax — from the data ("la_from": "data")
+    m_t = torch.from_numpy((nc_np if c.get("la_from") == "data" else m_c).astype(np.float32)).to(dev)
+    logpi = torch.where(m_t > 0, torch.log(m_t / m_t.sum()), torch.full_like(m_t, -1e4))
+    y_np = y[idx]
+    srt = np.argsort(y_np, kind="stable")
+    starts = np.r_[0, np.cumsum(np.bincount(y_np, minlength=C))]
+    ep_rng = np.random.default_rng(c["seed"] + 1)
+
+    budget = c.get("steps_per_epoch")
+
+    def epoch_rows():
+        if smp == "uniform":
+            r = torch.randperm(len(y_np), device=dev)
+            return r[:budget * c["bs"]] if budget else r
+        if smp.startswith("balanced:") or smp == "sqrt":  # m_c draws per class, with replacement
+            cls = np.nonzero(m_c > 0)[0]
+            reps = m_c[cls].astype(np.int64)
+            cc = np.repeat(cls, reps)
+            pick = starts[cc] + (ep_rng.random(len(cc)) * nc_np[cc]).astype(np.int64)
+            return torch.from_numpy(ep_rng.permutation(srt[pick])).to(dev)
+        key = ep_rng.random(len(y_np))
+        o = np.lexsort((key, y_np))  # class, then random
+        rank = np.arange(len(o)) - starts[y_np[o]]
+        keep = o[rank < m_c[y_np[o]]]
+        return torch.from_numpy(ep_rng.permutation(keep)).to(dev)
     Tc = torch.from_numpy(unit(D["T"].astype(np.float32) - D["T"].astype(np.float32).mean(0))).to(dev)
     # parametrised at unit scale: W = s0 · (W0 + Δ), b = s0 · β, so Adam's step size is
     # relative to unit-norm rows (as in the Tasmanian head) whatever s0 is
@@ -386,7 +438,7 @@ def train(c, D, dev, log=print, max_steps=None):
     beta = torch.nn.Parameter(torch.zeros(C, device=dev))
     opt = torch.optim.AdamW([Dw, beta], lr=c["lr"], weight_decay=c["wd"], betas=(0.9, 0.999))
     n = len(yt)
-    spe = -(-n // c["bs"])
+    spe = c.get("steps_per_epoch") or -(-int(m_c.sum()) // c["bs"])
     total = spe * c["epochs"]
     warm = spe
 
@@ -401,14 +453,17 @@ def train(c, D, dev, log=print, max_steps=None):
     sw = torch.ones(n, device=dev)
     if c.get("tas_weight", 1.0) != 1.0:
         sw[torch.from_numpy(D["tas"][idx]).to(dev)] = c["tas_weight"]
+    if c.get("iw"):  # importance weighting: per-photo loss weight 1 / n_class^iw (1 = classes equal)
+        sw = sw / n_c[yt].clamp(min=1) ** float(c["iw"])
     curve, best, bad, step, t0 = [], None, 0, 0, time.time()
     for ep in range(1, c["epochs"] + 1):
-        perm = torch.randperm(n, device=dev)
+        perm = epoch_rows()
         tl, tn = 0.0, 0
-        for i in range(0, n, c["bs"]):
+        for i in range(0, len(perm), c["bs"]):
             bi = perm[i:i + c["bs"]]
             W = s0 * (W0 + Dw)
-            logits = Xc[bi].float() @ W.T + s0 * beta
+            xb = Xc[bi] if on_dev else Xc[bi.cpu()].to(dev, non_blocking=True)
+            logits = xb.float() @ W.T + s0 * beta
             ce = torch.nn.functional.cross_entropy(logits + tau * logpi, yt[bi], reduction="none")
             loss = (ce * sw[bi]).sum() / sw[bi].sum()
             opt.zero_grad(set_to_none=True)
@@ -446,7 +501,8 @@ def train(c, D, dev, log=print, max_steps=None):
                 break
         if max_steps and step >= max_steps:
             break
-    info = {"best_epoch": best[1], "best_val_top1_sp": best[0], "photos": int(n),
+    info = {"best_epoch": best[1], "best_val_top1_sp": best[0], "photos": int(n), "photos_per_epoch": int(m_c.sum()),
+            "sampler": smp, "on_device": bool(on_dev),
             "classes_with_photos": int((n_c > 0).sum()), "seconds": round(time.time() - t0, 1)}
     return curve, best[2], best[3], info, n_c.cpu().numpy()
 
@@ -498,9 +554,38 @@ def cmd_local(a):
                   extra={"cfg": c, "info": info, "device": "mps" if torch.backends.mps.is_available() else "cpu"})
 
 
+def grid_imbalance():
+    """Imbalance-strategy ablation (README): capped extras data unless noted, 2 seeds each."""
+    b = dict(BASE, tau=1.0, wd=0.01, epochs=12, data="data-extras.npz")
+    g = {"i-bs-uniform": {}, "ii-bs-classbalanced": {"sampler": "balanced:50", "la_from": "data"},
+         "iii-bs-sqrt": {"sampler": "sqrt"}, "iv-ce-iw1": {"tau": 0.0, "iw": 1.0}, "v-ce-iw0.5": {"tau": 0.0, "iw": 0.5},
+         "vi-ce-plain": {"tau": 0.0}, "vii-bs-tau0.5": {"tau": 0.5}, "vii-bs-tau1.5": {"tau": 1.5},
+         "viii-bs-budget292": {"steps_per_epoch": 292}, "ix-no-extras": {"data": "data.npz"}}
+    return [dict(b, **v, name=f"g-{k}-s{sd}", seed=sd) for k, v in g.items() for sd in (0, 1)]
+
+
 def cmd_vm(a):
     import torch
     bucket = a.bucket.rstrip("/")
+    if a.grid:
+        od = os.path.join(a.work, "runs")
+        os.makedirs(od, exist_ok=True)
+        r = subprocess.run(["gcloud", "storage", "ls", f"{bucket}/v2/runs/"], capture_output=True, text=True)
+        have = {os.path.basename(l)[:-4] for l in r.stdout.split() if l.endswith(".npz")}
+        cache = {}
+        for c in {"imbalance": grid_imbalance}[a.grid]():
+            if c["name"] in have:
+                print(f"{c['name']}: done already", flush=True)
+                continue
+            if c["data"] not in cache:
+                cache.clear()
+                cache[c["data"]] = dict(np.load(os.path.join(a.work, c["data"])))
+            curve, W, b, info, n_c = train(c, cache[c["data"]], "cuda", lambda s: print(s, flush=True))
+            p = os.path.join(od, c["name"] + ".npz")
+            np.savez(p, W=W, b=b, n_c=n_c.astype(np.int32), meta=np.array(json.dumps({"cfg": c, "info": info, "curve": curve})))
+            subprocess.run(["gcloud", "storage", "cp", p, f"{bucket}/v2/runs/", "--quiet"], check=True)
+            print(f"{c['name']}: {info}", flush=True)
+        return
     D = dict(np.load(os.path.join(a.work, "data.npz")))
     od = os.path.join(a.work, "runs")
     os.makedirs(od, exist_ok=True)
@@ -543,6 +628,7 @@ def main():
     p = sub.add_parser("vm")
     p.add_argument("--bucket", required=True)
     p.add_argument("--work", required=True)
+    p.add_argument("--grid", help="a named run grid (imbalance) instead of the stage-1/2/3 sweep")
     p = sub.add_parser("local")
     p.add_argument("runs", nargs="+", help='JSON configs over BASE, e.g. {"name": "x", "epochs": 12}')
     a = ap.parse_args()
