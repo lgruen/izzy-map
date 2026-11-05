@@ -972,6 +972,51 @@ eval_v2 / ladder_v3 / tas_gap to it. The default (iNat) rebuild is identical
 to `ship/au-prior.bin` (rowptr, classes and counts checked). An ALA pull
 (build_records' facet method, nationally) would write (lat, lon, u, n) rows.
 
+### Rebuild (provenance; CLAUDE.md "Plant-ID provenance")
+
+Every v2 step (`train_v2.py data / local`, `prior_v2.py`, `eval_v2.py`,
+`ladder_v3.py`) appends a line to `australia/v2/provenance-steps.jsonl`: argv,
+env (V2DATA / V2PRIOR / FINAL), git commit of pipeline/plantid and whether it
+was clean (a dirty tree prints a warning — commit before the output ships),
+torch/numpy versions, device, the chosen parameters, sha256 of inputs and
+outputs. `provenance.py section` turns the log into `provenance.json` (git,
+steps, iNat open-data snapshot files, BioCLIP revision, input hashes + GCS
+paths, embedding prefixes, seeds, determinism note); `provenance.py ship`
+merges it into `ship/pipeline.json` as `provenance`. Start each release with a
+fresh log (`mv provenance-steps.jsonl provenance-steps-<date>.jsonl`).
+
+Determinism: training seeds torch (cfg seed 0) and numpy (data fractions);
+the val subsets are sha256(observer) hashes. Two identical 1-epoch runs gave
+bit-identical weights on MPS and on CPU (torch 2.7, measured 2026-11-05);
+MPS, CPU and CUDA differ from each other in float reduction order, so rebuild
+on the device recorded in the step.
+
+From GCS (`gs://leo-superresolution-izzy-plantid/au`, content-addressed small
+inputs under `inputs/<sha256>/<name>`, listed in `australia/v2/inputs-gcs.json`
+and the `provenance` section):
+
+```bash
+B=gs://leo-superresolution-izzy-plantid/au; C=pipeline/cache/plantid
+gcloud storage rsync $B/emb  $C/australia/train/emb          # 590,824 photos (2026-11-04 run)
+gcloud storage rsync $B/emb0 $C/emb/bioclip25                # 92,006 photos (2026-11-01 run)
+# + the extras' shards (their GCS prefix is recorded as extra_emb in the data step)
+# inputs: copy each inputs/<sha>/<name> to its path (provenance.INPUTS maps name → path)
+E="uv run --python 3.12 --with torch==2.7.* --with torchvision==0.22.* --with open_clip_torch \
+   --with numpy<2.3 --with scipy --with pyarrow --with pillow --with duckdb --with matplotlib python3 -I"
+D=$C/australia/v2/data-final.npz
+V2DATA=$D $E pipeline/plantid/train_v2.py data --extra $C/extra/extra_photos.parquet \
+    --extra-emb <extras dir> --reassign $C/extra/reassign_train.parquet
+$E pipeline/plantid/prior_v2.py build [--counts …]           # iNat default = ship/au-prior.bin
+V2DATA=$D $E pipeline/plantid/train_v2.py local '{"name": "final-v3", "tau": 1.0, "wd": 0.01, "epochs": 12, "tas_weight": 3.0}'
+V2DATA=$D FINAL=final-v3 $E pipeline/plantid/eval_v2.py
+V2DATA=$D $E pipeline/plantid/ladder_v3.py final-v3
+$E pipeline/plantid/provenance.py section    # then, when the v2 files are staged: provenance.py ship
+```
+
+The exact argv of the shipped build is in `provenance.steps`; the command list
+above is the template. The v2 ship step (writing the head / prior / ladder into
+`ship/`) is not written yet — it lands with the app scorer change.
+
 ## Licences
 
 Only photos under CC0 / PD / CC BY / CC BY-NC are fetched (iNat's

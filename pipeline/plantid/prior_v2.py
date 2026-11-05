@@ -68,6 +68,9 @@ def main():
     BS.write_deg_prior(out, cell // G["nx"], cell % G["nx"], cls, np.maximum(np.round(cnt), 1).astype(np.int64), C, G,
                        10.0, 16.0, "occurrence counts per (0.05° cell, class): " + json.dumps(meta))
     print(json.dumps(meta, indent=1))
+    import provenance as PV
+    PV.record("v2 prior", inputs=[s.partition(":")[0] for s in a.counts] or
+              [os.path.join(TA.AU, "train", f"prior_counts_{G['cell']:g}.parquet")], outputs=[out])
 
 
 if __name__ == "__main__":

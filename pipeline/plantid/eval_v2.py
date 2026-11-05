@@ -520,6 +520,11 @@ def main():
                             "classes": int(msk.sum()), "zero_photo_classes_acc": float(per_acc[~msk].mean())
                             if (~msk).any() else None}
     json.dump(res, open(os.path.join(V2, "eval.json"), "w"), indent=1, default=float)
+    import provenance as PV
+    PV.record("v2 eval", inputs=[V.DATA, os.path.join(V2, "runs", final + ".npz"),
+                                 os.environ.get("V2PRIOR") or os.path.join(BS.SHIP, "au-prior.bin")],
+              outputs=[os.path.join(V2, "eval.json")],
+              extra={"chosen": {"run": final, "prior": bp, "temperature": Tf, "ladder": list(thr)}})
     plots(res, runs, final, cal, per_n, per_acc, coef)
     write_md(res, os.path.join(V2, "eval.md"))
     print(open(os.path.join(V2, "eval.md")).read())

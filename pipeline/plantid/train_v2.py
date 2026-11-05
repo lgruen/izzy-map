@@ -215,6 +215,11 @@ def cmd_data(a):
              latv=pe["lat"][m], lonv=pe["lon"][m], obsv=pe["observer_id"][m],
              Xa=ev["X"].astype(np.float16), ya=ya.astype(np.int32), wa=ev["w"].astype(np.float32),
              spa=ev["sp"], lata=ev["lat"], lona=ev["lon"])
+    import provenance as PV
+    PV.record("v2 data", inputs=[os.path.join(TA.AU, "plan", "train.parquet"), os.path.join(TA.AU, "plan", "eval.parquet"),
+                                 os.path.join(CACHE, "sets", "train.parquet"), os.path.join(TA.AU, "labels.parquet"),
+                                 os.path.join(TA.AU, "text.npz"), NAME_MAP, a.extra, a.reassign], outputs=[out],
+              extra={"extra_emb": a.extra_emb})
     print(f"val: AU-val {m.sum():,} photos, A-val {len(ya):,}; → {out} "
           f"({os.path.getsize(out) / 1e9:.2f} GB)")
 
@@ -488,6 +493,9 @@ def cmd_local(a):
         np.savez(os.path.join(od, c["name"] + ".npz"), W=W, b=b, n_c=n_c.astype(np.int32),
                  meta=np.array(json.dumps({"cfg": c, "info": info, "curve": curve})))
         print(f"{c['name']}: {info}", flush=True)
+        import provenance as PV
+        PV.record("v2 train", inputs=[DATA], outputs=[os.path.join(od, c["name"] + ".npz")],
+                  extra={"cfg": c, "info": info, "device": "mps" if torch.backends.mps.is_available() else "cpu"})
 
 
 def cmd_vm(a):

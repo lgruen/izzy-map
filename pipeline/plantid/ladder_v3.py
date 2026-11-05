@@ -174,6 +174,9 @@ def main():
         m = None if sub is None else (S.sub == sub if sub != "euc_y" else euc[np.maximum(S.y, 0)] & (S.y >= 0))
         res["report"][nm] = {"v3": rates(S, F, prm, mask=m), "old 0.80/0.55": rates(S, F, old, mask=m)}
     json.dump(res, open(os.path.join(V.V2, "ladder_v3.json"), "w"), indent=1)
+    import provenance as PV
+    PV.record("v2 ladder", inputs=[V.DATA, os.path.join(V.V2, "runs", run + ".npz"), os.path.join(V.V2, "eval.json")],
+              outputs=[os.path.join(V.V2, "ladder_v3.json")], extra={"chosen": {k: (list(map(float, v)) if isinstance(v, list) else float(v)) for k, v in prm.items()}})
     P_ = lambda x: f"{100 * x:.1f}"  # noqa: E731
     print("chosen", prm)
     print("| set | ladder | species | species right | stated wrong | genus (wrong) | not sure | natural: species / stated wrong |")
