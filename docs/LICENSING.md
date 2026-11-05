@@ -1,7 +1,7 @@
 # Licensing boundaries (read before touching data flows)
 
-This repo is **public**. Six licence regimes apply (§1, §1b, §1c, §1d, §2,
-§3; §4 is the refusal rule for unlicensed services) — the architecture is shaped
+This repo is **public**. Seven licence regimes apply (§1, §1b, §1c, §1d, §1e,
+§2, §3; §4 is the refusal rule for unlicensed services) — the architecture is shaped
 around keeping them separate. What governs is the **copyright text
 of each dataset/service**: the LIST Web Services T&C (Dec 2014, 8 clauses,
 `listdata.thelist.tas.gov.au/public/LISTWebServicesTermsConditions.pdf`) say
@@ -107,6 +107,34 @@ badge/link. The app shows this on the About screen and map attribution.
   "Occurrence records: Atlas of Living Australia (incl. Tasmanian Natural
   Values Atlas, iNaturalist Australia, Australasian Virtual Herbarium)",
   with a link to ala.org.au on the About screen.
+
+## 1e. Australian Plant Image Index (APII) photos — plant-ID training and reference photos
+
+- **What:** APII photos (Australian National Botanic Gardens, ALA data
+  resource dr413), fetched from ALA's image service at 500 px for the
+  Australia-wide plant ID (`pipeline/plantid/sources_pull.py`, notes in
+  `pipeline/plantid/notes/photo_sources.md`): training photos and, since
+  Leo's decision of 2026-11-05, **reference photos** in the app's pack.
+  Never committed to this repo.
+- **The two texts** (both satisfied by our use):
+  - ALA: every APII image record and the collectory entry for dr413 carry
+    **CC BY 3.0 AU** (images.ala.org.au per-image `license`, verified
+    2026-11-05).
+  - ANBG's own terms
+    (https://www.anbg.gov.au/photo/photo-collection-use.html, updated
+    2026-09-23; read 2026-11-05) allow "non-commercial use of
+    low-resolution images … on condition that the photographer is credited
+    by name, if known, and that the copyright holder is also acknowledged",
+    with the source given as the Australian National Botanic Gardens.
+    ANBG's image pages show "© contact APII" and name the photographer as
+    the copyright holder.
+- **Credit format** (next to every APII photo):
+  "© <photographer> · Australian National Botanic Gardens (APII) · CC BY
+  3.0 AU · via ALA". The photographer is left out if unknown — never write
+  "Unknown".
+- **Limit:** this rests on IzzyMap being private and non-commercial (low
+  resolution, credited). **Public or App Store distribution needs the ANBG
+  photograph curator's confirmation first (photo@anbg.gov.au).**
 
 ## 2. © All rights reserved — must NEVER enter this repo or our hosting
 

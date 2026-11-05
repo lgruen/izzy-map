@@ -326,6 +326,28 @@ def norm_lic(s):
     return None
 
 
+# APII (Leo, 2026-11-05; docs/LICENSING.md §1e): reference photos allowed — ALA's per-image
+# records say CC BY 3.0 AU, and ANBG's own terms allow non-commercial use of low-resolution
+# images crediting the photographer (if known) and the copyright holder. Credit both ways.
+APII_NOTE = "APII: ANBG non-commercial low-res terms + CC BY 3.0 AU per ALA"
+NO_NAME = {"", "unknown", "not_supplied", "not supplied", "anonymous", "none", "n/a"}
+
+
+def apii_credit(who):
+    who = (who or "").strip()
+    head = f"© {who} · " if who.lower() not in NO_NAME else ""
+    return f"{head}Australian National Botanic Gardens (APII) · CC BY 3.0 AU · via ALA"
+
+
+def apii_fix(df):
+    """Apply the APII decision to an existing candidates/extras table (in place)."""
+    m = (df["data_resource"] == APII) & df["license"].isin(["CC-BY"]) & (df["licence_source"] == "image")
+    df.loc[m, "ref_ok"] = True
+    df.loc[m, "ref_note"] = APII_NOTE
+    df.loc[m, "attribution"] = [apii_credit(w) for w in df.loc[m, "login"]]
+    return int(m.sum())
+
+
 REF_OK = {"CC0", "PD", "CC-BY", "CC-BY-NC", "CC-BY-SA", "CC-BY-NC-SA"}
 LIC_LABEL = {"CC0": "CC0", "PD": "public domain", "CC-BY": "CC BY", "CC-BY-NC": "CC BY-NC",
              "CC-BY-SA": "CC BY-SA", "CC-BY-NC-SA": "CC BY-NC-SA", "CC-BY-ND": "CC BY-ND",
@@ -454,8 +476,8 @@ def cmd_ala_info(limit=None):
             who = None
         dr = r["dataResourceUid"]
         train_ok = lic is not None
-        ref_ok = bool(lic in REF_OK and lic_src == "image" and dr != APII and who)
-        note = ("APII: training only until the ANBG curator confirms" if dr == APII else
+        ref_ok = bool(lic in REF_OK and lic_src == "image" and (who or dr == APII))
+        note = (APII_NOTE if dr == APII else
                 "licence from the occurrence record, not the image" if lic_src == "record" else
                 "ND: byte-for-byte only" if lic and "ND" in lic else
                 "no creator to attribute" if lic and not who else None)
@@ -464,7 +486,8 @@ def cmd_ala_info(limit=None):
                      "observation_uuid": r.get("uuid"), "data_resource": dr, "dr_name": drn.get(dr),
                      "basis": r.get("basisOfRecord"), "login": who,
                      "license": lic, "licence_source": lic_src, "licence_raw": m.get("license") or r.get("license"),
-                     "attribution": (f"© {who}, {LIC_LABEL[lic]}, via {drn.get(dr)} (Atlas of Living Australia)"
+                     "attribution": (apii_credit(who) if dr == APII else
+                                     f"© {who}, {LIC_LABEL[lic]}, via {drn.get(dr)} (Atlas of Living Australia)"
                                      if lic and who else None),
                      "url": f"https://images.ala.org.au/image/{im}",
                      "src_url": None, "page_url": f"https://biocache.ala.org.au/occurrences/{r.get('uuid')}",
@@ -892,6 +915,7 @@ def cmd_dedup(limit=None):
         if not os.path.exists(cand):
             continue
         C = pq.read_table(cand).to_pandas()
+        apii_fix(C)
         H = parts(hp).drop_duplicates("key", keep="last").rename(columns={"key": "image_id"})
         C = C.merge(H, on="image_id", how="left", suffixes=("", "_img"))
         frames.append(C)
@@ -1051,6 +1075,34 @@ def cmd_counts_generalised(limit=None):
         f"generalised records ({int(N.sum())} records, {len(uk)} cell×class pairs)")
 
 
+
+def cmd_apii_ref(limit=None):
+    """Patch the CURRENT snapshot (extras + ALA candidates) with the APII decision, and count
+    labels without any reference photo (iNat refphotos pack ∪ other ref-eligible extras) that
+    gain one from APII."""
+    import pandas as pd
+    for path in (os.path.join(APH, "candidates.parquet"), os.path.join(SRC, "extra_photos_sources.parquet")):
+        df = pd.read_parquet(path)
+        before = set(df.loc[df["ref_ok"], "u"])
+        n = apii_fix(df)
+        df.to_parquet(path, index=False)
+        log(f"{os.path.basename(path)}: {n} APII rows now reference-eligible")
+    K = df
+    idx = json.load(open(os.path.join(CACHE, "refphotos", "pack", "refphotos", "index.json")))
+    have_inat = {L["name"] for L in [{"name": k} for k in idx["photos"]]}
+    L = labels()
+    no_ref = {u for u, l in enumerate(L) if l["name"] not in have_inat}
+    apii_u = set(K.loc[K["ref_ok"] & (K["data_resource"] == APII), "u"])
+    other_u = before
+    gain = (no_ref - other_u) & apii_u
+    ntr = {u: L[u]["train_photos"] for u in gain}
+    out = {"labels_without_inat_ref": len(no_ref), "had_other_extra_ref": len(no_ref & other_u),
+           "gain_from_apii": len(gain), "gain_from_apii_zero_photo_labels": sum(1 for n in ntr.values() if n == 0),
+           "still_without_any_ref": len(no_ref - other_u - apii_u)}
+    wjson(os.path.join(SRC, "apii_ref.json"), out)
+    print(json.dumps(out, indent=1))
+
+
 if __name__ == "__main__":
     lim = None
     sys.argv = [a for a in sys.argv if a != "--noinat"]
@@ -1058,4 +1110,4 @@ if __name__ == "__main__":
         lim = int(sys.argv[sys.argv.index("--limit") + 1])
     {"counts": cmd_counts, "counts-table": cmd_counts_table, "ala-list": cmd_ala_list, "ala-info": cmd_ala_info,
      "ala-fetch": cmd_ala_fetch, "commons-list": cmd_commons_list, "commons-fetch": cmd_commons_fetch,
-     "dedup": cmd_dedup, "counts-generalised": cmd_counts_generalised}[sys.argv[1]](lim)
+     "dedup": cmd_dedup, "apii-ref": cmd_apii_ref, "counts-generalised": cmd_counts_generalised}[sys.argv[1]](lim)

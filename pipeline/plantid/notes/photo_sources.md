@@ -238,3 +238,13 @@ extra duplicates 1,030, evaluation duplicates 115, 404 upstream 7,139.
 Disk 15.2 GB of photos (sources/ 17 GB). Commons for the remaining labels:
 265,695 candidates over 9,729 labels, 234,601 still to fetch at ~2/s
 (≈ 33 h) via `sources_bg.sh`, snapshots every 25k.
+
+**APII as reference photos (Leo, 2026-11-05; docs/LICENSING.md §1e):**
+allowed — ALA says CC BY 3.0 AU and ANBG's own terms allow credited
+non-commercial low-res use. `apii-ref` patched the current snapshot (113,387
+APII rows now `ref_ok`, credit "© <photographer> · Australian National
+Botanic Gardens (APII) · CC BY 3.0 AU · via ALA", photographer omitted when
+unknown — 6,855 rows) and `ala-info`/`dedup` apply it from now on. Of the
+5,795 labels without an iNat reference photo, 890 already had another
+reference-eligible extra (Commons, OzAtlas, …), **APII adds 921 more (all
+0-photo labels)**, 3,984 still have none (`sources/apii_ref.json`).
