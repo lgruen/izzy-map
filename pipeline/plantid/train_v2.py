@@ -168,8 +168,9 @@ def cmd_data(a):
     tas = BS.in_tas(ll[:, 0], ll[:, 1])
     if a.reassign:
         y = apply_reassign(a.reassign, y, pid)
-    if a.extra:
-        X, y, pid, src, tas = add_extra(a.extra, X, y, pid, src, nU, a.extra_emb, tas)
+    for k, ex in enumerate(a.extra or []):  # several lists (K=1,000 iNat, ALA field photos, Commons …)
+        emb_dir = (a.extra_emb or [None])[min(k, len(a.extra_emb or [None]) - 1)]
+        X, y, pid, src, tas = add_extra(ex, X, y, pid, src, nU, emb_dir, tas)
     L = pq.read_table(os.path.join(TA.AU, "labels.parquet"), columns=["name", "inat_ids"]).to_pydict()
     merge = class_merges(L["name"], L["inat_ids"], np.bincount(y, minlength=nU), name_map_pairs(L["inat_ids"]))
     print(f"class merges (shared iNat taxon): {merge}")
@@ -229,8 +230,9 @@ def add_extra(path, X, y, pid, src, nU, emb_dir=None, tas=None):
     `path` = parquet with columns
       u        class index (row of au-labels / labels.parquet) — or `species`
                (binomial, matched against labels.parquet `name` and `aliases`)
-      photo_id photo key (int64; iNat sources share iNat's photo-id space and are
-               de-duplicated against the training photos)
+      photo_id photo key (int64). Sources named inat* share iNat's photo-id space and are
+               de-duplicated against the training photos; other sources (ALA, Commons …)
+               are de-duplicated per (source, photo_id); one --extra-emb directory per list
       source   e.g. "inat-extra-photo", "inat-sa-nd", "ala", "wikimedia"
       licence | license   any CC licence or PD (never all-rights-reserved)
       shard    (optional) path of an .npz with `photo_id` + `emb`; without it (or
@@ -257,10 +259,11 @@ def add_extra(path, X, y, pid, src, nU, emb_dir=None, tas=None):
            or not 0 <= t["u"][i] < nU}
     seen, keep, dup = set(), [], 0
     for i in range(n):
-        k = int(t["photo_id"][i])
+        inat = str(t["source"][i]).startswith("inat")  # iNat lists share the training photos' id space
+        k = (("inat" if inat else str(t["source"][i])), int(t["photo_id"][i]))
         if i in bad:
             continue
-        if k in seen or k in have:
+        if k in seen or (inat and k[1] in have):
             dup += 1
             continue
         seen.add(k)
@@ -273,26 +276,31 @@ def add_extra(path, X, y, pid, src, nU, emb_dir=None, tas=None):
             if "photo_id" in z and "emb" in z:
                 for j, p in enumerate(z["photo_id"].tolist()):
                     index[int(p)] = (f, j)
-    cache = {}
-    xs, ys, ps, ts = [], [], [], []
+    # gather: group the rows by shard file and read every file once (millions of rows)
+    by_file = collections.defaultdict(list)
     for i in keep:
         sh = t.get("shard", [None] * n)[i]
-        loc = (sh, None) if isinstance(sh, str) and sh.endswith(".npz") else index.get(int(t["photo_id"][i]))
-        if not loc:
-            continue
-        f, j = loc
-        if f not in cache:
-            z = np.load(f)
-            cache = {f: (z["photo_id"], z["emb"])}
-        ids, emb = cache[f]
-        if j is None:
-            hit = np.nonzero(ids == int(t["photo_id"][i]))[0]
-            if not len(hit):
-                continue
-            j = int(hit[0])
-        xs.append(emb[j]); ys.append(int(t["u"][i])); ps.append(int(t["photo_id"][i]))
-        la, lo = (t.get("lat") or [None] * n)[i], (t.get("lon") or [None] * n)[i]
-        ts.append(bool(la is not None and lo is not None and BS_in_tas(la, lo)))
+        if isinstance(sh, str) and sh.endswith(".npz"):
+            by_file[sh].append((i, None))
+        else:
+            loc = index.get(int(t["photo_id"][i]))
+            if loc:
+                by_file[loc[0]].append((i, loc[1]))
+    lat_, lon_ = t.get("lat") or [None] * n, t.get("lon") or [None] * n
+    xs, ys, ps, ts = [], [], [], []
+    for f, rows in by_file.items():
+        z = np.load(f)
+        ids, emb = z["photo_id"], z["emb"]
+        pos = None
+        for i, j in rows:
+            if j is None:
+                if pos is None:
+                    pos = {int(p): k for k, p in enumerate(ids)}
+                j = pos.get(int(t["photo_id"][i]))
+                if j is None:
+                    continue
+            xs.append(emb[j]); ys.append(int(t["u"][i])); ps.append(int(t["photo_id"][i]))
+            ts.append(bool(lat_[i] is not None and lon_[i] is not None and BS_in_tas(lat_[i], lon_[i])))
     print(f"extra: {n:,} rows, {len(bad):,} rejected (licence/class), {dup:,} duplicates, {len(xs):,} added "
           f"(embedding found); sources {collections.Counter(t['source'][i] for i in keep)}")
     if not xs:
@@ -455,6 +463,10 @@ def train(c, D, dev, log=print, max_steps=None):
         sw[torch.from_numpy(D["tas"][idx]).to(dev)] = c["tas_weight"]
     if c.get("iw"):  # importance weighting: per-photo loss weight 1 / n_class^iw (1 = classes equal)
         sw = sw / n_c[yt].clamp(min=1) ** float(c["iw"])
+    ldam = None
+    if c.get("ldam"):  # max margin c["ldam"] in cosine units × s0, for the rarest class
+        mm = torch.where(n_c > 0, n_c.clamp(min=1) ** -0.25, torch.zeros_like(n_c))
+        ldam = (float(c["ldam"]) * s0 * mm / mm.max()).to(dev)
     curve, best, bad, step, t0 = [], None, 0, 0, time.time()
     for ep in range(1, c["epochs"] + 1):
         perm = epoch_rows()
@@ -464,7 +476,13 @@ def train(c, D, dev, log=print, max_steps=None):
             W = s0 * (W0 + Dw)
             xb = Xc[bi] if on_dev else Xc[bi.cpu()].to(dev, non_blocking=True)
             logits = xb.float() @ W.T + s0 * beta
-            ce = torch.nn.functional.cross_entropy(logits + tau * logpi, yt[bi], reduction="none")
+            z = logits + tau * logpi
+            if ldam is not None:  # LDAM (Cao et al. 2019): margin ∝ n^-1/4 on the true class
+                z = z - torch.nn.functional.one_hot(yt[bi], C).float() * ldam[yt[bi]][:, None]
+            ce = torch.nn.functional.cross_entropy(z, yt[bi], reduction="none")
+            if c.get("focal"):  # focal loss (Lin et al. 2017) on the adjusted logits
+                pt_ = torch.exp(-ce)
+                ce = (1 - pt_) ** float(c["focal"]) * ce
             loss = (ce * sw[bi]).sum() / sw[bi].sum()
             opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -564,6 +582,33 @@ def grid_imbalance():
     return [dict(b, **v, name=f"g-{k}-s{sd}", seed=sd) for k, v in g.items() for sd in (0, 1)]
 
 
+def grid_decide():
+    """The deciding comparison (README): (i), (ii), BS τ 1.5, (ii) + τ 1.5 — 3 seeds each
+    (seeds 0/1 of the first three already exist from grid_imbalance)."""
+    b = dict(BASE, tau=1.0, wd=0.01, epochs=12, data="data-extras.npz")
+    g = {"i-bs-uniform": {}, "ii-bs-classbalanced": {"sampler": "balanced:50", "la_from": "data"},
+         "vii-bs-tau1.5": {"tau": 1.5}, "x-cb-tau1.5": {"sampler": "balanced:50", "la_from": "data", "tau": 1.5}}
+    return [dict(b, **v, name=f"g-{k}-s{sd}", seed=sd) for k, v in g.items() for sd in (0, 1, 2)]
+
+
+def grid_tail():
+    """Coordinator's added rows: focal γ 1/2 on (i) and (ii), LDAM (n^-1/4) with BS — 3 seeds."""
+    b = dict(BASE, tau=1.0, wd=0.01, epochs=12, data="data-extras.npz")
+    cb = {"sampler": "balanced:50", "la_from": "data"}
+    g = {"xi-bs-focal1": {"focal": 1.0}, "xi-bs-focal2": {"focal": 2.0}, "xi-cb-focal1": {**cb, "focal": 1.0},
+         "xi-cb-focal2": {**cb, "focal": 2.0}, "xii-bs-ldam": {"ldam": 0.3}}
+    return [dict(b, **v, name=f"g-{k}-s{sd}", seed=sd) for k, v in g.items() for sd in (0, 1, 2)]
+
+
+def grid_final():
+    """The final run (chosen on the re-weighted val, README): balanced softmax with log π from the
+    data, class-balanced sampling, τ 1.5, Tasmanian photos ×3 — on the full data; K per class per
+    epoch 50 (the grid's setting) and 200 (≈ one pass over 3.4M photos), 2 seeds each; τ-norm 0.5
+    is applied post hoc (eval_v2 TAUNORM / the ship step)."""
+    b = dict(BASE, tau=1.5, wd=0.01, epochs=12, la_from="data", tas_weight=3.0, data="data-final.npz")
+    return [dict(b, sampler=f"balanced:{K}", name=f"final-cb{K}-s{sd}", seed=sd) for K in (50, 200) for sd in (0, 1)]
+
+
 def cmd_vm(a):
     import torch
     bucket = a.bucket.rstrip("/")
@@ -573,7 +618,7 @@ def cmd_vm(a):
         r = subprocess.run(["gcloud", "storage", "ls", f"{bucket}/v2/runs/"], capture_output=True, text=True)
         have = {os.path.basename(l)[:-4] for l in r.stdout.split() if l.endswith(".npz")}
         cache = {}
-        for c in {"imbalance": grid_imbalance}[a.grid]():
+        for c in {"imbalance": grid_imbalance, "decide": grid_decide, "tail": grid_tail, "final": grid_final}[a.grid]():
             if c["name"] in have:
                 print(f"{c['name']}: done already", flush=True)
                 continue
@@ -620,8 +665,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("data")
-    p.add_argument("--extra", help="parquet of extra training photos (see add_extra)")
-    p.add_argument("--extra-emb", help="directory of *.npz embedding shards holding the extras")
+    p.add_argument("--extra", nargs="+", help="parquet(s) of extra training photos (see add_extra)")
+    p.add_argument("--extra-emb", nargs="+", help="embedding shard directory per --extra list (one = for all)")
     p.add_argument("--reassign", help="expand_inat.py's reassign_train.parquet")
     p.add_argument("--out", help="data file (default australia/v2/data.npz)")
     sub.add_parser("bench")

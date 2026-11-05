@@ -73,6 +73,10 @@ def main():
     C = D["T"].shape[0]
     z = np.load(os.path.join(V.V2, "runs", run + ".npz"))
     W, b, n_tr = z["W"].astype(np.float32), z["b"].astype(np.float32), z["n_c"].copy()
+    tn = float(os.environ.get("TAUNORM", 0))  # scale-kept τ-normalisation, as eval_v2
+    if tn:
+        nr = np.linalg.norm(W, axis=1, keepdims=True).clip(1e-6)
+        W = W * (nr.mean() / nr) ** tn
     L_ = pq.read_table(os.path.join(TA.AU, "labels.parquet"), columns=["name", "inat_ids", "aliases"]).to_pydict()
     merge = V.class_merges(L_["name"], L_["inat_ids"], n_tr, V.name_map_pairs(L_["inat_ids"]))
     mapv = np.arange(C)

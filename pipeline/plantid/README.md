@@ -1012,6 +1012,11 @@ classes); ECE on AU-test (%):
 | g-vii-bs-tau1.5 (2) | 89.2 ± 0.1 | 83.2 ± 0.0 | 92.5 ± 0.1 | 94.8 ± 0.0 | 88.0 ± 0.0 | 94.1 ± 0.1 | 61.5 ± 0.6 | 86.7 ± 0.0 | 61.5 ± 0.3 | 65.5 ± 0.3 | 1.2 ± 0.1 | 1.7 ± 0.0 |
 | g-viii-bs-budget292 (2) | 89.4 ± 0.0 | 82.9 ± 0.1 | 92.9 ± 0.1 | 94.9 ± 0.1 | 88.3 ± 0.0 | 94.2 ± 0.1 | 61.9 ± 0.5 | 87.1 ± 1.0 | 57.9 ± 0.0 | 61.8 ± 0.1 | 1.4 ± 0.4 | 1.6 ± 0.3 |
 
+**This grid table is TEST-INFORMED** (it reads the report sets for every
+strategy) — it is exploration, not a selection. The final strategy is chosen
+on val re-weighted to the label-free all-AU-species class mix (below), with 3
+seeds; the test sets are read once afterwards.
+
 - **Per species, the strongest tail correction wins**: balanced softmax with
   log π from the data PLUS class-balanced sampling (ii — the "double
   correction" of Ren et al. 2020) gives the best AU-test (83.4 vs 82.7), C-euc
@@ -1028,6 +1033,96 @@ classes); ECE on AU-test (%):
 - Plain CE + post-hoc logit adjustment (τ' 1 on val) = balanced softmax
   (82.7); importance weights (1/n 81.9, 1/√n 81.7), √n sampling (82.2), τ 0.5
   (81.9) and plain CE (81.1; 1–9 bucket 42.5) are worse per species.
+
+**Why a stronger-than-balanced correction can help (theory note).** Balanced
+softmax (log π_y added to the logits during training) is the Bayes-correct
+adjustment if the head learned p(x | y) equally well for every class; then
+removing log π gives the class-balanced posterior. With finite samples it
+doesn't: a class with n photos gets O(n) gradient signal, so its weight
+vector stays shrunk toward its initialisation (here the text vector, with
+decay) and its logits are systematically under-confident relative to
+well-photographed classes — the estimation error is not symmetric across
+classes (the "minority collapse"/norm-shrinkage effect seen in long-tailed
+learning: rare-class weight norms are smaller). Balanced softmax corrects the
+prior shift but not this variance-driven shrinkage; an extra correction — more
+weight on rare classes via class-balanced sampling with log π from the data,
+or τ > 1 — partly compensates, at the price of more false rare answers on the
+natural mix. How much extra correction is right depends on the shrinkage,
+i.e. on n, which is why it has to be tuned on a tail-representative objective
+(the re-weighted val), not assumed.
+
+**Deciding comparison** (bound before launch: 6 new runs — seed 2 of (i), (ii),
+τ 1.5 and seeds 0–2 of (ii) + τ 1.5 — ≈ 20 min of L4 + boot ≈ 45 min ≈ $0.4,
+cap 2 h; evaluated with the exact leak-free eval prior; objective = AU-val per
+species re-weighted to the all-AU-species training-count mix).
+
+**Decision on the re-weighted val** (AU-val per species, classes re-weighted to
+the all-AU-species training-count mix; exact leak-free eval prior; 3 seeds,
+mean ± half-range; no test set read for this):
+
+| strategy | val re-weighted top-1 | top-5 | val 1–9-photo classes |
+|---|---|---|---|
+| (i) BS + uniform | 76.5 ± 0.5 | 91.1 ± 0.9 | 55.6 ± 2.0 |
+| (ii) BS (data π) + class-balanced | 78.4 ± 0.5 | 93.3 ± 0.3 | 62.7 ± 1.8 |
+| BS τ 1.5 | 77.8 ± 0.4 | 92.4 ± 0.2 | 59.9 ± 1.4 |
+| (ii) + τ 1.5 | **79.3 ± 0.2** | **93.4 ± 0.3** | **65.0 ± 1.6** |
+
+Further rows requested (bound before launch: focal γ 1 / 2 on (i) and (ii),
+LDAM margins ∝ n^-1/4 with BS — 5 configs × 3 seeds = 15 runs ≈ 51 min of L4
++ boot ≈ 1.2 h ≈ $0.6, cap 2.5 h; τ-normalisation of (i)'s class weights is
+post hoc, local): see below.
+
+**Class-weight norms by training-photo bucket** (mean ‖W_c‖ over 3 seeds;
+photo-less classes stay at the text init, s0 = 50; bias b_c in logits):
+
+| run | 0 | 1–9 | 10–49 | 50+ | bias 1–9 / 50+ |
+|---|---|---|---|---|---|
+| (i) BS + uniform | 50.0 | 62.5 | 68.5 | 72.1 | +0.14 / −0.13 |
+| (ii) BS + class-balanced | 50.0 | 61.6 | 68.7 | 70.5 | +0.24 / −0.22 |
+| BS τ 1.5 | 50.0 | 63.5 | 68.9 | 71.9 | +0.25 / −0.18 |
+| (ii) + τ 1.5 | 50.0 | 62.6 | 68.9 | 70.1 | +0.35 / −0.30 |
+
+Under (i) rare classes DO have shorter weight vectors (62.5 vs 72.1) — the
+finite-sample shrinkage is there. But the stronger corrections do not close
+that norm gap; they shrink the frequent classes' norms a little (72 → 70) and
+mostly move the per-class BIAS toward rare classes. So the evidence supports
+"rare classes are under-scored after balanced softmax" but not "the fix acts
+by equalising norms"; τ-normalisation (Kang et al. 2020) tests the norm route
+directly (below).
+
+**Further rows on the re-weighted val** (3 seeds each; no test read):
+
+| strategy | val re-weighted top-1 | top-5 | 1–9-photo classes |
+|---|---|---|---|
+| BS + focal γ 1 / γ 2 | 75.6 ± 1.0 / 75.9 ± 0.9 | 91.0 / 91.3 | 52.7 / 54.1 |
+| (ii) + focal γ 1 / γ 2 | 77.4 ± 0.1 / 77.2 ± 0.9 | 92.9 / 92.6 | 59.3 / 58.3 |
+| BS + LDAM (n^-1/4, max margin 0.3·s0) | 77.2 ± 0.2 | 89.9 | 56.1 |
+| (i) + τ-norm 0.25 / 0.5 / 1.0 (post hoc, scale kept) | 78.0 / 78.5 / 78.8 | 91.6 / 92.4 / 91.7 | 58.3 / 59.8 / 62.7 |
+| (ii) + τ 1.5 + τ-norm 0.5 | **81.0 ± 0.9** | **93.9 ± 0.5** | 71.6 ± 5.1 |
+| (ii) + τ 1.5 + τ-norm 1.0 | 80.5 ± 0.7 | 93.3 | 73.8 |
+
+τ-norm is the Kang et al. (2020) re-scaling W_c ← W_c (mean‖W‖ / ‖W_c‖)^τ,
+here keeping the mean norm so the image logits stay on the scale the prior
+weight was tuned for (the unscaled form W_c / ‖W_c‖^τ shrinks every logit
+and lets the prior take over — it collapsed for τ ≥ 0.5). Equalising norms
+post hoc helps (i) (+2.3) and ADDS to the bias route of (ii) + τ 1.5 (+1.7):
+consistent with the finite-sample-shrinkage reading — the shorter rare-class
+norms cost accuracy, and training-time corrections fix it only partly. Focal
+loss doesn't help here; LDAM helps top-1 a little but costs top-5.
+
+**Chosen on the re-weighted val: (ii) + τ 1.5 + τ-norm 0.5** (BS with log π
+from the data, class-balanced sampling, τ 1.5, scale-kept τ-norm 0.5 post hoc).
+**Test, read once** (3 seeds; exact leak-free prior; per species / natural):
+
+| | val rw | AU-test | AU top-5 sp | A | C-main | C-euc top-1 / top-5 | AU euc top-1 / top-5 | 1–9 bucket | ECE sp / nat |
+|---|---|---|---|---|---|---|---|---|---|
+| (i) BS + uniform | 76.5 | 82.9 / 92.8 | 94.7 | 88.1 / 94.2 | 82.0 | 58.8 / 87.5 | 62.9 / 87.2 | 56.1 | 1.5 / 1.6 |
+| **chosen** | **81.0** | **83.2** / 92.4 | 94.8 | 88.1 / 94.0 | **82.6** | **61.5** / 86.1 | 62.4 / 87.2 | **71.6** | 1.4 / 1.3 |
+
+The val gain shows up on test where the tail is: classes with 1–9 training
+photos 56 → 72 %, C-euc +2.7; elsewhere it is ±0.5 (AU-test per species +0.3,
+natural −0.4, C-euc top-5 −1.4) — AU-test's own class mix is far less
+tail-heavy than "all species".
 
 ### Location prior from ALA (2026-11-05)
 

@@ -184,7 +184,8 @@ def main():
     mu = D["mu"]
     print({k: v.n for k, v in sets.items()}, f"({time.time() - t0:.0f} s)", flush=True)
     runs = {}
-    for f in sorted(glob.glob(os.path.join(V2, "runs", "*.npz"))):
+    only = os.environ.get("FINAL") if (os.environ.get("EVAL_LIGHT") or os.environ.get("EVAL_VALONLY")) else None
+    for f in sorted(glob.glob(os.path.join(V2, "runs", (only or "*") + ".npz"))):  # light: just the run
         z = np.load(f)
         runs[os.path.basename(f)[:-4]] = {"W": z["W"], "b": z["b"], "n_c": z["n_c"], **json.loads(str(z["meta"]))}
     stage1 = [k for k in runs if k.startswith("tau")]  # incl. stage 3 (schedule / wd follow-ups)
@@ -210,6 +211,10 @@ def main():
 
     def logits(run, S, rows=slice(None)):
         W = torch.from_numpy(runs[run]["W"].astype(np.float32)).to(DEV)
+        tn = float(os.environ.get("TAUNORM", 0))  # Kang et al. 2020: W_c / ||W_c||^τ (post hoc)
+        if tn:  # scale kept: W_c · (mean‖W‖ / ‖W_c‖)^τ, so the image logits stay on their scale vs the prior
+            nr = W.norm(dim=1, keepdim=True).clamp_min(1e-6)
+            W = W * (nr.mean() / nr) ** tn
         b = torch.from_numpy(runs[run]["b"].astype(np.float32)).to(DEV)
         L = S.q[rows].to(DEV).float() @ W.T + b + colmask
         pt = float(os.environ.get("POSTHOC_TAU", 0))  # post-hoc logit adjustment (plain-CE heads)
@@ -392,6 +397,28 @@ def main():
             else:
                 out["A-test"] = mets(S, top, p1, genus, None, thr)
         return out
+    # decision objective (computed BEFORE any test set is touched): AU-val per species, classes
+    # re-weighted to the label-free training-count mix of all species with an AU record (as
+    # ladder_v3) — the tail is under-represented on val
+    Sv = sets["AU-val"]
+    topv, _ = run_set(Sv, T=Tf)
+    rgv = np.array(pq.read_table(os.path.join(TA.AU, "labels.parquet"), columns=["rg_au"]).to_pydict()["rg_au"])
+    bk = lambda n: np.select([n == 0, n < 10, n < 50], [0, 1, 2], 3)  # noqa: E731
+    act = (rgv > 0) & (mapv == np.arange(C))
+    tgt = np.bincount(bk(n_tr[act]), minlength=4) / act.sum()
+    cls, inv = np.unique(Sv.y, return_inverse=True)
+    vmix = np.bincount(bk(n_tr[cls]), minlength=4) / len(cls)
+    wc = (tgt / np.maximum(vmix, 1e-9))[bk(n_tr[cls])]
+    h1 = np.bincount(inv, (topv[:, 0] == Sv.y).astype(float)) / np.bincount(inv)
+    h5 = np.bincount(inv, (topv == Sv.y[:, None]).any(1).astype(float)) / np.bincount(inv)
+    res["val_reweighted"] = {"top1_sp": float((h1 * wc).sum() / wc.sum()), "top5_sp": float((h5 * wc).sum() / wc.sum()),
+                             "top1_sp_unweighted": float(h1.mean()), "val_mix": vmix.tolist(), "target_mix": tgt.tolist(),
+                             "b19_top1_sp": float(h1[bk(n_tr[cls]) == 1].mean()), "b19_classes": int((bk(n_tr[cls]) == 1).sum())}
+    if os.environ.get("EVAL_VALONLY"):  # selection runs: no test set is read
+        out = os.environ.get("EVAL_OUT") or os.path.join(V2, "eval-valonly.json")
+        json.dump(res, open(out, "w"), indent=1, default=float)
+        print(f"val-only eval → {out} ({time.time() - t0:.0f} s)")
+        return
     rep = {"final": report("final", T=Tf)}
     if os.environ.get("EVAL_LIGHT"):  # prior comparisons: tuning + the final row only
         res["report"] = {"final": rep["final"]}
