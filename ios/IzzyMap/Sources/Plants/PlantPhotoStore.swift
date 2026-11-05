@@ -39,6 +39,12 @@ actor PlantPhotoStore {
         "\(size == .thumb ? "t" : "l")\(pixels)/\(photo.storedName)"
     }
 
+    /// The large version is on the device (stored by the photo batch or an
+    /// earlier view) — one file lookup, no decoding.
+    nonisolated func isStored(_ photo: PlantPhoto) -> Bool {
+        storage.existing(.photos, photo.storedName) != nil
+    }
+
     /// An image already decoded this session (no I/O; for first frames).
     nonisolated func cached(_ photo: PlantPhoto, size: Size, pixels: Int) -> UIImage? {
         memory.object(forKey: Self.key(photo, size, pixels) as NSString)

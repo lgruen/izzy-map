@@ -48,6 +48,7 @@ struct PlantIDResults: View {
                             ladder
                             candidates
                             footer
+                            photoCredits
                         }
                     }
                 } else {
@@ -58,6 +59,7 @@ struct PlantIDResults: View {
                         ladder
                         candidates
                         footer
+                        photoCredits
                     }
                 }
             }
@@ -78,8 +80,22 @@ struct PlantIDResults: View {
         plant(i)?.headlineCommon ?? label(i)?.common.flatMap(CommonName.headline)
     }
 
-    /// The class's reference photo (the `refphotos` pack), if any.
-    private func refPhoto(_ i: Int) -> PlantIDRefPhoto? { PlantIDRefPhotos.shared.photo(for: i, name: label(i)?.name) }
+    /// The class's reference photo (the `refphotos` pack) — unless it has a
+    /// guide profile whose own photo is on the device: the guide's photo
+    /// wins then (the same one its plant sheet opens with).
+    private func refPhoto(_ i: Int) -> PlantIDRefPhoto? {
+        if let photo = plant(i)?.photos.first, PlantPhotoStore.shared.isStored(photo) { return nil }
+        return PlantIDRefPhotos.shared.photo(for: i, name: label(i)?.name)
+    }
+
+    /// The photo a candidate shows and its credit: the reference photo, else
+    /// the guide's (stored, or fetched while online), else none (a plate).
+    private func shownPhoto(_ i: Int) -> ShownPhoto? {
+        if let ref = refPhoto(i) { return .ref(ref) }
+        if let p = plant(i), let photo = p.photos.first,
+           PlantPhotoStore.shared.isStored(photo) || Connectivity.shared.online { return .guide(p, photo) }
+        return nil
+    }
 
     private func threshold(_ i: Int) -> Double {
         (result.candidates + result.genusSpecies).first { $0.label == i }?.threshold ?? PlantIDResult.defaultThreshold
@@ -144,11 +160,15 @@ struct PlantIDResults: View {
                     .frame(width: s)
                     .offset(x: s + 8)
             }
-            // the reference photo's credit, under it
-            if result.candidates.indices.contains(current), let ref = refPhoto(result.candidates[current].label) {
-                RefPhotoCredit(photo: ref)
+            // the shown photo's credit, under it — complete, however long
+            if result.candidates.indices.contains(current), let shown = shownPhoto(result.candidates[current].label) {
+                Text(shown.credit)
+                    .font(.caption2)
+                    .foregroundStyle(DesignColor.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(width: s, alignment: .leading)
                     .offset(x: s + 8)
+                    .accessibilityIdentifier("plant-id-ref-credit")
             }
         }
     }
@@ -205,11 +225,14 @@ struct PlantIDResults: View {
 
     private var locationLine: some View {
         let km = result.scope == .tasmania ? 5 : 10
+        // "recorded nearby" only when the records there hold any plant
+        let effect = result.nearbySpecies > 0 ? "plants recorded within about \(km) km rank higher."
+            : "no plants are recorded within about \(km) km, so the photo and records further afield decide."
         let text: String = switch session.place {
         case .none: "No location: ranked on the photo and how common each plant is across Australia."
-        case .photo: result.usedLocation ? "Location from the photo: plants recorded within about \(km) km rank higher."
+        case .photo: result.usedLocation ? "Location from the photo: \(effect)"
             : "The photo was taken outside Australia’s records: ranked on the photo alone."
-        case .current: result.usedLocation ? "Using where you are now: plants recorded within about \(km) km rank higher."
+        case .current: result.usedLocation ? "Using where you are now: \(effect)"
             : "You’re outside Australia’s records: ranked on the photo alone."
         }
         return Label {
@@ -288,6 +311,57 @@ struct PlantIDResults: View {
         .padding(.top, 8)
     }
 
+    // MARK: Credits of every photo on the screen
+
+    /// Each class with a photo on this screen — the genus tiles, the
+    /// candidates (compare pager, list thumbnails) — once, in screen order.
+    private var creditedLabels: [Int] {
+        var seen = Set<Int>()
+        var all = result.candidates.map(\.label)
+        if case .genus = result.answer { all = result.genusSpecies.map(\.label) + all }
+        return all.filter { shownPhoto($0) != nil && seen.insert($0).inserted }
+    }
+
+    /// The photos' credits in one quiet list at the foot: a thumbnail to
+    /// match each to its tile, the name, the full credit line.
+    @ViewBuilder private var photoCredits: some View {
+        let labels = creditedLabels
+        if !labels.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Photos")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(DesignColor.ink)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(labels, id: \.self) { i in
+                    if let shown = shownPhoto(i) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Group {
+                                switch shown {
+                                case let .ref(ref): RefPhotoImage(photo: ref, side: 28, showsCaption: false)
+                                case let .guide(plant, _): PlantThumb(plant: plant, side: 28)
+                                }
+                            }
+                            .frame(width: 28, height: 28)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(BotanicalNames.species(label(i)?.name ?? "?"))
+                                    .font(.caption)
+                                    .fontDesign(.serif)
+                                    .foregroundStyle(DesignColor.ink)
+                                Text(shown.credit)
+                                    .font(.caption2)
+                                    .foregroundStyle(DesignColor.secondaryInk)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            .padding(.top, 4)
+            .accessibilityIdentifier("plant-id-photo-credits")
+        }
+    }
+
     private var ladderCaption: String {
         let t = result.ladder
         let lo = t.species.min() ?? 0.5, hi = t.species.max() ?? 0.5
@@ -300,6 +374,28 @@ struct PlantIDResults: View {
         if v >= 99.5 { return ">\u{00A0}99\u{00A0}%" }
         if v < 1 { return "<\u{00A0}1\u{00A0}%" }
         return "\(Int(v.rounded()))\u{00A0}%"
+    }
+}
+
+/// The photo a candidate shows: its reference photo, or the guide's own.
+enum ShownPhoto: Equatable {
+    case ref(PlantIDRefPhoto)
+    case guide(Plant, PlantPhoto)
+
+    /// Its credit line, complete (author, licence and source).
+    var credit: String {
+        switch self {
+        case let .ref(ref): [ref.caption, ref.attribution].compactMap { $0 }.joined(separator: " · ")
+        case let .guide(_, photo): photo.caption
+        }
+    }
+
+    static func == (a: ShownPhoto, b: ShownPhoto) -> Bool {
+        switch (a, b) {
+        case let (.ref(x), .ref(y)): x == y
+        case let (.guide(p, x), .guide(q, y)): p.id == q.id && x == y
+        default: false
+        }
     }
 }
 
@@ -472,7 +568,7 @@ struct CandidateRow: View {
         HStack(alignment: .top, spacing: 12) {
             Group {
                 if let ref {
-                    RefPhotoImage(photo: ref, side: thumb)
+                    RefPhotoImage(photo: ref, side: thumb, showsCaption: false)
                 } else if let plant {
                     PlantThumb(plant: plant, side: thumb)
                 } else {

@@ -24,6 +24,19 @@ struct FirstLaunchTests {
         #expect(CoreArrival.of(states: more, sizes: sizes, resolved: true, canFetch: true, online: true) == nil)
     }
 
+    /// The reference photos never hold up the chip: Identify works without
+    /// them; with the model missing too, the chip names plant ID alone.
+    @Test func referencePhotosDontHoldUpTheChip() throws {
+        let maps = states([.vector: .installed, .topo: .installed, .relief: .installed, .plantid: .installed,
+                           .refphotos: .downloading(0.2)])
+        #expect(CoreArrival.of(states: maps, sizes: sizes, resolved: true, canFetch: true, online: true) == nil)
+        var model = maps
+        model[.plantid] = .downloading(0.5)
+        let arrival = try #require(CoreArrival.of(states: model, sizes: sizes, resolved: true, canFetch: true, online: true))
+        #expect(arrival.missing == [.plantid])
+        #expect(arrival.text == "Plant ID arriving · 50\u{00A0}%")
+    }
+
     @Test func nothingToSayBeforeThePacksAreKnownOrWithoutAFetcher() {
         let none = states([:])
         #expect(CoreArrival.of(states: none, sizes: sizes, resolved: false, canFetch: true, online: true) == nil)

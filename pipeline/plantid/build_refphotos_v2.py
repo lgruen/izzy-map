@@ -28,6 +28,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import time
 import warnings
@@ -685,13 +686,91 @@ def source_of(r):
     return {0: "inat", 1: "inat", 2: "ala", 3: "commons"}[int(r["kind"])]
 
 
+# Fallback for a species where Opus found no acceptable photo (Leo, 2026-11-06):
+# its best-scoring candidate, if that photo's flags are only these — a herbarium
+# sheet or a hand-held sprig still shows the plant — never a drawing plate, a
+# seed/lab image or not_plant ("other" / "not_plant" / "blurry" are out). The
+# reason text is checked too: one that names a drawing, plate, seed or lab image
+# (incl. cleared-leaf venation scans and wood sections — flagged only "specimen")
+# rules the photo out unless a sentence about THAT photo ("Photo 3 is a
+# herbarium sheet") says otherwise. No new API calls: the cached results only.
+FALLBACK_FLAGS = {"hand", "person", "label", "specimen"}
+FALLBACK_BAD = re.compile(r"\b(drawings?|drawn|illustrat\w*|plates?|seeds?(?!\s*heads?)|lab|laborator\w*|"
+                          r"microscop\w*|diagrams?|printed|engravings?|paintings?|"
+                          # prepared-sample images: CSIRO cleared-leaf scans, wood/stem sections, a lone fruit
+                          r"venation|cleared|wood|cross-sections?|cut stem|stem sections?|bark sample|leaf scan|"
+                          r"detached leaf|collected fruits?)\b", re.I)
+_PHOTO_REF = re.compile(r"\b(?:photos?|candidates?|images?)\s+(\d(?:\s*(?:,|and|&|to|–|-)\s*\d)*)", re.I)
+_SEGMENTS = re.compile(r"(?<=[.;])\s+|,\s+(?:and|while|but)\s+")
+
+
+def _photos_named(segment):
+    out = set()
+    for m in _PHOTO_REF.finditer(segment):
+        nums = [int(x) for x in re.findall(r"\d", m.group(1))]
+        if len(nums) == 2 and re.search(r"to|–|-", m.group(1)):
+            out |= set(range(nums[0], nums[1] + 1))
+        else:
+            out |= set(nums)
+    return out
+
+
+def _about(k, reason):
+    """The reason's sentences/clauses that name photo k."""
+    return [s for s in _SEGMENTS.split(reason) if k in _photos_named(s)]
+
+
+def fallback_ok(k, flags, reason, n):
+    if not set(flags) <= FALLBACK_FLAGS:
+        return False
+    if not FALLBACK_BAD.search(reason):
+        return True
+    if n == 1:
+        return False   # the reason is about this one photo
+    mine = _about(k, reason)
+    return bool(mine) and not any(FALLBACK_BAD.search(s) for s in mine)
+
+
+def fallback_caption(k, flags, reason, n):
+    """The small text over the photo saying what it is."""
+    text = " ".join(_about(k, reason)) if n > 1 else reason
+    if "specimen" in flags:
+        return "Herbarium specimen" if re.search(r"herbari|pressed|mounted|sheet", text or reason, re.I) \
+            else "Collected specimen"
+    if "hand" in flags:
+        return "Hand-held sprig"
+    if "label" in flags:
+        return "Labelled specimen"
+    return None
+
+
+def fallback_pick(r):
+    """(photo number, caption) for a none-acceptable result, or None."""
+    out = r["out"]
+    n = len(r["shown"])
+    ok = [p for p in out["photos"] if 1 <= p["photo"] <= n and fallback_ok(p["photo"], p["flags"], out["reason"], n)]
+    if not ok:
+        return None
+    best = max(ok, key=lambda p: (p["score"], -p["photo"]))   # ties: the one nearer the class mean
+    return best["photo"], fallback_caption(best["photo"], best["flags"], out["reason"], n)
+
+
+_NO_AUTHOR = re.compile(r"No machine-readable author provided\. (.+?) assumed \(based on copyright claims\)\.")
+
+
+def clean_attribution(s):
+    """Wikimedia Commons' 'No machine-readable author provided. X assumed (based
+    on copyright claims).' → 'X (assumed)' — the same credit, readable."""
+    return _NO_AUTHOR.sub(lambda m: f"{m.group(1)} (assumed)", s)
+
+
 def cmd_build(a):
     from multiprocessing import Pool
     from PIL import Image
     L = BR.labels()
     G = cand_table()
     res = load_results()
-    picks, none, unresolved = {}, [], []
+    picks, none, unresolved, fallback = {}, [], [], {}
     for u in sorted(G):
         r = res.get(f"u{u}")
         if not r or not r.get("usable"):
@@ -699,12 +778,17 @@ def cmd_build(a):
             continue
         ch = r["out"]["chosen"]
         if ch is None:
-            none.append(u)
-            continue
+            fb = fallback_pick(r)
+            if fb is None:
+                none.append(u)
+                continue
+            ch, caption = fb
+            fallback[u] = caption
         pid = r["shown"][ch - 1]
         row = next(x for x in G[u] if int(x["pid"]) == pid)
-        picks[u] = (row, r["out"])
-    say(f"{len(picks):,} picks, {len(none):,} none acceptable, {len(unresolved):,} unresolved")
+        picks[u] = (row, {**r["out"], "chosen": ch})
+    say(f"{len(picks):,} picks ({len(fallback):,} fallback: {dict(collections.Counter(fallback.values()))}), "
+        f"{len(none):,} none acceptable, {len(unresolved):,} unresolved")
     if unresolved and not a.allow_unresolved:
         sys.exit("unresolved species (run submit/collect again, or --allow-unresolved)")
     ev = BR.eval_photo_ids()
@@ -732,11 +816,31 @@ def cmd_build(a):
             fn = f"{sl}.avif"
             files[u] = fn
             jobs.append((row["local"], os.path.join(PACK, fn), a.edge, a.quality))
+    # an AVIF already encoded from the same source (newer than it) is kept: the
+    # encode is deterministic in (source, edge, quality) — `--reencode` redoes all
+    enc, todo = {}, []
+    params = {"edge": a.edge, "quality": a.quality}
+    stamp = os.path.join(PACK, ".encode.json")
+    if os.path.exists(stamp):
+        same = json.load(open(stamp)) == params
+    else:   # a pack built before the stamp: its index.json says how it was encoded
+        ix = os.path.join(PACK, "index.json")
+        old = json.load(open(ix)) if os.path.exists(ix) else {}
+        same = old.get("edge") == a.edge and old.get("format") == f"avif q{a.quality}"
+    for job in jobs:
+        src, dst = job[0], job[1]
+        if same and not a.reencode and os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+            with Image.open(dst) as im:
+                enc[dst] = (im.size, os.path.getsize(dst))
+        else:
+            todo.append(job)
     t0 = time.time()
     with Pool(os.cpu_count()) as pool:
-        enc = {d: (wh, n) for d, wh, n in pool.imap_unordered(BR._encode, jobs, chunksize=16)}
-    say(f"encoded {len(enc):,} AVIF in {time.time() - t0:.0f} s; {len(orig)} ND photos copied as original JPEG bytes")
-    keep = set(files.values()) | {"index.json", "credits.json"}
+        enc.update({d: (wh, n) for d, wh, n in pool.imap_unordered(BR._encode, todo, chunksize=16)})
+    json.dump(params, open(stamp, "w"))
+    say(f"encoded {len(todo):,} AVIF in {time.time() - t0:.0f} s ({len(jobs) - len(todo):,} kept); "
+        f"{len(orig)} ND photos copied as original JPEG bytes")
+    keep = set(files.values()) | {"index.json", "credits.json", ".encode.json"}
     for f in os.listdir(PACK):
         if f not in keep:
             os.remove(os.path.join(PACK, f))
@@ -755,10 +859,14 @@ def cmd_build(a):
         score = next((x["score"] for x in out["photos"] if x["photo"] == out["chosen"]), None)
         photos[L[u]["name"]] = {
             "u": u, "file": fn, "w": w, "h": h, "bytes": nb, "licence": row["licence"], "licence_label": lab,
-            "attribution": row["attribution"], "source": src, "by": row["by"],
+            "attribution": clean_attribution(row["attribution"]), "source": src, "by": row["by"],
             "photo": int(row["photo_id"]) if src == "inat" else row["image_id"],
             "obs": row["obs"] if src in ("inat", "ala") else "", "page_url": row["page_url"],
             "original_bytes": u in orig, "score": score}
+        if u in fallback:
+            photos[L[u]["name"]]["fallback"] = True
+            if fallback[u]:
+                photos[L[u]["name"]]["caption"] = fallback[u]
         key = (src, row["by"] or "(unknown)")
         d = per.setdefault(key, {"source": src, "name": key[1], "photos": 0, "licences": {}})
         d["photos"] += 1
@@ -772,7 +880,9 @@ def cmd_build(a):
                  "Claude Opus among the 5 candidates nearest the species' mean embedding. Sources: iNaturalist "
                  "open data, ALA (APII and others) and Wikimedia Commons; each photo (c) its author under the "
                  "licence given. Show 'attribution' next to the photo. NC licences: non-commercial use only. "
-                 "Photos with original_bytes are CC BY-ND / BY-NC-ND and are the unmodified iNaturalist JPEG.",
+                 "Photos with original_bytes are CC BY-ND / BY-NC-ND and are the unmodified iNaturalist JPEG. "
+                 "`fallback`: no candidate was acceptable as a field photo, so the best herbarium sheet or "
+                 "hand-held photo stands in; `caption` says what it shows (show it with the photo).",
         "labels": "au-labels.json", "count": len(photos), "edge": a.edge, "format": f"avif q{a.quality}",
         "bytes": total, "licences": {k: {"label": LIC_LABEL[k], "url": LIC_URL[k]} for k in sorted(lic_tot)},
         "photos": photos}
@@ -784,12 +894,15 @@ def cmd_build(a):
               open(os.path.join(PACK, "credits.json"), "w"), ensure_ascii=False, separators=(",", ":"))
     ix = os.path.getsize(os.path.join(PACK, "index.json"))
     cr = os.path.getsize(os.path.join(PACK, "credits.json"))
-    stat = {"photos": len(photos), "none_acceptable": len(none), "unresolved": len(unresolved),
+    stat = {"photos": len(photos), "fallback": len(fallback),
+            "fallback_captions": dict(collections.Counter(c or "(none)" for c in fallback.values())),
+            "none_acceptable": len(none), "unresolved": len(unresolved),
             "sources": dict(src_tot), "licences": dict(lic_tot), "authors": len(cred), "avif_and_jpeg_bytes": total,
             "index_bytes": ix, "credits_bytes": cr, "pack_bytes": total + ix + cr,
             "original_jpeg_photos": len(orig)}
     json.dump(stat, open(os.path.join(V2, "build.json"), "w"), indent=1)
-    json.dump({"none_acceptable": [L[u]["name"] for u in none], "unresolved": [L[u]["name"] for u in unresolved]},
+    json.dump({"none_acceptable": [L[u]["name"] for u in none], "unresolved": [L[u]["name"] for u in unresolved],
+               "fallback": {L[u]["name"]: c for u, c in sorted(fallback.items())}},
               open(os.path.join(V2, "no_photo.json"), "w"), indent=1)
     print(json.dumps(stat, indent=1))
 
@@ -845,6 +958,7 @@ def main():
     p.add_argument("--edge", type=int, default=512)
     p.add_argument("--quality", type=int, default=55)
     p.add_argument("--allow-unresolved", action="store_true")
+    p.add_argument("--reencode", action="store_true", help="encode every AVIF again (default: keep up-to-date ones)")
     p = sp.add_parser("sheet")
     p.add_argument("--seed", type=int, default=7)
     a = ap.parse_args()

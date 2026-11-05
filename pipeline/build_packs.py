@@ -28,7 +28,12 @@ program, the 0.63 GB weight file is copied verbatim — checked). Shipping
 the compiled model (what Xcode puts in app bundles) means no on-device
 compile and no second 0.6 GB copy in Application Support.
 
-A `files` entry ending in "/" is a directory (packed recursively).
+`refphotos` is staged too (`"stage": "refphotos"`): build_refphotos_v2.py's
+pack folder, checked against its index.json, hard-linked into
+<out>/stage-refphotos/refphotos/ (where a DEBUG `-dataDir` run finds it).
+
+A `files` entry ending in "/" is a directory (packed recursively); a file
+listed inside it is packed with it (listed so the app can check for it).
 
 Upload is a separate, LOCAL, approved step: pipeline/upload_packs.sh.
 """
@@ -50,6 +55,7 @@ REPO = Path(__file__).resolve().parent.parent
 TABLE = REPO / "pipeline" / "asset_packs.json"
 POLICIES = {"essential", "prefetch", "onDemand"}
 SHIP = REPO / "pipeline" / "cache" / "plantid" / "ship"
+REFPHOTOS = REPO / "pipeline" / "cache" / "plantid" / "refphotos" / "pack-v2" / "refphotos"
 PLANTID_ENCODER = ("PlantEncoder-w8.mlpackage", "PlantEncoder-w8.mlmodelc")
 ENV = {**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:" + os.environ.get("PATH", "")}
 
@@ -97,9 +103,12 @@ def manifest_for(pack: dict, source_root: Path, manifest_dir: Path) -> dict:
         "assetPackID": pack["id"],
         "downloadPolicy": {policy: body},
         # files at the pack root under their data/ names (one shared namespace)
+        # a file inside a listed directory is packed with it (it is listed too
+        # so the app can check it — Packs.swift `otherFiles`)
         "fileSelectors": [{"directorySource": f.rstrip("/"), "directoryDestination": f.rstrip("/")}
                           if f.endswith("/") else {"fileSource": f, "fileDestination": f}
-                          for f in pack["files"]],
+                          for f in pack["files"]
+                          if f.endswith("/") or not any(f.startswith(d) for d in pack["files"] if d.endswith("/"))],
         "platforms": ["iOS"],
         # relative to the manifest's own location (ba-package template)
         "sourceRoot": os.path.relpath(source_root, manifest_dir),
@@ -191,6 +200,43 @@ def stage_plantid(out: Path, ship: Path) -> Path:
     return root
 
 
+def stage_refphotos(out: Path, src: Path) -> Path:
+    """<out>/stage-refphotos/refphotos/: build_refphotos_v2.py's pack folder
+    hard-linked (dotfiles — its encode stamp — left out, stale files removed),
+    after checking index.json against the files: every photo present with
+    the byte count the index gives. Returns the stage root."""
+    root = out / "stage-refphotos"
+    dest = root / "refphotos"
+    index = src / "index.json"
+    if not index.is_file():
+        sys.exit(f"refphotos: {index} missing (pipeline/plantid/build_refphotos_v2.py build)")
+    ix = json.loads(index.read_text())
+    photos = ix["photos"]
+    if ix.get("count") != len(photos):
+        sys.exit(f"refphotos: index.json count {ix.get('count')} != {len(photos)} photos")
+    for name, p in photos.items():
+        f = src / p["file"]
+        if not f.is_file() or f.stat().st_size != p["bytes"]:
+            sys.exit(f"refphotos: {name}: {f.name} missing or not {p['bytes']} bytes")
+    want = {f.name for f in src.iterdir() if f.is_file() and not f.name.startswith(".")}
+    if want != {p["file"] for p in photos.values()} | {"index.json", "credits.json"}:
+        sys.exit("refphotos: the folder holds files index.json doesn't list (or lacks credits.json)")
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in dest.iterdir():
+        if f.name not in want:
+            f.unlink()
+    for name in want:
+        a, b = src / name, dest / name
+        if not (b.is_file() and os.path.samefile(a, b)):
+            b.unlink(missing_ok=True)
+            try:
+                os.link(a, b)
+            except OSError:
+                shutil.copy2(a, b)
+    print(f"    refphotos: {len(photos):,} photos staged ({sum(p['bytes'] for p in photos.values()) / 1e6:.0f} MB)")
+    return root
+
+
 def check_sizes(pack: dict, aar: Path, data: Path) -> None:
     entries = archive_entries(aar)
     want = {f"Contents/{f}": p.stat().st_size for f, p in expand(pack, data).items()}
@@ -222,6 +268,8 @@ def main() -> None:
     ap.add_argument("--force", action="store_true", help="rebuild even when the .aar is newer than its inputs")
     ap.add_argument("--plantid-ship", type=Path, default=SHIP,
                     help="build_ship.py output for the plantid pack (default pipeline/cache/plantid/ship)")
+    ap.add_argument("--refphotos", type=Path, default=REFPHOTOS,
+                    help="build_refphotos_v2.py's pack folder (default pipeline/cache/plantid/refphotos/pack-v2/refphotos)")
     args = ap.parse_args()
 
     data = args.data.resolve()
@@ -257,6 +305,11 @@ def main() -> None:
                 print(f"- {pid}: no {args.plantid_ship}/pipeline.json (build_ship.py data) — skipped")
                 continue
             root = stage_plantid(out, args.plantid_ship.resolve())
+        elif pack.get("stage") == "refphotos":
+            if not (args.refphotos / "index.json").is_file():
+                print(f"- {pid}: no {args.refphotos}/index.json (build_refphotos_v2.py build) — skipped")
+                continue
+            root = stage_refphotos(out, args.refphotos.resolve())
         missing = present(pack, root)
         if missing:
             print(f"- {pid}: missing {missing} in {root} — skipped")

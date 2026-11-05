@@ -8,7 +8,9 @@ import System
 
 /// The `refphotos` pack's index.json (pipeline/plantid/build_refphotos_v2.py):
 /// one photo per class, keyed by name, with the class index `u` (= the
-/// v2-labels row), the file and the ready-made attribution line.
+/// v2-labels row), the file and the ready-made attribution line; a
+/// `caption` ("Herbarium specimen", "Hand-held sprig") when no field photo
+/// was acceptable and a specimen or hand-held photo stands in.
 nonisolated struct PlantIDRefIndex: Decodable, Sendable {
     struct Photo: Decodable, Sendable {
         var u: Int?
@@ -16,6 +18,7 @@ nonisolated struct PlantIDRefIndex: Decodable, Sendable {
         var attribution: String
         var license: String?
         var licence: String?
+        var caption: String?
     }
 
     var built: String?
@@ -23,10 +26,12 @@ nonisolated struct PlantIDRefIndex: Decodable, Sendable {
     var photos: [String: Photo]
 }
 
-/// One reference photo: where it is and the credit to show under it.
+/// One reference photo: where it is, the credit to show with it (complete:
+/// author, licence, source) and what it shows when it isn't a field photo.
 nonisolated struct PlantIDRefPhoto: Sendable, Equatable {
     let url: URL
     let attribution: String
+    var caption: String?
 }
 
 /// Reference photos for Identify, read from the `refphotos` pack once it
@@ -76,9 +81,15 @@ final class PlantIDRefPhotos {
         return has(dir) ? dir : nil
     }
 
-    /// Reads the index when the pack's folder is new (cheap when unchanged).
+    /// Reads the index when the pack's folder is new (cheap when unchanged);
+    /// forgets it when the pack is gone (removed, or replaced by a version
+    /// whose files aren't in place yet), so no view points at missing files.
     func use(packs: PackStore) {
-        guard let dir = Self.locate(packs: packs), dir != folder, dir != loading else { return }
+        guard let dir = Self.locate(packs: packs) else {
+            if folder != nil || loading != nil { forget() }
+            return
+        }
+        guard dir != folder, dir != loading else { return }
         loading = dir
         Task {
             let decoded: PlantIDRefIndex? = await Task.detached(priority: .utility) {
@@ -89,6 +100,7 @@ final class PlantIDRefPhotos {
                     return nil
                 }
             }.value
+            guard loading == dir else { return }   // forgotten (or another folder) meanwhile
             loading = nil
             guard let decoded else { return }
             var c: [Int: PlantIDRefIndex.Photo] = [:]
@@ -102,34 +114,73 @@ final class PlantIDRefPhotos {
         }
     }
 
-    /// The reference photo of class `label` (by index, else by name).
+    private func forget() {
+        Self.logger.info("refphotos: gone, index forgotten")
+        loading = nil
+        folder = nil
+        byClass = [:]
+        byName = [:]
+        count = 0
+        built = nil
+        Self.cache.images.removeAllObjects()
+    }
+
+    /// The reference photo of class `label`: by index (= the v2-labels row;
+    /// a Tasmanian row's display name may differ from the index's key),
+    /// else by name. The DEBUG fake identifier's labels aren't the pack's
+    /// rows: by name only.
     func photo(for label: Int, name: String?) -> PlantIDRefPhoto? {
         guard let folder else { return nil }
-        guard let p = byClass[label] ?? name.flatMap({ byName[$0] }) else { return nil }
-        return PlantIDRefPhoto(url: folder.appending(path: p.file), attribution: p.attribution)
+        var byIndex = byClass[label]
+        #if DEBUG
+        if !(UserDefaults.standard.string(forKey: "plantIDFake") ?? "").isEmpty { byIndex = nil }
+        #endif
+        guard let p = byIndex ?? name.flatMap({ byName[$0] }) else { return nil }
+        return PlantIDRefPhoto(url: folder.appending(path: p.file), attribution: p.attribution,
+                               caption: p.caption.flatMap { $0.isEmpty ? nil : $0 })
     }
+
+    /// Decoding blocks (ImageIO's AV1 decoder for AVIF): one at a time on a
+    /// queue of its own, never on Swift's cooperative pool — a screenful of
+    /// decodes parked there stalled in the simulator (none returned within
+    /// 20 s, CPU idle; 2026-11-06), so no photo ever appeared.
+    nonisolated private static let decodeQueue = DispatchQueue(label: "org.gruenschloss.izzymap.refphotos", qos: .userInitiated)
 
     /// The photo decoded at `pixels` on its long edge (ImageIO thumbnail:
     /// AVIF or JPEG), off the main thread, cached.
     nonisolated static func image(_ photo: PlantIDRefPhoto, pixels: Int) async -> UIImage? {
         let key = "\(photo.url.lastPathComponent)@\(pixels)" as NSString
         if let hit = cache.images.object(forKey: key) { return hit }
-        let made: UIImage? = await Task.detached(priority: .userInitiated) {
-            guard let src = CGImageSourceCreateWithURL(photo.url as CFURL, nil) else { return nil }
-            let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                                         kCGImageSourceCreateThumbnailWithTransform: true,
-                                         kCGImageSourceThumbnailMaxPixelSize: max(pixels, 64)]
-            return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary).map { UIImage(cgImage: $0) }
-        }.value
-        if let made { cache.images.setObject(made, forKey: key) }
+        let made: UIImage? = await withCheckedContinuation { done in
+            decodeQueue.async {
+                if let hit = cache.images.object(forKey: key) { return done.resume(returning: hit) }
+                done.resume(returning: decode(photo.url, pixels: pixels))
+            }
+        }
+        if let made { cache.images.setObject(made, forKey: key) } else {
+            logger.error("refphoto undecodable: \(photo.url.lastPathComponent, privacy: .public)")
+        }
         return made
+    }
+
+    nonisolated private static func decode(_ url: URL, pixels: Int) -> UIImage? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                     kCGImageSourceCreateThumbnailWithTransform: true,
+                                     kCGImageSourceThumbnailMaxPixelSize: max(pixels, 64)]
+        if let thumb = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) { return UIImage(cgImage: thumb) }
+        // should the thumbnail path fail: the photos are ≤ 512 px, decode it whole
+        return CGImageSourceCreateImageAtIndex(src, 0, nil).map { UIImage(cgImage: $0) }
     }
 }
 
-/// A reference photo, square-filled at `side`, drawn once it is decoded.
+/// A reference photo, square-filled at `side`, drawn once it is decoded; a
+/// stand-in's caption ("Herbarium specimen") over its lower edge from
+/// tile size up (a list thumbnail is too small to carry it).
 struct RefPhotoImage: View {
     let photo: PlantIDRefPhoto
     let side: CGFloat
+    var showsCaption = true
     @Environment(\.displayScale) private var scale
     @State private var image: UIImage?
 
@@ -147,6 +198,11 @@ struct RefPhotoImage: View {
         }
         .frame(width: side, height: side)
         .clipped()
+        .overlay(alignment: .bottomLeading) {
+            if showsCaption, side >= 80, let caption = photo.caption {
+                PhotoTag(text: caption, compact: side < 140)
+            }
+        }
         .task(id: photo.url) {
             let img = await PlantIDRefPhotos.image(photo, pixels: Int(side * scale))
             guard !Task.isCancelled else { return }
@@ -156,7 +212,28 @@ struct RefPhotoImage: View {
     }
 }
 
-/// The credit under a reference photo (CC BY / BY-NC, APII: LICENSING.md).
+/// Small white text on a dark band over a photo's corner ("Your photo",
+/// "Herbarium specimen").
+struct PhotoTag: View {
+    let text: String
+    var compact = false
+
+    var body: some View {
+        Text(text)
+            .font(compact ? .system(size: 10, weight: .semibold) : .caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, compact ? 4 : 6)
+            .padding(.vertical, compact ? 2 : 3)
+            .background(.black.opacity(0.5))
+            .padding(compact ? 4 : 8)
+            .accessibilityIdentifier("plant-id-ref-caption")
+    }
+}
+
+/// The credit under a reference photo (CC BY / BY-NC, APII: LICENSING.md):
+/// always complete — author, licence and source — however many lines.
 struct RefPhotoCredit: View {
     let photo: PlantIDRefPhoto
 
@@ -164,7 +241,6 @@ struct RefPhotoCredit: View {
         Text(photo.attribution)
             .font(.caption2)
             .foregroundStyle(DesignColor.secondaryInk)
-            .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("plant-id-ref-credit")
     }

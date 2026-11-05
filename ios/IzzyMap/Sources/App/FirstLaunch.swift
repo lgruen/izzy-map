@@ -29,8 +29,10 @@ nonisolated struct CoreArrival: Equatable, Sendable {
     /// The core packs not on the device yet (the ones the App Store offers).
     let missing: [Pack]
 
-    /// The packs it watches: everything that isn't one-tap on demand.
-    static let core = Pack.allCases.filter { $0.policy != .onDemand }
+    /// The packs it watches: everything that isn't one-tap on demand —
+    /// except the reference photos: Identify works without them (a
+    /// placeholder until they arrive), so they never hold up "Plant ID".
+    static let core = Pack.allCases.filter { $0.policy != .onDemand && $0 != .refphotos }
 
     /// nil when there is nothing to say: every core pack is here (or not
     /// published yet — that can't arrive), the packs aren't known yet, or
@@ -75,7 +77,7 @@ nonisolated struct CoreArrival: Equatable, Sendable {
 
     /// What is missing, in one word: "Maps" while any map pack is, else
     /// the plant ID model on its own.
-    var noun: String { missing.allSatisfy { $0 == .plantid || $0 == .refphotos } ? "Plant ID" : "Maps" }
+    var noun: String { missing.allSatisfy { $0 == .plantid } ? "Plant ID" : "Maps" }
 
     /// The chip's words: short, figures that don't jump about.
     var text: String {

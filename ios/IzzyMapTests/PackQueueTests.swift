@@ -534,6 +534,25 @@ struct PackQueueTests {
         #expect(await eventually { store.state(.aerial) == .installed })
     }
 
+    /// An older plant-ID pack on the device (v1 files, no v2 head): an
+    /// update on its way, never "couldn't be opened"; a Get returns at once
+    /// without a failure; the new version arriving installs it.
+    @Test func anOlderPlantIDPackIsAnUpdateOnItsWay() async {
+        let system = FakePackSystem(installed: [.vector], outdated: [.plantid], seconds: 0.02)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning, autoFetchCore: true)
+        defer { store.shutdown() }
+        #expect(store.outdated == [.plantid])
+        #expect(store.state(.plantid) == .downloading(nil))
+        #expect(await eventually { store.state(.relief).isInstalled })
+        store.fetch(.plantid)
+        #expect(await eventually { store.current == nil && store.queue.isEmpty })
+        #expect(store.state(.plantid) == .downloading(nil))
+        #expect(store.plantIDDirectory == nil)
+        system.finish(.plantid)
+        #expect(await eventually { store.state(.plantid) == .installed })
+        #expect(store.outdated.isEmpty)
+    }
+
     @Test func filesUnreadableInTheBackgroundDontUninstallAPack() async {
         let system = FakePackSystem(installed: [.vector, .aerial], seconds: 0.02)
         let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)

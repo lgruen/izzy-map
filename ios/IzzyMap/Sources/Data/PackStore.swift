@@ -122,6 +122,12 @@ final class PackStore {
     /// The folder holding plant ID's files (`PlantIDFiles`) while the
     /// `plantid` pack is on the device and every one of them is readable.
     private(set) var plantIDDirectory: URL?
+    /// Packs on the device in an older version than this build reads (plant
+    /// ID's v1 model): shown as an update on its way (`.downloading`), never
+    /// as a failure — the system replaces them by itself.
+    private(set) var outdated: Set<Pack> = []
+    /// Outdated packs the server was asked about once (`checkForUpdates`).
+    @ObservationIgnored private var outdatedAsked: Set<Pack> = []
 
     // MARK: Queue state (observable: rows say "Queued · n")
 
@@ -637,6 +643,13 @@ final class PackStore {
                 // "available" (the call returns at once for a local pack) but
                 // its files don't open: retrying the call can't help — say
                 // so, and look again shortly (a move in progress?)
+                if outdated.contains(pack) {
+                    // the call answers at once for the older version: the
+                    // update arrives through the status stream
+                    if case .downloading = states[pack] {} else { states[pack] = .downloading(nil) }
+                    drop(pack, token)
+                    return
+                }
                 if lastSystemLocal.contains(pack) {
                     Self.logger.error("\(pack.rawValue, privacy: .public): available but its archives aren't readable")
                     noteError(pack, PackStoreError.unreadable, stage: "request")
@@ -1071,7 +1084,7 @@ final class PackStore {
             Self.logger.info("\(pack.rawValue, privacy: .public): download finished")
             updates[pack] = nil
             await refresh()
-            if !state(pack).isInstalled, !owned(pack), !stopped.contains(pack) {
+            if !state(pack).isInstalled, !owned(pack), !stopped.contains(pack), !outdated.contains(pack) {
                 // a system download (core pack, update) whose files can't be
                 // read: a Retry, never a row stuck "Waiting" — after a
                 // second look (the files may still be moving into place)
@@ -1142,6 +1155,8 @@ final class PackStore {
         }
         lastSystemLocal = found.systemLocal
         plantIDDirectory = found.plantID
+        let older = found.outdated.subtracting(found.installed)
+        if outdated != older { outdated = older }
         var unreadable = false
         for pack in Pack.allCases {
             if found.installed.contains(pack) {
@@ -1149,6 +1164,19 @@ final class PackStore {
                 if queue.contains(pack) {
                     queue.removeAll { $0 == pack }
                     checkpoint()
+                }
+            } else if older.contains(pack) {
+                // an older version (plant ID v1): the new one is on its way
+                // — the system updates prefetch packs by itself; ask the
+                // server once so it starts now
+                switch states[pack] {
+                case .downloading?, .paused?: break
+                default: states[pack] = .downloading(nil)
+                }
+                updates[pack] = nil
+                if outdatedAsked.insert(pack).inserted {
+                    Self.logger.notice("\(pack.rawValue, privacy: .public): an older version on the device; checking for updates")
+                    Task { await self.refreshCatalogue(reason: "\(pack.rawValue): older version on the device") }
                 }
             } else if found.systemLocal.contains(pack) {
                 // the system has it, but its files don't resolve: say so (a
@@ -1400,7 +1428,8 @@ protocol ContinuedWork: AnyObject {
 /// has no packs in tests or a plain simulator run). Launch argument
 /// `-fakePacks <spec>`: comma-separated `pack[=state]`, state one of
 /// `installed` (the default), `downloading:<0…1>`, `paused`, `failed`,
-/// `unpublished`, `updating:<0…1>` (installed, a new version arriving);
+/// `unpublished`, `updating:<0…1>` (installed, a new version arriving),
+/// `outdated` (an older version local: plant ID v1 before v2 arrives);
 /// every other pack is not installed. Presets for screenshots: `mixed`
 /// (core packs arriving/updating — plant ID at 83 %), `settled` (every core
 /// pack here: the folded summary row; extras in their other states).
@@ -1413,6 +1442,8 @@ nonisolated struct FakePacks: Sendable {
 
     var states: [Pack: PackState]
     var updates: [Pack: Double] = [:]
+    /// Packs local in an older version (`outdated`: plant ID v1).
+    var outdated: Set<Pack> = []
     var directory: URL?
     var seconds: Double
 
@@ -1420,6 +1451,7 @@ nonisolated struct FakePacks: Sendable {
         let spec = spec == "mixed" ? Self.mixed : spec == "settled" ? Self.settled : spec
         var states = Dictionary(uniqueKeysWithValues: Pack.allCases.map { ($0, PackState.notInstalled) })
         var updates: [Pack: Double] = [:]
+        var outdated: Set<Pack> = []
         for part in spec.split(separator: ",") {
             let pair = part.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             guard let first = pair.first, let pack = Pack(rawValue: first) else { continue }
@@ -1428,6 +1460,7 @@ nonisolated struct FakePacks: Sendable {
             case "paused": states[pack] = .paused
             case "unpublished": states[pack] = .unpublished
             case "failed": states[pack] = .failed("The download didn't finish.")
+            case "outdated": outdated.insert(pack)   // an older version local (plant ID v1)
             case let v where v.hasPrefix("updating"):
                 states[pack] = .installed
                 updates[pack] = Double(v.split(separator: ":").last ?? "").map { min(max($0, 0), 1) } ?? 0
@@ -1438,6 +1471,7 @@ nonisolated struct FakePacks: Sendable {
         }
         self.states = states
         self.updates = updates
+        self.outdated = outdated
         self.directory = directory
         self.seconds = seconds
     }
@@ -1459,7 +1493,7 @@ nonisolated struct FakePacks: Sendable {
         for (pack, state) in states { if case let .downloading(f) = state { downloading[pack] = f ?? 0 } }
         return FakePackSystem(installed: Set(states.filter { $0.value == .installed }.keys), downloading: downloading,
                               unpublished: Set(states.filter { $0.value == .unpublished }.keys),
-                              seconds: seconds, directory: directory, returnDelay: 0)
+                              outdated: outdated, seconds: seconds, directory: directory, returnDelay: 0)
     }
 }
 

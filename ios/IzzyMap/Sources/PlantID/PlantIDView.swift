@@ -375,8 +375,15 @@ struct PlantIDModelStatus: View {
         }
     }
 
+    /// An older model on the device (v1), its replacement on its way.
+    private var updating: Bool { packs.outdated.contains(.plantid) }
+
     private func headline(_ s: PackState) -> String {
-        switch s {
+        if updating {
+            if case let .downloading(f?) = s { return "Model update on its way · \(StorageText.percent(f))" }
+            return "Model update on its way"
+        }
+        return switch s {
         case let .downloading(f?): "Getting the identification model · \(StorageText.percent(f))"
         case .downloading: "Getting the identification model…"
         case .paused: "The model download is paused"
@@ -388,7 +395,10 @@ struct PlantIDModelStatus: View {
     }
 
     private func detail(_ s: PackState) -> String {
-        switch s {
+        if updating, s != .paused {
+            return "This \(DeviceNoun.current) has an older identification model; the new one downloads by itself. You can take or choose the photo now — Identify works once it’s in."
+        }
+        return switch s {
         case .downloading: "You can take or choose the photo now; Identify works once it’s in."
         case .paused: Connectivity.shared.online ? "iOS paused it; it carries on by itself." : "It carries on by itself when there’s reception."
         case let .failed(why): why

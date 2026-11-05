@@ -530,7 +530,21 @@ milestones, map-proof results); the design brief and language is
   re-downloads it). The app's scorer is IzzyKit `PlantIDModel` (port of
   `build_ship.V2Ship`); regenerate the Swift fixtures (`build_ship.py
   fixture`) when its tables change shape. Reference photos are the
-  separate `refphotos` prefetch pack (`RefPhotoFiles`).
+  separate `refphotos` prefetch pack (`RefPhotoFiles`): `uv run --with
+  duckdb --with pyarrow --with pandas --with numpy --with scikit-learn
+  --with 'pillow>=11.3' python3 -I pipeline/plantid/build_refphotos_v2.py
+  build` (cached Opus picks → `pack-v2/refphotos/`, ~20 s warm: AVIFs
+  already encoded are kept; species Opus rejected outright get their
+  best herbarium-sheet / hand-held candidate with a `caption`, never a
+  drawing plate, seed/lab image, venation scan or wood section — 211 on
+  2026-11-06, 125 still without a photo) → `build_packs.py refphotos
+  --verify refphotos` (staged into `data/packs/stage-refphotos/`, 0.41 GB)
+  → `upload_packs.sh refphotos`. It never holds up the "Plant ID
+  arriving" chip (`CoreArrival.core`). A device still holding the v1
+  `plantid` pack shows "Model update on its way" (`PackStore.outdated`),
+  never "couldn't be opened". Common names: `build_ship.py au-common`
+  (iNat, cached per id) fills every class without a UN common name,
+  Tasmanian rows included (886 on 2026-11-06), then `v2`.
 - **Plant-ID provenance (Leo, 2026-11-05): no weights we can't regenerate.**
   Every script that produced data, embeddings, weights, thresholds or an
   evaluation number is committed (pipeline/plantid/, its notes/ folder and

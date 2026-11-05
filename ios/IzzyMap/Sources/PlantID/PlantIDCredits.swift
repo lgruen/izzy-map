@@ -59,6 +59,19 @@ nonisolated struct PlantIDCredits: Decodable, Sendable {
     }
 }
 
+/// The `refphotos` pack's credits.json (build_refphotos_v2.py): how many
+/// reference photos, by how many authors, under which licences, from where.
+nonisolated struct PlantIDRefCredits: Decodable, Sendable {
+    var photos: Int
+    var authors: Int
+    var licences: [String: Int]
+    var sources: [String: Int]
+
+    static func load(_ dir: URL) -> PlantIDRefCredits? {
+        try? JSONDecoder().decode(PlantIDRefCredits.self, from: Data(contentsOf: dir.appending(path: "credits.json")))
+    }
+}
+
 /// "Model & training photos": the model, the training photos' licences
 /// and every observer, searchable (CC BY / BY-NC attribution, LICENSING.md).
 struct PlantIDCreditsView: View {
@@ -67,6 +80,8 @@ struct PlantIDCreditsView: View {
     @State private var failed = false
     @State private var query = ""
     @State private var identity: PlantIDModelIdentity?
+    @State private var refCredits: PlantIDRefCredits?
+    private var refPhotos: PlantIDRefPhotos { .shared }
 
     private var observers: [PlantIDCredits.Observer] {
         guard let credits else { return [] }
@@ -128,6 +143,34 @@ struct PlantIDCreditsView: View {
                 Text("BioCLIP 2.5’s MIT licence and citation, and the app’s other software licences.")
                     .foregroundStyle(DesignColor.secondaryInk)
             }
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Reference photos")
+                        .font(.headline)
+                        .foregroundStyle(DesignColor.ink)
+                    Text(refText)
+                        .font(.subheadline)
+                        .foregroundStyle(DesignColor.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let refCredits {
+                        Text(refCredits.licences.sorted { $0.value > $1.value }
+                            .map { "\($0.value.formatted()) \(PlantIDCredits.licence($0.key))" }.joined(separator: " · "))
+                            .font(.footnote)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignColor.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text([("inat", "iNaturalist"), ("ala", "ALA"), ("commons", "Wikimedia Commons")]
+                            .compactMap { key, name in refCredits.sources[key].map { "\(name) \($0.formatted())" } }
+                            .joined(separator: " · "))
+                            .font(.footnote)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignColor.secondaryInk)
+                    }
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("plant-id-ref-credits")
+            }
             if credits != nil {
                 Section {
                     ForEach(observers) { o in
@@ -169,6 +212,10 @@ struct PlantIDCreditsView: View {
         .navigationTitle("Model & Training Photos")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, prompt: "Find an observer")
+        .task(id: refPhotos.folder) {
+            guard let dir = refPhotos.folder else { refCredits = nil; return }
+            refCredits = await Task.detached(priority: .utility) { PlantIDRefCredits.load(dir) }.value
+        }
         .task {
             guard credits == nil, case let .files(dir) = source else { failed = true; return }
             identity = await Task.detached(priority: .utility) { PlantIDModelIdentity.load(dir) }.value
@@ -183,6 +230,12 @@ struct PlantIDCreditsView: View {
         [("inat", "iNaturalist"), ("ala", "ALA"), ("commons", "Wikimedia Commons")].compactMap { key, name in
             s[key].map { "\(name) \($0.photos.formatted()) photos" + ($0.credited.map { " by \($0.formatted())" } ?? "") }
         }.joined(separator: " · ")
+    }
+
+    private var refText: String {
+        let count = refCredits.map { "\($0.photos.formatted()) photos by \($0.authors.formatted()) photographers" } ?? "One photo per species"
+        let arrival = refPhotos.folder == nil ? " They arrive separately from the model; until then Identify shows the guide’s photos or a name." : ""
+        return "\(count) show what each suggestion looks like, beside your photo — from the iNaturalist Open Dataset, the Atlas of Living Australia (including the Australian Plant Image Index, Australian National Botanic Gardens) and Wikimedia Commons. Each photo is © its creator under the licence shown with it, credited wherever it appears. Where no field photo was usable, a herbarium specimen or a hand-held sprig stands in, marked on the photo.\(arrival)"
     }
 
     private var headline: String {

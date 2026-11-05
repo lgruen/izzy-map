@@ -62,6 +62,9 @@ nonisolated struct PackResolution: Sendable {
     /// The system says it's on the device (`assetPackIsAvailableLocally`).
     var systemLocal: Set<Pack>
     var plantID: URL?
+    /// Local, but an older version of the pack (plant ID's v1 model, from
+    /// before the v2 files existed): the system updates it by itself.
+    var outdated: Set<Pack> = []
 }
 
 // MARK: - The real manager
@@ -140,6 +143,7 @@ nonisolated final class ApplePackSystem: PackSystem {
         var archives: [Archive: URL] = [:]
         var installed: Set<Pack> = []
         var systemLocal: Set<Pack> = []
+        var outdated: Set<Pack> = []
         var plantID: URL?
         for pack in Pack.allCases {
             guard manager.assetPackIsAvailableLocally(withID: pack.rawValue) else { continue }
@@ -153,13 +157,24 @@ nonisolated final class ApplePackSystem: PackSystem {
             }
             guard found.count == pack.archives.count else { continue }
             let folder = Self.otherFilesFolder(pack, manager: manager, fileManager: fileManager)
-            guard pack.otherFiles.isEmpty || folder != nil else { continue }
+            guard pack.otherFiles.isEmpty || folder != nil else {
+                if pack == .plantid, !Self.readable(PlantIDFiles.currentMarker, manager: manager, fileManager: fileManager) {
+                    Self.logger.notice("plantid: local without \(PlantIDFiles.currentMarker, privacy: .public) — an older version")
+                    outdated.insert(pack)
+                }
+                continue
+            }
             archives.merge(found) { a, _ in a }
             installed.insert(pack)
             if pack == .plantid { plantID = folder }
         }
         return PackResolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: installed,
-                              systemLocal: systemLocal, plantID: plantID)
+                              systemLocal: systemLocal, plantID: plantID, outdated: outdated)
+    }
+
+    private static func readable(_ path: String, manager: AssetPackManager, fileManager: FileManager) -> Bool {
+        guard let url = try? manager.url(for: FilePath(path)) else { return false }
+        return fileManager.isReadableFile(atPath: url.path(percentEncoded: false))
     }
 
     /// The one folder holding all of a pack's `otherFiles`, when every one
@@ -183,7 +198,9 @@ nonisolated final class ApplePackSystem: PackSystem {
             }
             folder = parent
         }
-        for path in pack.otherFiles where path.hasSuffix("/") {
+        // a directory holding one of the listed files is checked through it
+        for path in pack.otherFiles where path.hasSuffix("/")
+            && !pack.otherFiles.contains(where: { !$0.hasSuffix("/") && $0.hasPrefix(path) }) {
             let name = String(path.dropLast())
             let leaf = String(name.split(separator: "/").last ?? Substring(name))
             let candidates = [(try? manager.url(for: FilePath(name))), folder?.appending(path: leaf, directoryHint: .isDirectory)]
@@ -233,6 +250,8 @@ nonisolated final class FakePackSystem: PackSystem {
         var downloading: [String: Double] = [:]
         /// Local per the system, yet its files don't resolve.
         var unreadable: Set<String> = []
+        /// Local per the system, an older version (`PackResolution.outdated`).
+        var outdated: Set<String> = []
         var unpublished: Set<String> = []
         var scripts: [String: Script] = [:]
         var requests: [String] = []
@@ -255,9 +274,10 @@ nonisolated final class FakePackSystem: PackSystem {
     let returnDelay: Double
 
     init(installed: Set<Pack> = [], downloading: [Pack: Double] = [:], unpublished: Set<Pack> = [],
-         seconds: Double = 0.05, directory: URL? = nil, returnDelay: Double = 0.2) {
+         outdated: Set<Pack> = [], seconds: Double = 0.05, directory: URL? = nil, returnDelay: Double = 0.2) {
         var i = Inner()
-        i.installed = Set(installed.map(\.rawValue))
+        i.installed = Set(installed.map(\.rawValue)).union(outdated.map(\.rawValue))
+        i.outdated = Set(outdated.map(\.rawValue))
         i.downloading = Dictionary(uniqueKeysWithValues: downloading.map { ($0.key.rawValue, $0.value) })
         i.unpublished = Set(unpublished.map(\.rawValue))
         inner = Mutex(i)
@@ -277,6 +297,13 @@ nonisolated final class FakePackSystem: PackSystem {
     var maxInFlight: Int { inner.withLock { $0.maxInFlight } }
     var inFlight: Int { inner.withLock { $0.inFlight } }
     func isInstalled(_ pack: Pack) -> Bool { inner.withLock { $0.installed.contains(pack.rawValue) } }
+    /// An older version is local (on), or that version was replaced (off).
+    func setOutdated(_ pack: Pack, _ on: Bool) {
+        inner.withLock { i in
+            if on { i.outdated.insert(pack.rawValue); i.installed.insert(pack.rawValue) } else { i.outdated.remove(pack.rawValue) }
+        }
+    }
+
     func setUnreadable(_ pack: Pack, _ on: Bool) {
         inner.withLock { if on { $0.unreadable.insert(pack.rawValue) } else { $0.unreadable.remove(pack.rawValue) } }
     }
@@ -285,6 +312,7 @@ nonisolated final class FakePackSystem: PackSystem {
     func finish(_ pack: Pack) {
         let waiters = inner.withLock { i -> [CheckedContinuation<Void, any Error>] in
             i.installed.insert(pack.rawValue)
+            i.outdated.remove(pack.rawValue)
             i.downloading[pack.rawValue] = nil
             return i.hung.removeValue(forKey: pack.rawValue) ?? []
         }
@@ -441,19 +469,21 @@ nonisolated final class FakePackSystem: PackSystem {
     }
 
     func resolve() -> PackResolution {
-        let (installed, unreadable) = inner.withLock { ($0.installed, $0.unreadable) }
+        let (installed, unreadable, old) = inner.withLock { ($0.installed, $0.unreadable, $0.outdated) }
         let scanned = directory.map { DataLocator.scan(directory: $0) }
         var archives: [Archive: URL] = [:]
         var have: Set<Pack> = []
         var local: Set<Pack> = []
+        var outdated: Set<Pack> = []
         for pack in Pack.allCases where installed.contains(pack.rawValue) {
             local.insert(pack)
+            if old.contains(pack.rawValue) { outdated.insert(pack); continue }
             guard !unreadable.contains(pack.rawValue) else { continue }
             have.insert(pack)
             for archive in pack.archives { archives[archive] = scanned?.url(for: archive) }
         }
         return PackResolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: have,
-                              systemLocal: local, plantID: nil)
+                              systemLocal: local, plantID: nil, outdated: outdated)
     }
 }
 #endif

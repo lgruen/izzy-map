@@ -678,7 +678,7 @@ public final class PlantIDModel: @unchecked Sendable {
         }.sorted { $0.p > $1.p }
         return PlantIDResult(answer: answer, candidates: top, genera: genera, usedLocation: place != nil,
                              scope: tas ? .tasmania : .australia, nearbyKm: Self.nearbyKm, ladder: ladder,
-                             genusSpecies: genusSpecies)
+                             genusSpecies: genusSpecies, nearbySpecies: nearby.values.count { $0 > 0 })
     }
 
     /// Classes by p, best first (index order among equal p).

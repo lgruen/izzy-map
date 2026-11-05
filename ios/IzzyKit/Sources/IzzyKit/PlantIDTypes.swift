@@ -292,10 +292,14 @@ public struct PlantIDResult: Sendable, Equatable {
     public var ladder: PlantIDLadder = .simple
     /// A genus answer: its top 3 species, best first (else empty).
     public var genusSpecies: [Candidate] = []
+    /// How many classes have records near the location (the area
+    /// `Candidate.nearbyRecords` counts): 0 = none, or no location — then
+    /// "recorded nearby" can't be what ranked them.
+    public var nearbySpecies = 0
 
     public init(answer: Answer, candidates: [Candidate], genera: [GenusShare], usedLocation: Bool,
                 scope: Scope = .australia, nearbyKm: Double = PlantIDModel.nearbyKm,
-                ladder: PlantIDLadder = .simple, genusSpecies: [Candidate] = []) {
+                ladder: PlantIDLadder = .simple, genusSpecies: [Candidate] = [], nearbySpecies: Int = 0) {
         self.answer = answer
         self.candidates = candidates
         self.genera = genera
@@ -304,5 +308,6 @@ public struct PlantIDResult: Sendable, Equatable {
         self.nearbyKm = nearbyKm
         self.ladder = ladder
         self.genusSpecies = genusSpecies
+        self.nearbySpecies = nearbySpecies
     }
 }

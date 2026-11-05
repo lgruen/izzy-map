@@ -80,8 +80,12 @@ final class PlantIDSession {
     /// background, so Identify is quick by the time she has framed.
     func use(_ source: PlantIDSource?) {
         observeMemory()
-        guard let source else { engine = nil; return }
         if let engine, engine.source == source { return }
+        // a new model (or none) mid-identify: that answer can't come — back
+        // to the framed photo, where Identify waits for the new one
+        identifyTask?.cancel()
+        if step == .identifying { step = .framing }
+        guard let source else { engine = nil; return }
         let engine = PlantIDEngine(source: source)
         self.engine = engine
         prepareFailed = nil
@@ -196,7 +200,10 @@ final class PlantIDSession {
                 let pixels = await Task.detached(priority: .userInitiated) { photo.pixels(in: crop) }.value
                 let r = try await engine.identify(pixels, location: point)
                 let labels = try await engine.labels()
-                guard !Task.isCancelled, self.engine === engine else { return }
+                guard !Task.isCancelled else { return }
+                // the model changed meanwhile: its answer is dropped, the
+                // photo stays framed for the new one
+                guard self.engine === engine else { step = .framing; return }
                 self.labels = labels
                 result = r
                 resultCount += 1
@@ -204,6 +211,7 @@ final class PlantIDSession {
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
+                guard self.engine === engine else { step = .framing; return }
                 Self.logger.error("identify failed: \(String(describing: error), privacy: .public)")
                 step = .failed(error.localizedDescription)
             }

@@ -1523,21 +1523,38 @@ AUSTRALIA_PLACE = 6744  # iNaturalist place id: preferred names as used in Austr
 
 
 def cmd_au_common(a):
-    """English common names for the Australia-wide classes that are NOT
-    Tasmanian labels (ship rows keep their Understorey Network names, shown
-    through `un`): iNaturalist's preferred_common_name (locale en, place
-    Australia) of each class's taxon ids, first id with a name wins. Facts
-    only — the name string, nothing else. GET /v1/taxa/<≤30 ids>, ~1 req/s,
-    one cache file per batch (resumable), User-Agent izzymap-plantid-eval/1.
-    Writes `common` into ship/au-labels.json and its hash into pipeline.json."""
+    """English common names for the Australia-wide classes that have none from
+    the Understorey Network: every non-Tasmanian class, and the Tasmanian
+    (ship) rows whose UN profile has no common name or that have no profile
+    (Leo, 2026-11-06; a UN name, shown through `un`, always wins in the app):
+    iNaturalist's preferred_common_name (locale en, place Australia) of each
+    class's taxon ids, first id with a name wins. Facts only — the name
+    string, nothing else. GET /v1/taxa/<≤30 ids>, ~1 req/s, one cache file per
+    batch (resumable), User-Agent izzymap-plantid-eval/1. Writes `common`
+    into ship/au-labels.json and its hash into pipeline.json."""
     import urllib.request
     os.makedirs(COMMON, exist_ok=True)
     path = os.path.join(SHIP, "au-labels.json")
     j = json.load(open(path))
     lab = j["labels"]
-    ids = sorted({t for l in lab if l.get("ship", -1) < 0 for t in l.get("inat") or []})
-    batches = [ids[i:i + 30] for i in range(0, len(ids), 30)]
+    plants = {p["id"]: p for p in json.load(open(os.path.join(HERE, "..", "..", "ios", "IzzyMap", "Resources",
+                                                               "Data", "plants.json")))["plants"]}
+
+    def wants(l):
+        if l.get("ship", -1) < 0:
+            return True
+        return not any((plants.get(i) or {}).get("common") for i in (l.get("un") or {}).get("ids") or [])
+
+    ids = sorted({t for l in lab if wants(l) for t in l.get("inat") or []})
+    # every id already cached (any batch file) is read, only the rest fetched:
+    # batches are named by their first/last id, so a new id list must not
+    # re-key — and re-fetch — the whole cache
     names, fetched = {}, 0
+    for f in sorted(os.listdir(COMMON)):
+        if f.endswith(".json"):
+            names.update(json.load(open(os.path.join(COMMON, f))))
+    todo = [t for t in ids if str(t) not in names]
+    batches = [todo[i:i + 30] for i in range(0, len(todo), 30)]
     t0 = time.time()
     for b in batches:
         f = os.path.join(COMMON, f"{b[0]}-{b[-1]}-{len(b)}.json")
@@ -1563,23 +1580,26 @@ def cmd_au_common(a):
             time.sleep(1.0)
         names.update(json.load(open(f)))
     n = 0
+    n_tas = 0
     for l in lab:
         l.pop("common", None)
-        if l.get("ship", -1) >= 0:
+        if not wants(l):
             continue
         for t in l.get("inat") or []:
             c = names.get(str(t))
             if c and c.strip():
                 l["common"] = " ".join(c.split())
                 n += 1
+                n_tas += l.get("ship", -1) >= 0
                 break
-    other = sum(1 for l in lab if l.get("ship", -1) < 0)
+    other = sum(1 for l in lab if wants(l))
     json.dump(j, open(path + ".part", "w"), ensure_ascii=False, separators=(",", ":"))
     os.replace(path + ".part", path)
     pipe = json.load(open(os.path.join(SHIP, "pipeline.json")))
     pipe["files"]["au-labels.json"] = {"bytes": size_of(path), "sha256": sha256(path)}
     json.dump(pipe, open(os.path.join(SHIP, "pipeline.json"), "w"), indent=1, ensure_ascii=False)
-    print(f"common names: {n:,} of {other:,} non-Tasmanian classes ({len(ids):,} taxon ids, {len(batches)} batches, "
+    print(f"common names: {n:,} of {other:,} classes without a UN name ({n_tas:,} Tasmanian rows; "
+          f"{len(ids):,} taxon ids, {len(batches)} batches, "
           f"{fetched} fetched now) → {path}")
 
 

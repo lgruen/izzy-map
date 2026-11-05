@@ -78,6 +78,10 @@ nonisolated enum PlantIDFiles {
     static let encoder = "PlantEncoder-w8.mlmodelc"
     /// The single model's head: its presence marks a staged pack (DEBUG `-dataDir`).
     static let head = "v2-head.bin"
+    /// The pack path that tells this version's pack from an older one (the
+    /// v1 Tasmanian model had no v2 files): local without it = an update
+    /// on its way, not a failure.
+    static let currentMarker = "plantid/v2-head.bin"
     /// The Tasmanian photo bank (the model's Tasmania-box term).
     static let bank = "bank-int8.bin"
     static let pipeline = "pipeline.json"
@@ -118,8 +122,12 @@ nonisolated enum RefPhotoFiles {
          data.appending(path: "../pipeline/cache/plantid/refphotos/pack/\(folder)", directoryHint: .isDirectory)]
     }
 
+    /// The folder and its index: the index is a file `url(for:)` resolves,
+    /// so the installed check finds the folder through it (a directory alone
+    /// may not resolve). Mirrors asset_packs.json.
     static let packPaths = [
         "refphotos/",
+        "refphotos/index.json",
     ]
 }
 

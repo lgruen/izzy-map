@@ -35,15 +35,26 @@ nonisolated enum PlantIDFake {
         }
     }
 
+    /// `-plantIDFakeMainland "Genus species,Genus species"`: the two
+    /// mainland natives' names (screenshots of particular reference photos).
+    static var effectiveNames: [(String, String)] {
+        var n = names
+        let extra = (UserDefaults.standard.string(forKey: "plantIDFakeMainland") ?? "").split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        for (k, name) in extra.prefix(2).enumerated() { n[8 + k] = (name, String(name.split(separator: " ").first ?? "")) }
+        return n
+    }
+
     static func make(_ mode: String) async throws -> (PlantIDModel, any PlantEncoding) {
         let catalog = await PlantLibrary.shared.load()
-        let labels = names.enumerated().map { i, pair in
+        let labels = effectiveNames.enumerated().map { i, pair in
             let (name, genus) = pair
             let plant = catalog?.plant(for: name)
             var l = PlantIDLabel(name: name, genus: genus, family: plant?.family ?? "Myrtaceae",
                                  un: plant.map { PlantIDLabel.Profile(key: name, ids: [$0.id], match: nil) })
             l.trainPhotos = 100
-            if plant == nil { l.common = i == 8 ? "yellow box" : "red ironbark"; l.inat = 1000 + i }
+            if plant == nil, i >= 8, names[i].0 == name { l.common = i == 8 ? "yellow box" : "red ironbark" }
+            if plant == nil { l.inat = 1000 + i }
             if plant != nil { l.ship = i }
             return l
         }

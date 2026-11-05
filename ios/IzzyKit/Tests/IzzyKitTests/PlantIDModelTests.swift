@@ -126,9 +126,13 @@ import Testing
         let r = m.identify(embedding: [1, 0.05, 0.05], location: GeoPoint(longitude: 147.33, latitude: -42.88))
         #expect(r.answer == .species(label: 0, p: r.candidates[0].p) && r.usedLocation && r.scope == .australia)
         #expect(r.candidates.first { $0.label == 1 }?.nearbyRecords == 2)
+        #expect(r.nearbySpecies == 1)
+        // no records around the place: nothing "recorded nearby"
+        let far = m.identify(embedding: [1, 0.05, 0.05], location: GeoPoint(longitude: 147.33, latitude: -42.6))
+        #expect(far.nearbySpecies == 0, "usedLocation \(far.usedLocation)")
         let g = m.identify(embedding: [1, 1, 0.9], location: nil)
         guard case let .genus(name, _) = g.answer else { Issue.record("genus expected: \(g.answer)"); return }
-        #expect(name == "Alpha" && g.genusSpecies.count == 2 && !g.usedLocation)
+        #expect(name == "Alpha" && g.genusSpecies.count == 2 && !g.usedLocation && g.nearbySpecies == 0)
         let tmp = FileManager.default.temporaryDirectory.appending(path: "plantid-v2-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
