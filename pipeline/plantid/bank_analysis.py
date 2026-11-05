@@ -780,7 +780,7 @@ class Scorer:
             del Lh, P
         return self.cache[nm]
 
-    def run(self, nm, knn_fn=None, om=1.0, floor=-10.0, rows_box=None, box_fn=None, chunk=2048):
+    def run(self, nm, knn_fn=None, om=1.0, floor=-10.0, rows_box=None, box_fn=None, chunk=2048, rerank=0):
         """knn_fn(rows) → L_knn (len(rows) × C, torch, device) or None. box_fn: same,
         but with the BOX prior and only for rows_box (the shipped Tasmania config)."""
         import torch
@@ -793,6 +793,10 @@ class Scorer:
             L = Lh[a:a + chunk].float()
             if knn_fn is not None:
                 Lk = knn_fn(r)
+                if rerank:  # the kNN term only among the main path's top-`rerank` classes
+                    t = (L + float(os.environ.get("LAM", MAIN[3])) * P[a:a + chunk].float()).topk(rerank, dim=1).indices
+                    keep = torch.zeros_like(Lk, dtype=torch.bool).scatter_(1, t, True)
+                    Lk = torch.where(keep, Lk, torch.full_like(Lk, -1e4))
                 L = torch.log_softmax(L + om * Lk.clamp(min=floor), 1)
             L = L + float(os.environ.get("LAM", MAIN[3])) * P[a:a + chunk].float()
             if box_fn is not None and boxm[r].any():
@@ -1184,5 +1188,155 @@ def cmd_geoknn():
     json.dump(out, open(os.path.join(WORK, "geoknn_val.json"), "w"), indent=1)
 
 
+# ------------------------------------------------------------ uniform-bank follow-up
+
+def build_bank(name, quota, seed=0, iters=15):
+    """Per-class diversity pick (spherical k-means centres, member counts as
+    weights) with quota(n_c) rows per class, v2 space → WORK/<name>.npz."""
+    t0 = time.time()
+    Z = load()
+    pth = os.path.join(WORK, name + ".npz")
+    if os.path.exists(pth):
+        return
+    Xtr = npz_memmap(V.DATA, "Xtr")
+    ytr = Z["mapv"][np.asarray(npz_memmap(V.DATA, "ytr")).astype(np.int64)]
+    order = np.argsort(ytr, kind="stable")
+    starts = np.r_[0, np.cumsum(np.bincount(ytr, minlength=len(Z["mapv"])))]
+    mu = Z["mu"].astype(np.float32)
+    rng = np.random.default_rng(seed)
+    vecs, labs, cnts = [], [], []
+    for c in np.nonzero(np.diff(starts))[0]:
+        n = starts[c + 1] - starts[c]
+        m = int(quota(n))
+        rows = order[starts[c]:starts[c + 1]]
+        X = BS.unit(BS.unit(np.asarray(Xtr[np.sort(rows)], np.float32)) - mu[None]).astype(np.float32)
+        cen, cnt = spherical_kmeans_np(X, m, rng, iters=iters)
+        vecs.append(cen.astype(np.float16)), labs.append(np.full(len(cen), c, np.int32)), cnts.append(cnt)
+    np.savez(pth, vectors=np.concatenate(vecs), labels=np.concatenate(labs), counts=np.concatenate(cnts))
+    log(f"{name}: {sum(len(v) for v in vecs):,} rows ({time.time() - t0:.0f} s)")
+
+
+def search_bank(name):
+    import torch
+    out_p = os.path.join(WORK, name + "_nbrs.npz")
+    if os.path.exists(out_p):
+        return
+    Z = load()
+    P = np.load(os.path.join(WORK, name + ".npz"))
+    B = torch.from_numpy(P["vectors"]).to("mps")
+    out = {}
+    for nm in NB_SETS:
+        q = torch.from_numpy(BS.unit(BS.unit(Z[nm + "/emb"].astype(np.float32)) - Z["mu"][None]).astype(np.float16)).to("mps")
+        vs, js = [], []
+        for i in range(0, len(q), 512):
+            v, j = (q[i:i + 512] @ B.T).topk(100, dim=1)
+            vs.append(v.cpu().numpy()), js.append(j.cpu().numpy().astype(np.int32))
+            torch.mps.synchronize()
+        out[nm + "/v"], out[nm + "/i"] = np.concatenate(vs), np.concatenate(js)
+    np.savez(out_p, **out)
+
+
+def tas_bank_everywhere():
+    """The shipped 82.6k Tasmanian bank (v1 query space) searched for EVERY set →
+    tasbank.npz (labels in U space, counts 1) + tasbank_nbrs.npz (top-50)."""
+    import torch
+    if os.path.exists(os.path.join(WORK, "tasbank_nbrs.npz")):
+        return
+    Z = load()
+    hh, ha = BS.read_blob(os.path.join(BS.SHIP, "head.bin"))
+    tmu = ha["centre"].astype(np.float32)
+    bh, ba = BS.read_blob(os.path.join(BS.SHIP, "bank-int8.bin"))
+    Bt = torch.from_numpy(ba["vectors"].astype(np.float16)).to("mps")
+    st = torch.from_numpy(ba["scale"].astype(np.float16)).to("mps")
+    lab = Z["s2u"][ba["labels"].astype(np.int64)]
+    np.savez(os.path.join(WORK, "tasbank.npz"), labels=lab.astype(np.int32), counts=np.ones(len(lab), np.int64))
+    out = {}
+    for nm in NB_SETS:
+        qs = torch.from_numpy(BS.unit(BS.unit(Z[nm + "/emb"].astype(np.float32)) - tmu[None]).astype(np.float16)).to("mps")
+        vs, js = [], []
+        for i in range(0, len(qs), 512):
+            v, j = ((qs[i:i + 512] @ Bt.T) * st[None]).float().topk(50, dim=1)
+            vs.append(v.cpu().numpy().astype(np.float16)), js.append(j.cpu().numpy().astype(np.int32))
+            torch.mps.synchronize()
+        out[nm + "/v"], out[nm + "/i"] = np.concatenate(vs), np.concatenate(js)
+    np.savez(os.path.join(WORK, "tasbank_nbrs.npz"), **out)
+
+
+def cmd_uniform():
+    """One uniform rule (no box): bank kNN everywhere, count-balanced votes, kNN
+    term only among the main path's top-10; ω (and β, rerank on/off, τ) chosen on
+    J = mean(AU-val re-weighted per species, A-val natural); tests read once."""
+    import torch
+    t0 = time.time()
+    if not os.environ.get("BA_BUILD_ONLY"):
+        tas_bank_everywhere()
+    Z = load()
+    n_tr = Z["n_tr"]
+    nz = n_tr[n_tr > 0]
+
+    def quota_for(total, cap=1000):
+        # rows ∝ min(n, cap), ≥ 1, ≤ n; scale f found by bisection to hit `total`
+        lo, hi = 1e-5, 1.0
+        for _ in range(50):
+            f = (lo + hi) / 2
+            tot = np.minimum(nz, np.maximum(1, np.round(f * np.minimum(nz, cap)))).sum()
+            lo, hi = (f, hi) if tot < total else (lo, f)
+        f = (lo + hi) / 2
+        return lambda n: min(n, max(1, round(f * min(n, cap))))
+    specs = {"strat85k": (quota_for(82649), 0), "strat170k": (quota_for(2 * 82649), 0),
+             "proto4s1": (lambda n: 4, 1)}  # K=4 prototypes, second k-means seed
+    only = os.environ.get("BA_BUILD_ONLY")
+    for k_, (q_, sd) in specs.items():
+        if not only or only == k_:
+            build_bank(k_, q_, seed=sd)
+    if only:
+        return
+    for nmb in ("strat85k", "strat170k", "proto4s1"):
+        search_bank(nmb)
+    log(f"banks ready ({time.time() - t0:.0f} s)")
+    sc = Scorer(Z)
+    res = json.load(open(os.path.join(WORK, "uniform.json"))) if os.path.exists(os.path.join(WORK, "uniform.json")) else {}
+    for bank in ("tasbank", "strat85k", "strat170k", "proto4s1"):
+        if bank in res:
+            continue
+        P = np.load(os.path.join(WORK, bank + ".npz"))
+        nb = dict(np.load(os.path.join(WORK, bank + "_nbrs.npz")))
+        lab_t = torch.from_numpy(P["labels"].astype(np.int64)).to(sc.dev)
+        rw_t = torch.from_numpy(P["counts"].astype(np.float32)).to(sc.dev)
+        cnt_t = torch.zeros(sc.C, device=sc.dev).index_add_(0, lab_t, rw_t)
+        rows_g = []
+        if bank == "proto4s1":  # seed check: the seed-0 K=4 parameters, no re-tuning
+            grid = [dict(json.load(open(os.path.join(WORK, "protoscore4_val.json")))["best"], rerank=0)]
+        else:
+            k = nb["AU-val/v"].shape[1]
+            grid = [{"k": min(50, k), "tau": t, "beta": b_, "om": om, "floor": -30.0, "rerank": rr, "rho": 0.0}
+                    for rr in (10, 0) for b_ in (1.0, 0.5) for t in (0.05, 0.1) for om in (0.25, 0.5, 1.0, 2.0, 3.0)]
+        for prm in grid:
+            r = {}
+            for nm in ("AU-val", "A-val"):
+                fn = nbr_knn(sc, nb[nm + "/v"], nb[nm + "/i"], lab_t, prm["k"], prm["tau"], prm["beta"], cnt_t, rw_t,
+                             prm.get("rho", 0.0))
+                r[nm] = sc.metrics(nm, sc.run(nm, fn, prm["om"], prm["floor"], rerank=prm["rerank"]))
+            rows_g.append({**prm, "J": 0.5 * (r["AU-val"]["top1_sp_rw"] + r["A-val"]["top1_nat"]),
+                           "AU-val_rw": r["AU-val"]["top1_sp_rw"], "A-val_nat": r["A-val"]["top1_nat"]})
+        best = max(rows_g, key=lambda x: x["J"])
+        log(bank, "chosen", best, f"({time.time() - t0:.0f} s)")
+        top5s = {}
+        for nm in ("AU-test", "A-test", "C-report"):
+            fn = nbr_knn(sc, nb[nm + "/v"], nb[nm + "/i"], lab_t, best["k"], best["tau"], best["beta"], cnt_t, rw_t,
+                         best.get("rho", 0.0))
+            top5s[nm] = sc.run(nm, fn, best["om"], best["floor"], rerank=best["rerank"])
+        rep = sc.report(top5s)
+        ntr = sc.n_tr[np.maximum(Z["AU-test/y"], 0)]
+        rep["AU-test 1-9"] = sc.metrics("AU-test", top5s["AU-test"], (ntr >= 1) & (ntr <= 9))
+        rep["A-test strict 0.2 km"] = sc.metrics("A-test", top5s["A-test"], strict_mask(Z, "A-test", 0.2))
+        rows = len(P["labels"])
+        rep["bank_rows"], rep["bank_MB"] = rows, bank_bytes(rows, bank != "tasbank") / 1e6
+        res[bank] = {"best": best, "grid": rows_g, "report": rep}
+        log(bank, json.dumps({k: (round(x["top1_sp"] * 100, 2), round(x["top1_nat"] * 100, 2)) for k, x in rep.items()
+                              if isinstance(x, dict)}), rows, f"({time.time() - t0:.0f} s)")
+        json.dump(res, open(os.path.join(WORK, "uniform.json"), "w"), indent=1)
+
+
 if __name__ == "__main__":
-    {"cache": cmd_cache, "decompose": cmd_decompose, "flips": cmd_flips, "mech": cmd_mech, "natsearch": cmd_natsearch, "geo": cmd_geo, "natscore": cmd_natscore, "protos": cmd_protos, "report": cmd_report, "protoscore": cmd_protoscore, "geoknn": cmd_geoknn}[sys.argv[1]]()
+    {"cache": cmd_cache, "decompose": cmd_decompose, "flips": cmd_flips, "mech": cmd_mech, "natsearch": cmd_natsearch, "geo": cmd_geo, "natscore": cmd_natscore, "protos": cmd_protos, "report": cmd_report, "protoscore": cmd_protoscore, "geoknn": cmd_geoknn, "uniform": cmd_uniform}[sys.argv[1]]()
