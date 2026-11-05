@@ -275,3 +275,32 @@ at a time and keeps a row view of it, so the list in class order reloaded a
 rows in 45 s at 2.5 GB RSS (checked with the current `add_extra`: 0
 rejected, 0 duplicates, all embeddings found, unit norm). Dropped rows:
 `extra/dropped_emb.parquet`. Local photo copies deleted (`url` re-fetches).
+
+## K = 1,000 expansion (Leo, 2026-11-05) — bound written BEFORE launch
+
+Leo: "don't limit training data". Fully uncapped would be 18.66M photos
+(97.8 % into classes that already have ≥ 50; ~50 h L4 ≈ $26–38 and 38 GB of
+training arrays) → Leo chose a per-class TOTAL cap K = 1,000, all photos per
+observation, fill order for capped classes: Australian new observations,
+then new observations elsewhere, then further photos per observation
+(Australia first), needs_id last (`select --cap 1000 --per-obs 1000000
+--au-first --tag k1000`, 73 s). Same rules otherwise (pool observers, eval
+observers asserted absent, name map + lump/none, needs_id track rule,
+shared / eval / training photo ids excluded).
+
+- `extra/work/candidates-k1000.parquet`: **3,150,301 photos**, 2.10M
+  observations, 16,590 classes, 69 % Australian; photo-less labels gain
+  ≥ 1 / ≥ 5 / ≥ 20: 1,143 / 720 / 225; classes with ≥ 5 / 20 / 100 photos
+  after: 15,265 / 11,682 / 6,473. 260,501 already embedded (the capped
+  list) → **2,889,800 to embed = 2,890 shards** (`work/todo-k1000.parquet`).
+- Hash stage moves onto the VM: `embed_extra.py` (copy of
+  train_australia's vm-embed + `dedup.hashes` of the same bytes → `phash`,
+  `dhash` per shard row; tested on 30 photos: cos ≥ 0.9999 vs the cloud
+  run, hashes identical to the laptop's), `cloud/run_extra.sh` +
+  `cloud/vm_extra.sh` (copies of run_au.sh / vm_au.sh), bucket prefix
+  `gs://leo-superresolution-izzy-plantid/au/extra2/`.
+- **Bound:** 2,889,800 / 102 photos/s = 7.9 h + ~0.2 h boot ≈ **8.1 h** →
+  `--max-run-duration=10h` per boot. VM $0.511/h × 8.1 h ≈ **$4.1** (× 1.5 for
+  preemptions ≈ $6.2) + disk 120 GB ≈ $0.15 + embeddings 5.9 GB to the
+  laptop ≈ $0.71 + GCS < $0.2 → **≈ $5–7, cap $10**. One GPU project-wide:
+  launch only when no other GPU VM runs.

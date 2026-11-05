@@ -280,7 +280,12 @@ def cmd_scan(a):
 # ------------------------------------------------------------------ select
 
 def cmd_select(a):
+    """--cap/--per-obs (defaults 100 / 3); --uncapped = no class cap, every CC
+    photo of every observation (Leo, 2026-11-05) → candidates-uncapped.parquet."""
     t0 = time.time()
+    CAP, PER_OBS = (10 ** 9, 10 ** 6) if a.uncapped else (a.cap, a.per_obs)
+    tag = "-uncapped" if a.uncapped else (f"-{a.tag}" if a.tag else "")
+    big = a.uncapped or bool(a.tag)
     con = db()
     L = labels()
     con.register("ntr0_v", ntr_table())
@@ -401,12 +406,17 @@ def cmd_select(a):
                         + CASE WHEN in_train THEN 1 ELSE 0 END AS k FROM b)
         SELECT * FROM k WHERE k <= {PER_OBS}""")
     # observer spread only counts new observations (k = 1)
+    # default: tier (new obs first photo, 2nd, 3rd …; needs_id after), observer spread, Australia, hash.
+    # --au-first (Leo, K = 1,000): Australian new observations, then new observations
+    # elsewhere, then further photos per observation (Australia first); needs_id last
+    order = ("grade != 'research', k > 1, CASE WHEN k = 1 THEN region ELSE 0 END, k, region, rk_obs > 3, h"
+             if a.au_first else "tier, rk_obs > 3, region, h")
     con.execute(f"""CREATE TEMP TABLE r AS
         WITH x AS (SELECT c.*, CASE WHEN grade = 'research' THEN 0 ELSE 3 END + k AS tier,
                           CASE WHEN {AUS.replace('lat', 'c.lat').replace('lon', 'c.lon')} THEN 0 ELSE 1 END AS region,
                           hash(uuid::VARCHAR || photo_id::VARCHAR || 'izzy-extra') AS h FROM c),
         y AS (SELECT *, dense_rank() OVER (PARTITION BY u, observer_id, grade ORDER BY hash(uuid::VARCHAR || 'obs')) AS rk_obs FROM x),
-        z AS (SELECT y.*, row_number() OVER (PARTITION BY u ORDER BY tier, rk_obs > 3, region, h) AS rk FROM y)
+        z AS (SELECT y.*, row_number() OVER (PARTITION BY u ORDER BY {order}) AS rk FROM y)
         SELECT z.*, ntr FROM z JOIN ntr_v USING (u)""")
     con.execute("CREATE TEMP TABLE sel AS SELECT * FROM r WHERE rk <= {} - ntr".format(CAP))
     # ---- leakage asserts
@@ -428,7 +438,13 @@ def cmd_select(a):
                CASE WHEN s.via = 'inat_map' THEN coalesce(r.name_relation, 'inat_map') ELSE s.via END AS name_relation,
                s.via != 'inat_map' AS via_name_map
         FROM sel s LEFT JOIN '{obs_login}' w USING (observer_id) LEFT JOIN rel_v r USING (u)
-        ORDER BY s.u, s.rk) TO '{os.path.join(WORK, "candidates.parquet")}' (FORMAT parquet)""")
+        ORDER BY s.u, s.rk) TO '{os.path.join(WORK, f"candidates{tag}.parquet")}' (FORMAT parquet)""")
+    if big:
+        summ = summarise_sql(con, os.path.join(WORK, f"candidates{tag}.parquet"))
+        summ["seconds"] = round(time.time() - t0, 1)
+        json.dump(summ, open(os.path.join(WORK, f"candidates{tag}-summary.json"), "w"), indent=1, default=int)
+        print(json.dumps(summ, indent=1, default=int))
+        return
     T = pq.read_table(os.path.join(WORK, "candidates.parquet")).to_pandas()
     summ = summarise(T, L)
     summ["seconds"] = round(time.time() - t0, 1)
@@ -442,6 +458,33 @@ def cmd_select(a):
                  AND photo_id NOT IN (SELECT photo_id FROM tr)) WHERE k <= {PER_OBS}""").fetchall()[0][0]
     json.dump(summ, open(os.path.join(WORK, "candidates-summary.json"), "w"), indent=1, default=int)
     print(json.dumps(summ, indent=1, default=int))
+
+
+def summarise_sql(con, path):
+    """summarise() in DuckDB (the uncapped list has millions of rows)."""
+    con.register("lab_v", ntr_table())
+    b = """CASE WHEN l.ntr = 0 THEN '0' WHEN l.ntr < 10 THEN '1-9' WHEN l.ntr < 20 THEN '10-19'
+                WHEN l.ntr < 50 THEN '20-49' ELSE '50+' END"""
+    q = lambda sql: con.execute(sql).fetchall()  # noqa: E731
+    out = {"photos": q(f"SELECT count(*) FROM '{path}'")[0][0],
+           "classes": q(f"SELECT count(DISTINCT u) FROM '{path}'")[0][0],
+           "observations": q(f"SELECT count(DISTINCT observation_uuid) FROM '{path}'")[0][0],
+           "by_source": dict(q(f"SELECT source, count(*) FROM '{path}' GROUP BY 1")),
+           "by_licence": dict(q(f"SELECT * FROM (SELECT COLUMNS('^licen[cs]e$'), count(*) FROM '{path}' GROUP BY ALL)"))}
+    bs = collections.defaultdict(dict)
+    for bk, src, n in q(f"SELECT {b}, source, count(*) FROM '{path}' c JOIN lab_v l USING (u) GROUP BY ALL"):
+        bs[bk][src] = n
+    out["by_bucket_source"] = dict(bs)
+    out["classes_gaining_by_bucket"] = dict(q(f"SELECT {b}, count(DISTINCT c.u) FROM '{path}' c JOIN lab_v l USING (u) GROUP BY 1"))
+    z = q(f"""SELECT count(*) FILTER (n >= 1), count(*) FILTER (n >= 5), count(*) FILTER (n >= 20) FROM
+              (SELECT u, count(*) n FROM '{path}' JOIN lab_v l USING (u) WHERE l.ntr = 0 GROUP BY u)""")[0]
+    out["zero_classes_gaining_ge1_ge5_ge20"] = list(z)
+    out["after_ge5_ge20_ge100"] = list(q(f"""SELECT count(*) FILTER (t >= 5), count(*) FILTER (t >= 20),
+              count(*) FILTER (t >= 100) FROM (SELECT l.u, l.ntr + coalesce(n, 0) t FROM lab_v l
+              LEFT JOIN (SELECT u, count(*) n FROM '{path}' GROUP BY u) USING (u))""")[0])
+    out["per_class_quantiles"] = list(q(f"""SELECT quantile_cont(n, [0.5, 0.9, 0.99]), max(n) FROM
+              (SELECT u, count(*) n FROM '{path}' GROUP BY u)""")[0])
+    return out
 
 
 def summarise(T, L, col="u"):
@@ -832,6 +875,153 @@ def cmd_dedup_emb(a):
     print(json.dumps(summ, indent=1, default=int))
 
 
+def cmd_finalize(a):
+    """Both dedup stages for a big list (`select --tag`, e.g. k1000) whose
+    shards carry their own pHash/dHash (embed_extra.py on the VM); photos of
+    the first, capped run are reused from extra/emb (+ hashes-cand).
+    Stage 1 (hashes): vs every evaluation photo (all pairs); within the list
+    per class (earlier fill rank wins) + exact hash twins across classes
+    (both dropped). Stage 2 (BioCLIP cosine): vs every evaluation photo (all
+    pairs; ≥ 0.95, or 0.85–0.95 with agreeing hashes); vs the class's own
+    training photos and within the class (≥ 0.95). Scaled down from
+    dedup-emb (all-pairs vs 680k training photos + S3-hashing the 0.85–0.95
+    band): on the 260k list that band confirmed 14 of 114,706 and 93 % of the
+    ≥ 0.95 training hits were the same observation, i.e. the same class.
+    → extra/extra_photos_<tag>.parquet (train_v2 --extra format, sorted by shard)."""
+    import glob
+    import pandas as pd
+    import torch
+    import train_australia as TA
+    tag = a.tag
+    cal = json.load(open(os.path.join(WORK, "calibration.json")))["chosen"]
+    ce = json.load(open(os.path.join(WORK, "calibration-emb.json")))["chosen"]
+    tc, ta = ce["confirm"]["thr"], ce["standalone"]["thr"]
+    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    t0 = time.time()
+    X = pq.read_table(os.path.join(WORK, f"candidates-{tag}.parquet")).to_pandas()
+    H0 = read_parts("hashes-cand").to_pandas().drop_duplicates("photo_id").set_index("photo_id")
+    ids, es, ph, dh, shp, row = [], [], [], [], [], []
+    for d in a.emb_dirs:
+        for f in sorted(glob.glob(os.path.join(d, "shard-*.npz"))):
+            z = np.load(f)
+            p = z["photo_id"].astype(np.int64)
+            ids.append(p); es.append(z["emb"].astype(np.float16))
+            if "phash" in z:
+                ph.append(z["phash"].astype(np.uint64)); dh.append(z["dhash"].astype(np.uint64))
+            else:
+                hh = H0.reindex(p)
+                ph.append(hh["phash"].fillna(0).to_numpy(np.uint64)); dh.append(hh["dhash"].fillna(0).to_numpy(np.uint64))
+            shp += [f] * len(p); row.append(np.arange(len(p)))
+    ids, E = np.concatenate(ids), np.concatenate(es)
+    ph, dh, row = np.concatenate(ph), np.concatenate(dh), np.concatenate(row)
+    shp = np.array(shp, dtype=object)
+    _, first = np.unique(ids, return_index=True)  # a photo embedded twice: first copy
+    pos = dict(zip(ids[first].tolist(), first.tolist()))
+    X["ei"] = [pos.get(int(p), -1) for p in X["photo_id"]]
+    miss = X["ei"] < 0
+    print(f"{tag}: {len(X):,} rows, embedded {(~miss).sum():,} ({time.time() - t0:.0f} s)", flush=True)
+    dropped = [X[miss].assign(reason="not embedded (gone upstream)")]
+    X = X[~miss].sort_values(["u", "rk"]).reset_index(drop=True)
+    ei = X["ei"].to_numpy()
+    X["phash"], X["dhash"] = ph[ei], dh[ei]
+    reason = np.full(len(X), "", dtype=object)
+    # ---- stage 1: hashes
+    Eh = read_parts("hashes-eval").to_pandas()
+    Eh = Eh[Eh["status"].isin(["ok", "local"])]
+    hit, j = dedup.near_any(X["phash"].to_numpy(np.uint64), X["dhash"].to_numpy(np.uint64),
+                            Eh["phash"].to_numpy(np.uint64), Eh["dhash"].to_numpy(np.uint64), cal["phash"], cal["dhash"])
+    reason[hit] = "hash: eval photo"
+    print(f"  hash vs eval: {hit.sum():,} ({time.time() - t0:.0f} s)", flush=True)
+    key = X["phash"].astype(str) + ":" + X["dhash"].astype(str)
+    multi = X.assign(k=key).groupby("k")["u"].transform("nunique") > 1
+    reason[(reason == "") & multi.to_numpy()] = "hash: identical image in another class (both dropped)"
+    uu = X["u"].to_numpy()
+    bounds = np.r_[0, np.nonzero(uu[1:] != uu[:-1])[0] + 1, len(X)]
+    phv, dhv = X["phash"].to_numpy(np.uint64), X["dhash"].to_numpy(np.uint64)
+    nw = 0
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        if hi - lo > 1:
+            dup, _ = dedup.near_within(phv[lo:hi], dhv[lo:hi], cal["phash"], cal["dhash"])
+            m = dup & (reason[lo:hi] == "")
+            reason[lo:hi][m] = "hash: within class"
+            nw += m.sum()
+    print(f"  hash within class: {nw:,}; cross-class twins {multi.sum():,} ({time.time() - t0:.0f} s)", flush=True)
+    # ---- stage 2: embeddings
+    Q = torch.from_numpy(E[ei]).to(dev)
+    ev = eval_sets().to_pandas().drop_duplicates("photo_id")
+    aid, aE = TA.all_embeddings()
+    i_, ok = TA.lookup(aid, ev["photo_id"].to_numpy(np.int64))
+    R = torch.from_numpy(aE[i_[ok]]).to(dev)
+    rid = ev["photo_id"].to_numpy(np.int64)[ok]
+    best = torch.full((len(Q),), -2.0, device=dev)
+    arg = torch.zeros(len(Q), dtype=torch.long, device=dev)
+    for lo in range(0, len(Q), 16384):
+        S = (Q[lo:lo + 16384] @ R.T).float()
+        v, k = S.max(1)
+        best[lo:lo + 16384], arg[lo:lo + 16384] = v, k
+    best, arg = best.cpu().numpy(), arg.cpu().numpy()
+    Ehx = Eh.drop_duplicates("photo_id").set_index("photo_id")
+    nn = rid[arg]
+    hp = Ehx.reindex(nn)["phash"].fillna(0).to_numpy(np.uint64)
+    hd = Ehx.reindex(nn)["dhash"].fillna(0).to_numpy(np.uint64)
+    near = (np.bitwise_count(phv ^ hp) <= cal["phash"]) & (np.bitwise_count(dhv ^ hd) <= cal["dhash"])
+    m = (reason == "") & ((best >= ta) | ((best >= tc) & near))
+    reason[m] = "emb: eval photo"
+    X["cos_eval"] = best
+    print(f"  emb vs eval: {m.sum():,} (≥ {ta}: {(best >= ta).sum():,}) ({time.time() - t0:.0f} s)", flush=True)
+    del R, aE
+    # vs the class's own training photos + within the class
+    tr = pq.read_table(os.path.join(AU, "plan", "train.parquet"), columns=["photo_id", "u"]).to_pandas()
+    rt = pq.read_table(os.path.join(EX, "reassign_train.parquet")).to_pandas()
+    tr.loc[tr["photo_id"].isin(rt["photo_id"]), "u"] = tr["photo_id"].map(dict(zip(rt["photo_id"], rt["u_new"])))
+    i_, ok = TA.lookup(aid, tr["photo_id"].to_numpy(np.int64))
+    tr = tr[ok].assign(ai=i_[ok]).sort_values("u")
+    _, aE = TA.all_embeddings()
+    tu = tr["u"].to_numpy()
+    tb = dict(zip(*np.unique(tu, return_index=True)))
+    tcnt = dict(zip(*np.unique(tu, return_counts=True)))
+    tai = tr["ai"].to_numpy()
+    n_tr = n_in = 0
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        u = int(uu[lo])
+        q = Q[lo:hi]
+        if u in tb:
+            Rt = torch.from_numpy(aE[tai[tb[u]:tb[u] + tcnt[u]]]).to(dev)
+            v = (q @ Rt.T).float().max(1).values.cpu().numpy()
+            m = (reason[lo:hi] == "") & (v >= ta)
+            reason[lo:hi][m] = "emb: training photo (same class)"
+            n_tr += m.sum()
+        if hi - lo > 1:
+            S = (q @ q.T).float()
+            S = torch.tril(S, diagonal=-1)  # only earlier rows (rank order)
+            v = S.max(1).values.cpu().numpy()
+            m = (reason[lo:hi] == "") & (v >= ta)
+            reason[lo:hi][m] = "emb: within class"
+            n_in += m.sum()
+    print(f"  emb vs class training photos: {n_tr:,}; within class: {n_in:,} ({time.time() - t0:.0f} s)", flush=True)
+    drop = reason != ""
+    dropped.append(X[drop].assign(reason=reason[drop]))
+    F_ = X[~drop].copy()
+    L = labels()
+    F_["name"] = [L[u]["name"] for u in F_["u"]]
+    F_["url"] = [f"https://{HOST}/photos/{p}/medium.{e}" for p, e in zip(F_["photo_id"], F_["ext"])]
+    F_["attribution"] = [attribution(n, lg, li) for n, lg, li in zip(F_["observer_name"], F_["login"], F_["license"])]
+    F_["shard"] = shp[F_["ei"].to_numpy()]
+    F_["shard_row"] = row[F_["ei"].to_numpy()]
+    F_ = F_.drop(columns=["ei"]).rename(columns={"license": "licence"}).sort_values(["shard", "shard_row"])
+    outp = os.path.join(EX, f"extra_photos_{tag}.parquet")
+    pq.write_table(pa.Table.from_pandas(F_.astype({"observed_on": str}), preserve_index=False), outp)
+    D = pd.concat(dropped, ignore_index=True)
+    pq.write_table(pa.Table.from_pandas(D.astype({"observed_on": str}), preserve_index=False),
+                   os.path.join(EX, f"dropped_{tag}.parquet"))
+    con = __import__("duckdb").connect()
+    summ = summarise_sql(con, outp)
+    summ["dropped"] = D.groupby("reason").size().to_dict()
+    summ["seconds"] = round(time.time() - t0)
+    json.dump(summ, open(os.path.join(EX, f"extra_photos_{tag}-summary.json"), "w"), indent=1, default=int)
+    print(json.dumps(summ, indent=1, default=int))
+
+
 def pd_na_int(n):
     import pandas as pd
     return pd.array([None] * n, dtype="Int32")
@@ -1084,7 +1274,12 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("scan")
     p.add_argument("--fresh", action="store_true")
-    sub.add_parser("select")
+    p = sub.add_parser("select")
+    p.add_argument("--cap", type=int, default=100)
+    p.add_argument("--per-obs", type=int, default=3)
+    p.add_argument("--uncapped", action="store_true")
+    p.add_argument("--au-first", action="store_true")
+    p.add_argument("--tag", default="", help="output candidates-<tag>.parquet (SQL summary)")
     p = sub.add_parser("measure")
     p.add_argument("--n", type=int, default=500)
     p.add_argument("--threads", type=int, default=48)
@@ -1101,6 +1296,9 @@ def main():
     p.add_argument("--n", type=int, default=80)
     sub.add_parser("dedup")
     sub.add_parser("dedup-emb")
+    p = sub.add_parser("finalize")
+    p.add_argument("--tag", default="k1000")
+    p.add_argument("--emb-dirs", nargs="+", default=[os.path.join(EX, "emb"), os.path.join(EX, "emb-k1000")])
     p = sub.add_parser("noise")
     p.add_argument("--n", type=int, default=1000)
     p.add_argument("--n-track", type=int, default=400)
@@ -1108,7 +1306,7 @@ def main():
     a = ap.parse_args()
     os.makedirs(WORK, exist_ok=True)
     {"scan": cmd_scan, "select": cmd_select, "measure": cmd_measure, "fetch": cmd_fetch, "evalhash": cmd_evalhash,
-     "calibrate": cmd_calibrate, "calibrate-emb": cmd_calibrate_emb, "dedup": cmd_dedup, "dedup-emb": cmd_dedup_emb, "noise": cmd_noise}[a.cmd](a)
+     "calibrate": cmd_calibrate, "calibrate-emb": cmd_calibrate_emb, "dedup": cmd_dedup, "dedup-emb": cmd_dedup_emb, "finalize": cmd_finalize, "noise": cmd_noise}[a.cmd](a)
 
 
 if __name__ == "__main__":
