@@ -5,7 +5,7 @@ import SwiftUI
 /// The real decision is visual — "is it this one?" — so her crop sits
 /// beside each candidate's photo at the same size, swipeable through the
 /// top 5; the ladder is drawn as ink bars per genus split into species,
-/// with the 50 % line; the headline says what the ladder says. Ink only:
+/// with the line where the ladder in force names it (pipeline.json: genus 55 %, species 50–75 % by training photos); the headline says what the ladder says. Ink only:
 /// no traffic-light colours, no reward for an unsure answer.
 struct PlantIDResults: View {
     let session: PlantIDSession
@@ -450,10 +450,10 @@ struct CandidatePhoto: View {
     }
 }
 
-/// p as an ink bar with the 50 % line, the percentage beside it.
+/// p as an ink bar with the line where the ladder names it, the percentage beside it.
 struct ConfidenceBar: View {
     let p: Double
-    /// Where the ladder names it (0.5 in Tasmania).
+    /// Where the ladder names it (the class bucket's species threshold, `Candidate.threshold`).
     var threshold = 0.5
     var emphasis = false
 
@@ -481,7 +481,7 @@ struct ConfidenceBar: View {
 }
 
 /// One genus: its summed p as a bar split into its species (ink at falling
-/// strengths), the 50 % hairline across, the species' epithets below.
+/// strengths), the genus threshold's hairline across (`ladder.genus`), the species' epithets below.
 struct GenusBar: View {
     let share: PlantIDResult.GenusShare
     let labels: [PlantIDLabel]
@@ -613,7 +613,7 @@ struct CandidateRow: View {
     }
 }
 
-/// The 50 % line on a bar: ink ticks above and below, a gap in the
+/// A threshold line on a bar: ink ticks above and below, a gap in the
 /// sheet's own colour across the bar — visible over the ink fill and the
 /// light track alike.
 struct ThresholdMark: View {

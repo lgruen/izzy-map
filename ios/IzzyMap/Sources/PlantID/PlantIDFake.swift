@@ -45,6 +45,12 @@ nonisolated enum PlantIDFake {
         return n
     }
 
+    /// The shipped model's ladder (pipeline.json `v2.scoring.ladder`,
+    /// ladder_v3 — 2026-11-05), so screenshots show the lines in force:
+    /// species 60 / 50 / 50 / 75 % by the named class's training photos,
+    /// genus 55 %.
+    static let ladder = PlantIDLadder(species: [0.6, 0.5, 0.5, 0.75], bucketEdges: [0, 10, 50], genus: 0.55)
+
     static func make(_ mode: String) async throws -> (PlantIDModel, any PlantEncoding) {
         let catalog = await PlantLibrary.shared.load()
         let labels = effectiveNames.enumerated().map { i, pair in
@@ -52,7 +58,7 @@ nonisolated enum PlantIDFake {
             let plant = catalog?.plant(for: name)
             var l = PlantIDLabel(name: name, genus: genus, family: plant?.family ?? "Myrtaceae",
                                  un: plant.map { PlantIDLabel.Profile(key: name, ids: [$0.id], match: nil) })
-            l.trainPhotos = 100
+            l.trainPhotos = 30   // ladder v3's 10–49 bucket: named at 50 %
             if plant == nil, i >= 8, names[i].0 == name { l.common = i == 8 ? "yellow box" : "red ironbark" }
             if plant == nil { l.inat = 1000 + i }
             if plant != nil { l.ship = i }
@@ -73,7 +79,7 @@ nonisolated enum PlantIDFake {
             for i in 0 ..< n { records.append((-42.88 + 0.004 * Double(i), 147.32 + 0.003 * Double(i), label)) }
         }
         let params = PlantIDModelParameters(temperature: 1, lam: 0.02, prior: .init(transform: .log1p, sigmaKm: 10, alpha: 64),
-                                            ladder: .simple)
+                                            ladder: Self.ladder)
         let model = PlantIDModel(labels: labels, weight: weight, centre: [Float](repeating: 0, count: C),
                                  parameters: params, prior: PlantIDDegPrior(records: records, labels: C))
         return (model, Encoder(embedding: embedding))
