@@ -74,16 +74,32 @@ PH = os.path.join(SRC, "photos")
 LABELS = os.path.join(CACHE, "ship", "au-labels.json")
 UA = "izzymap-plantid-eval/1"
 HDR = {"User-Agent": UA, "Accept-Encoding": "gzip"}
+# Wikimedia throttles unidentified clients hard (429, Retry-After 600 on thumbnail
+# misses at 3 workers, 2026-11-05): identify with the public repo URL (no email).
+UA_WM = UA + " (https://github.com/lgruen/izzy-map; non-commercial research)"
+
+
+def ua_for(url):
+    return UA_WM if ("wikimedia.org" in url or "wikidata.org" in url) else UA
 BIOCACHE = "https://biocache-ws.ala.org.au/ws/occurrences/search"
 NAMEMATCH = "https://namematching-ws.ala.org.au/api/search?q="
 FQ = ["kingdom:Plantae", "-occurrenceStatus:ABSENT", "-dataGeneralizations:*", "-sensitive:*",
       "-basisOfRecord:FOSSIL_SPECIMEN", "-coordinateUncertaintyInMeters:[1000.001 TO *]",
       "decimalLatitude:[-44.0 TO -9.0] AND decimalLongitude:[112.0 TO 154.0]"]
+NOINAT = "--noinat" in sys.argv  # variant: ALA's iNaturalist Australia copy (dr1411) excluded
+if NOINAT:  # (it leaks iNat val/test observations into the prior)
+    FQ = FQ + ["-data_resource_uid:dr1411"]
+SUF = "_noinat" if NOINAT else ""
 FQ_SIG = "|".join(FQ)
 EXCL_DR = {"dr1411": "iNaturalist Australia", "dr19123": "NatureMapr (no per-image licence)"}
 APII = "dr413"
 FIELD_BOR = ("HUMAN_OBSERVATION", "OBSERVATION", "MACHINE_OBSERVATION", "LIVING_SPECIMEN")
-CAP = 100
+TOTAL = 1000  # Leo: ≤ 1,000 training photos per label over ALL sources; non-iNat first
+
+
+def room(train_photos):
+    """Non-iNat photos a label may take: TOTAL minus its existing training photos."""
+    return max(0, TOTAL - int(train_photos))
 EDGE = 500
 for d in (CNT, APH, CMS, PH):
     os.makedirs(d, exist_ok=True)
@@ -98,7 +114,7 @@ def labels():
 
 
 def http_get(url, timeout=120, tries=4, data=None, headers=None):
-    h = dict(HDR)
+    h = dict(HDR, **{"User-Agent": ua_for(url)})
     h.update(headers or {})
     for i in range(tries):
         try:
@@ -170,13 +186,17 @@ def namematch(name):
 
 # ------------------------------------------------------------------ counts
 def count_one(u, name):
-    path = os.path.join(CNT, "occ", f"{u:05d}.json.gz")
+    path = os.path.join(CNT, "occ" + SUF, f"{u:05d}.json.gz")
     if os.path.exists(path):
         return False
     rel, qn = "exact", name
-    d = search(FQ + [f'species:"{name}"'], pageSize=0, facets="point-0.001,dataResourceUid", flimit=-1)
+    main = os.path.join(CNT, "occ", f"{u:05d}.json.gz")
+    if NOINAT and os.path.exists(main):  # same query name as the main pull (no fresh name matching)
+        m = rjson(main)
+        rel, qn = m["relation"], m["query"]
+    d = search(FQ + [f'species:"{qn}"'], pageSize=0, facets="point-0.001,dataResourceUid", flimit=-1)
     nm = None
-    if d["totalRecords"] == 0:
+    if d["totalRecords"] == 0 and not (NOINAT and os.path.exists(main)):
         nm = namematch(name)
         alt = nm.get("speciesName") if nm and nm.get("success") else None
         if alt and alt != name:
@@ -197,10 +217,10 @@ def count_one(u, name):
 
 
 def cmd_counts(limit=None):
-    os.makedirs(os.path.join(CNT, "occ"), exist_ok=True)
+    os.makedirs(os.path.join(CNT, "occ" + SUF), exist_ok=True)
     L = labels()
     todo = [(u, l["name"]) for u, l in enumerate(L)
-            if not os.path.exists(os.path.join(CNT, "occ", f"{u:05d}.json.gz"))]
+            if not os.path.exists(os.path.join(CNT, "occ" + SUF, f"{u:05d}.json.gz"))]
     if limit:
         todo = todo[:limit]
     log(f"counts: {len(L) - len(todo) if not limit else '?'} cached, {len(todo)} to fetch, 3 workers")
@@ -219,7 +239,7 @@ def cmd_counts(limit=None):
         list(ex.map(one, todo))
     log(f"counts done: {done[0]} in {time.time() - t0:.0f} s, errors {len(err)}")
     if err:
-        wjson(os.path.join(CNT, "errors.json"), err)
+        wjson(os.path.join(CNT, f"errors{SUF}.json"), err)
 
 
 def on_minute(k):
@@ -234,7 +254,7 @@ def cmd_counts_table(limit=None):
     import pyarrow as pa
     import pyarrow.parquet as pq
     L = labels()
-    files = sorted(glob.glob(os.path.join(CNT, "occ", "*.json.gz")))
+    files = sorted(glob.glob(os.path.join(CNT, "occ" + SUF, "*.json.gz")))
     U, LA, LO, N = [], [], [], []
     rel, incomplete, zero, by_query = collections.Counter(), [], 0, collections.defaultdict(list)
     for f in files:
@@ -255,14 +275,14 @@ def cmd_counts_table(limit=None):
     drop = minute | deci
     k = ~drop
     pq.write_table(pa.table({"u": U[k], "lat": LA[k] / 1000.0, "lon": LO[k] / 1000.0, "n": N[k]}),
-                   os.path.join(CNT, "ala_points.parquet"))
+                   os.path.join(CNT, f"ala_points{SUF}.parquet"))
     cy = np.floor_divide(LA[k] + 44000, 50)
     cx = np.floor_divide(LO[k] - 112000, 50)
     key = (cy * 1000 + cx) * 100000 + U[k]
     uk, inv = np.unique(key, return_inverse=True)
     n = np.bincount(inv, weights=N[k]).astype(np.int64)
     pq.write_table(pa.table({"u": uk % 100000, "cy": (uk // 100000) // 1000, "cx": (uk // 100000) % 1000, "n": n}),
-                   os.path.join(CNT, "ala_counts.parquet"))
+                   os.path.join(CNT, f"ala_counts{SUF}.parquet"))
     shared = {q: us for q, us in by_query.items() if len(us) > 1}
     summ = {"labels_queried": len(files), "labels_total": len(L), "relation": rel, "labels_zero_records": zero,
             "labels_with_records": len(files) - zero, "incomplete_facets": incomplete[:50],
@@ -272,7 +292,7 @@ def cmd_counts_table(limit=None):
             "cells_x_classes": int(len(uk)),
             "labels_sharing_an_ala_species": {q: [L[u]["name"] for u in us] for q, us in list(shared.items())[:200]},
             "n_shared_queries": len(shared), "filters": FQ, "accessed": time.strftime("%Y-%m-%d")}
-    wjson(os.path.join(CNT, "summary.json"), summ)
+    wjson(os.path.join(CNT, f"summary{SUF}.json"), summ)
     print(json.dumps({k2: v for k2, v in summ.items() if k2 not in ("labels_sharing_an_ala_species",)}, indent=1,
                      default=int)[:3000])
 
@@ -314,16 +334,25 @@ LIC_LABEL = {"CC0": "CC0", "PD": "public domain", "CC-BY": "CC BY", "CC-BY-NC": 
 
 # ------------------------------------------------------------------ ALA photos
 def ala_target_labels():
+    """Every label (Leo, 2026-11-05), most-needed first (0, 1–9, 10–19, rest)."""
     L = labels()
-    return [(u, l["name"]) for u, l in enumerate(L) if l["train_photos"] < 20]
+    b = lambda n: 0 if n == 0 else 1 if n < 10 else 2 if n < 20 else 3  # noqa: E731
+    return sorted(((u, l["name"]) for u, l in enumerate(L)), key=lambda a: (b(L[a[0]]["train_photos"]), a[0]))
 
 
 def ala_list_one(u, name):
     path = os.path.join(APH, "recs", f"{u:05d}.json")
+    want = room(labels_cache()[u]["train_photos"])
     if os.path.exists(path):
-        return False
+        d = rjson(path)
+        n_img = sum(len(r.get("images") or []) for r in d["recs"])
+        # first run stopped at 300 images / 1,000 records; redo only if that cut it short
+        cpath = os.path.join(CNT, "occ" + SUF, f"{u:05d}.json.gz")
+        stale = os.path.exists(cpath) and rjson(cpath)["query"] != d["query"]  # listed before name matching
+        if not stale and (d.get("full") or d["total"] <= len(d["recs"]) or n_img >= want):
+            return False
     qn = name
-    cpath = os.path.join(CNT, "occ", f"{u:05d}.json.gz")
+    cpath = os.path.join(CNT, "occ" + SUF, f"{u:05d}.json.gz")
     if os.path.exists(cpath):
         c = rjson(cpath)
         if c["relation"] == "ala-accepted":
@@ -343,10 +372,10 @@ def ala_list_one(u, name):
                                                 "images", "license", "decimalLatitude", "decimalLongitude",
                                                 "eventDate", "recordedBy", "scientificName", "raw_scientificName",
                                                 "occurrenceID")})
-        start += 100
-        if start >= total or sum(len(r.get("images") or []) for r in recs) >= 3 * CAP or start >= 1000:
+        start += 100  # pageSize 300 answers 503 (nginx, 2026-11-05)
+        if start >= total or sum(len(r.get("images") or []) for r in recs) >= want + 200:
             break
-    wjson(path, {"u": u, "name": name, "query": qn, "total": total, "recs": recs})
+    wjson(path, {"u": u, "name": name, "query": qn, "total": total, "recs": recs, "full": True})
     return True
 
 
@@ -355,22 +384,30 @@ def cmd_ala_list(limit=None):
     todo = [a for a in ala_target_labels() if not os.path.exists(os.path.join(APH, "recs", f"{a[0]:05d}.json"))]
     if limit:
         todo = todo[:limit]
-    log(f"ala-list: {len(todo)} labels to query (1 worker)")
-    t0, err = time.time(), []
-    for i, a in enumerate(todo, 1):
+    todo = [a for a in ala_target_labels() if not os.path.exists(os.path.join(APH, "recs", f"{a[0]:05d}.json"))
+            or not rjson(os.path.join(APH, "recs", f"{a[0]:05d}.json")).get("full")]
+    if limit:
+        todo = todo[:limit]
+    log(f"ala-list: {len(todo)} labels to (re)check (2 workers)")
+    t0, err, cnt = time.time(), [], [0]
+
+    def one(a):
         try:
             ala_list_one(*a)
         except Exception as e:  # noqa: BLE001
             err.append((a, str(e)[:120]))
-        if i % 500 == 0:
-            log(f"  {i}/{len(todo)} in {time.time() - t0:.0f} s, errors {len(err)}")
+        cnt[0] += 1
+        if cnt[0] % 500 == 0:
+            log(f"  {cnt[0]}/{len(todo)} in {time.time() - t0:.0f} s, errors {len(err)}")
+    with cf.ThreadPoolExecutor(2) as ex:
+        list(ex.map(one, todo))
     log(f"ala-list done in {time.time() - t0:.0f} s, errors {len(err)}")
     if err:
         wjson(os.path.join(APH, "list_errors.json"), err)
 
 
 def cmd_ala_info(limit=None):
-    """Pick ≤ CAP images per label (APII first, then others, record order),
+    """Pick ≤ room(label) images per label (APII first, then others, record order),
     fetch per-image metadata, write candidates."""
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -385,7 +422,7 @@ def cmd_ala_info(limit=None):
             for i, im in enumerate(r.get("images") or []):
                 imgs.append((0 if r["dataResourceUid"] == APII else 1, i, im, r))
         imgs.sort(key=lambda x: (x[0], x[1]))
-        for k, (_, _, im, r) in enumerate(imgs[:CAP]):
+        for k, (_, _, im, r) in enumerate(imgs[:room(L[d["u"]]["train_photos"])]):
             want.append((d["u"], d["name"], d["query"], k, im, r))
     if limit:
         want = want[:limit]
@@ -445,19 +482,30 @@ def cmd_ala_info(limit=None):
 
 # ------------------------------------------------------------------ fetch + hash
 class KeepAlive:
-    def __init__(self):
+    def __init__(self, min_interval=0.0):
         self.c = {}
+        self.min_interval = min_interval
+        self.last = 0.0
 
     def get(self, url, timeout=60):
         p = urllib.parse.urlsplit(url)
-        for i in range(3):
+        if self.min_interval:
+            time.sleep(max(0.0, self.last + self.min_interval - time.time()))
+            self.last = time.time()
+        for i in range(4):
             conn = self.c.get(p.netloc)
             if conn is None:
                 conn = self.c[p.netloc] = http.client.HTTPSConnection(p.netloc, timeout=timeout)
             try:
-                conn.request("GET", p.path + ("?" + p.query if p.query else ""), headers={"User-Agent": UA})
+                conn.request("GET", p.path + ("?" + p.query if p.query else ""), headers={"User-Agent": ua_for(url)})
                 r = conn.getresponse()
                 b = r.read()
+                if r.status == 429:
+                    ra = r.getheader("Retry-After")
+                    wait = min(int(ra), 900) if ra and ra.isdigit() else 60 * (i + 1)
+                    log(f"  429 from {p.netloc}, waiting {wait} s")
+                    time.sleep(wait)
+                    continue
                 if r.status in (301, 302, 303, 307, 308):
                     return self.get(urllib.parse.urljoin(url, r.getheader("Location")), timeout)
                 if r.status == 429 or r.status >= 500:
@@ -484,7 +532,7 @@ def to_jpeg500(body):
     return out.getvalue(), im.size
 
 
-def fetch_hash(items, outdir, part_prefix, workers):
+def fetch_hash(items, outdir, part_prefix, workers, min_interval=0.0):
     """items: [(key, url)] → photos/<outdir>/<key>.jpg + hash parts."""
     import dedup
     import pyarrow as pa
@@ -514,7 +562,7 @@ def fetch_hash(items, outdir, part_prefix, workers):
     def one(x):
         key, url = x
         if not hasattr(tl, "ka"):
-            tl.ka = KeepAlive()
+            tl.ka = KeepAlive(min_interval)
         path = os.path.join(PH, outdir, f"{key}.jpg")
         rec = {"key": key, "status": "ok", "bytes": None, "w": None, "h": None, "phash": None, "dhash": None,
                "local_path": None}
@@ -555,17 +603,26 @@ def fetch_hash(items, outdir, part_prefix, workers):
 
 def cmd_ala_fetch(limit=None):
     import pyarrow.parquet as pq
-    C = pq.read_table(os.path.join(APH, "candidates.parquet"), columns=["image_id", "train_ok"]).to_pydict()
-    ids = sorted({i for i, ok in zip(C["image_id"], C["train_ok"]) if ok})
+    C = pq.read_table(os.path.join(APH, "candidates.parquet"), columns=["image_id", "train_ok", "ntr", "rk"]).to_pydict()
+    need = {}  # most-needed first: 0, 1–9, 10–19, rest; then rank within the label
+    for i, ok, n, r in zip(C["image_id"], C["train_ok"], C["ntr"], C["rk"]):
+        if ok:
+            need[i] = min(need.get(i, (9, 0)), (0 if n == 0 else 1 if n < 10 else 2 if n < 20 else 3, r))
+    ids = sorted(need, key=lambda i: (need[i], i))
     if limit:
         ids = ids[:limit]
     # images.ala.org.au store path: /store/<last 4 hex chars reversed>/<id>/thumbnail_large
-    items = [(i, f"https://images.ala.org.au/store/{i[-1]}/{i[-2]}/{i[-3]}/{i[-4]}/{i}/thumbnail_large") for i in ids]
-    fetch_hash(items, "ala", "ala_photos/hashes", workers=6)
+    # The CDN host first (measured 2026-11-05: ~half are cache hits at ~0.09 s; misses 302 back to
+    # images.ala.org.au?nr, ~0.3–0.6 s). Latency-bound, no 429/503 seen: 6 → 12 → 16 workers gave
+    # 20 → 40 → 52 /s with flat latency. ALA publishes no image rate limit; 12 = a modest choice.
+    items = [(i, f"https://images-assets.ala.org.au/store/{i[-1]}/{i[-2]}/{i[-3]}/{i[-4]}/{i}/thumbnail_large")
+             for i in ids]
+    fetch_hash(items, "ala", "ala_photos/hashes", workers=12)
 
 
 # ------------------------------------------------------------------ Commons
 QLEVER = "https://qlever.dev/api/wikidata"
+WDQS = "https://query.wikidata.org/sparql"
 CAPI = "https://commons.wikimedia.org/w/api.php?"
 BAD = re.compile(r"herbari|specimen|illustrat|drawing|\bplate\b|tafel|\bmap\b|distribution|range map|botanical art|"
                  r"diagram|\bscan|stamp|\blabel|\btype\b|holotype|isotype|lectotype|syntype|sketch|painting|"
@@ -575,8 +632,9 @@ BAD = re.compile(r"herbari|specimen|illustrat|drawing|\bplate\b|tafel|\bmap\b|di
 
 def capi(params, tries=4):
     params = dict(params, format="json", formatversion=2, maxlag=5)
-    for i in range(tries):
-        d = getj(CAPI + urllib.parse.urlencode(params))
+    for i in range(tries):  # POST: 50 long file titles overflow a GET URL (414)
+        d = getj(CAPI.rstrip("?"), data=urllib.parse.urlencode(params).encode(),
+                 headers={"Content-Type": "application/x-www-form-urlencoded"})
         if d.get("error", {}).get("code") == "maxlag":
             time.sleep(5 * (i + 1))
             continue
@@ -597,8 +655,12 @@ def cmd_commons_list(limit=None):
         SELECT ?name ?item ?img ?cat ?gbif ?inat ?apni WHERE {{ VALUES ?name {{ {vals} }} ?item wdt:P225 ?name .
           OPTIONAL {{ ?item wdt:P18 ?img }} OPTIONAL {{ ?item wdt:P373 ?cat }} OPTIONAL {{ ?item wdt:P846 ?gbif }}
           OPTIONAL {{ ?item wdt:P3151 ?inat }} OPTIONAL {{ ?item wdt:P5984 ?apni }} }}"""
-        d = getj(QLEVER + "?" + urllib.parse.urlencode({"query": q}),
-                 headers={"Accept": "application/sparql-results+json"})
+        try:  # WDQS (answering again after the 2026-11-05 outage rule), QLever mirror as fallback
+            d = getj(WDQS + "?" + urllib.parse.urlencode({"query": q}),
+                     headers={"Accept": "application/sparql-results+json"}, tries=2)
+        except Exception:  # noqa: BLE001
+            d = getj(QLEVER + "?" + urllib.parse.urlencode({"query": q}),
+                     headers={"Accept": "application/sparql-results+json"}, tries=10)
         for n in chunk:
             wd.setdefault(n, {"item": [], "img": [], "cat": [], "gbif": [], "inat": [], "apni": []})
         for b in d["results"]["bindings"]:
@@ -607,9 +669,10 @@ def cmd_commons_list(limit=None):
                 if kk in b and b[kk]["value"] not in e[kk]:
                     e[kk].append(b[kk]["value"])
         wjson(wpath, wd)
-        time.sleep(1)
+        time.sleep(2)  # QLever answered 429 to back-to-back heavy queries
     log(f"wikidata: {sum(1 for v in wd.values() if v['item'])} of {len(L)} names have an item")
-    targets = [(u, l["name"]) for u, l in enumerate(L) if l["train_photos"] < 20]
+    # Leo (2026-11-05): every label, no per-label cap
+    targets = [(u, l["name"]) for u, l in enumerate(L)]
     if limit:
         targets = targets[:limit]
     # category existence + file counts
@@ -635,11 +698,18 @@ def cmd_commons_list(limit=None):
     # members: files of the species category + one level of non-specimen subcategories
     mpath = os.path.join(CMS, "members.json")
     mem = rjson(mpath) if os.path.exists(mpath) else {}
+    # entries from the first (capped) listing: redo those the caps could have cut
+    for t in [t for t, v in mem.items() if not v.get("full") and
+              (len(v["files"]) >= 500 or len([x for x in v["subcats"] if not BAD.search(x)]) > 8)]:
+        del mem[t]
     todo = sorted({t for t in titles.values() if t not in mem and not cats[t]["missing"]
                    and (cats[t]["files"] or cats[t]["subcats"])})
-    log(f"members: {len(todo)} categories to list")
+    log(f"members: {len(todo)} categories to list (3 workers, all non-specimen subcategories one level deep)")
     t0 = time.time()
-    for i, t in enumerate(todo, 1):
+    lock = threading.Lock()
+    cnt = [0]
+
+    def members(t):
         files, subs = [], []
         cont = {}
         while True:
@@ -647,19 +717,27 @@ def cmd_commons_list(limit=None):
                            "cmlimit": 500}, **cont))
             for m in d["query"]["categorymembers"]:
                 (subs if m["ns"] == 14 else files).append(m["title"])
-            if "continue" in d and len(files) < 500:
+            if "continue" in d:
                 cont = d["continue"]
             else:
                 break
-        for s in subs[:20]:
-            if BAD.search(s):
-                continue
-            d = capi({"action": "query", "list": "categorymembers", "cmtitle": s, "cmtype": "file", "cmlimit": 200})
-            files += [m["title"] for m in d["query"]["categorymembers"]]
-        mem[t] = {"files": files, "subcats": subs}
-        if i % 200 == 0:
-            wjson(mpath, mem)
-            log(f"  {i}/{len(todo)} in {time.time() - t0:.0f} s")
+        for sc in [x for x in subs if not BAD.search(x)]:
+            cont = {}
+            while True:
+                d = capi(dict({"action": "query", "list": "categorymembers", "cmtitle": sc, "cmtype": "file",
+                               "cmlimit": 500}, **cont))
+                files += [m["title"] for m in d["query"]["categorymembers"]]
+                if "continue" not in d:
+                    break
+                cont = d["continue"]
+        with lock:
+            mem[t] = {"files": files, "subcats": subs, "full": True}
+            cnt[0] += 1
+            if cnt[0] % 200 == 0:
+                wjson(mpath, mem)
+                log(f"  {cnt[0]}/{len(todo)} in {time.time() - t0:.0f} s")
+    with cf.ThreadPoolExecutor(3) as ex:
+        list(ex.map(members, todo))
     wjson(mpath, mem)
     # candidate files per label: P18 first, then category files
     want = {}
@@ -673,14 +751,14 @@ def cmd_commons_list(limit=None):
                 seen.add(f)
                 out.append(f)
         if out:
-            want[u] = out[:3 * CAP]
+            want[u] = out
     allf = sorted({f for v in want.values() for f in v})
     ipath = os.path.join(CMS, "imageinfo.json")
     info = rjson(ipath) if os.path.exists(ipath) else {}
     need = [f for f in allf if f not in info]
     log(f"imageinfo: {len(allf)} files over {len(want)} labels, {len(need)} to fetch")
     for k in range(0, len(need), 50):
-        d = capi({"action": "query", "prop": "imageinfo", "iiprop": "extmetadata|size|url|mime",
+        d = capi({"action": "query", "prop": "imageinfo", "iiprop": "extmetadata|size|url|mime|sha1",
                   "iiurlwidth": EDGE, "titles": "|".join(need[k:k + 50]),
                   "iiextmetadatafilter": "LicenseShortName|LicenseUrl|Artist|Credit|ImageDescription|Categories|"
                                          "UsageTerms|AttributionRequired|DateTimeOriginal|GPSLatitude|GPSLongitude"})
@@ -693,7 +771,7 @@ def cmd_commons_list(limit=None):
                 info[f] = None
                 continue
             em = {kk: (v or {}).get("value") for kk, v in (ii.get("extmetadata") or {}).items()}
-            info[f] = {"pageid": p.get("pageid"), "w": ii.get("width"), "h": ii.get("height"), "mime": ii.get("mime"),
+            info[f] = {"pageid": p.get("pageid"), "sha1": ii.get("sha1"), "w": ii.get("width"), "h": ii.get("height"), "mime": ii.get("mime"),
                        "url": ii.get("url"), "thumb": ii.get("thumburl"), "page": ii.get("descriptionurl"), **em}
         if (k // 50) % 20 == 0:
             wjson(ipath, info)
@@ -729,8 +807,6 @@ def cmd_commons_list(limit=None):
                 reasons["too small"] += 1
                 continue
             rk += 1
-            if rk > CAP:
-                break
             who = strip(m.get("Artist"))[:120] or None
             rows.append({"u": u, "name": labels_cache()[u]["name"], "source": "commons",
                          "image_id": str(m["pageid"]), "ext": "jpg", "observation_uuid": None,
@@ -771,11 +847,30 @@ def _f(x):
 
 def cmd_commons_fetch(limit=None):
     import pyarrow.parquet as pq
-    C = pq.read_table(os.path.join(CMS, "candidates.parquet"), columns=["image_id", "url"]).to_pydict()
-    items = sorted(set(zip(C["image_id"], C["url"])))
+    C = pq.read_table(os.path.join(CMS, "candidates.parquet"), columns=["image_id", "url", "ntr", "rk", "u"]).to_pydict()
+    # the 1,000-per-label total: Commons takes what ALA leaves of room(label)
+    n_ala = collections.Counter()
+    ap = os.path.join(APH, "candidates.parquet")
+    if os.path.exists(ap):
+        A = pq.read_table(ap, columns=["u", "train_ok"]).to_pydict()
+        n_ala.update(u for u, ok in zip(A["u"], A["train_ok"]) if ok)
+    L = labels()
+    keep = [r <= room(L[u]["train_photos"]) - n_ala[u] for u, r in zip(C["u"], C["rk"])]
+    C = {k: [x for x, m in zip(v, keep) if m] for k, v in C.items()}
+    # most-needed first: labels with 0 training photos, then 1–9, 10–19, the rest; rank within
+    need = {}
+    for i, u, n, r in zip(C["image_id"], C["url"], C["ntr"], C["rk"]):
+        b = 0 if n == 0 else 1 if n < 10 else 2 if n < 20 else 3
+        need[(i, u)] = min(need.get((i, u), (9, 0)), (b, r))
+    items = sorted(need, key=lambda x: (need[x], x[0]))
     if limit:
         items = items[:limit]
-    fetch_hash(items, "commons", "commons/hashes", workers=3)
+    items = [(k, re.sub(r"\?utm_[^#]*$", "", u)) for k, u in items]
+    # Wikimedia robot policy (wikitech Robot_policy, read 2026-11-05): total
+    # concurrency ≤ 2, ≤ 25 Mbps, identifying UA, standard thumbnail sizes (500)
+    # total ≤ 2 across Wikimedia: 1 fetch worker while a commons-list (API) job runs, else 2
+    busy = os.popen("pgrep -f 'sources_pull.py commons-list'").read().strip()
+    fetch_hash(items, "commons", "commons/hashes", workers=1 if busy else 2)
 
 
 # ------------------------------------------------------------------ dedup
@@ -803,10 +898,24 @@ def cmd_dedup(limit=None):
     X = pd.concat(frames, ignore_index=True)
     X["fetched"] = X["status"].eq("ok")
     dropped = [X[~X["fetched"] & X["train_ok"]].assign(reason="not fetched: " + X["status"].fillna("not attempted"))]
-    X = X[X["fetched"]].copy()
-    # rank: label, then APII/field before Commons, then rank within source
+    # Site photos: habitat-restoration / nest-box projects attach ONE site photo to every species
+    # recorded there (eyeballed 2026-11-05: paddocks, tree guards, forest views). Resources where
+    # > 20 % of images sit under several species are dropped whole; any image filed under several
+    # labels is dropped everywhere (which species would it show?).
+    nlab = X.groupby("image_id")["u"].nunique()
+    X["multi"] = X["image_id"].map(nlab) > 1
+    share = X[X["source"].eq("ala-field")].groupby("data_resource")["multi"].mean()
+    site = set(share[share > 0.2].index)
+    log(f"site-photo resources dropped: {len(site)}; images under several labels: {int(X['multi'].sum())}")
+    bad = X["data_resource"].isin(site) | X["multi"]
+    dropped.append(X[bad].assign(reason=np.where(X[bad]["data_resource"].isin(site), "site-photo resource",
+                                                 "same image filed under several species")))
+    X = X[~bad & X["fetched"]].copy()
+    # rank for keeping one of near-identical copies: label, reference-eligible first (a CC BY Commons
+    # copy of an APII photo beats the training-only APII row), then ALA before Commons, then rank
     X["src_order"] = X["source"].map({"ala-field": 0, "commons": 1})
-    X = X.sort_values(["u", "src_order", "rk"]).reset_index(drop=True)
+    X["nref"] = ~X["ref_ok"]
+    X = X.sort_values(["u", "nref", "src_order", "rk"]).reset_index(drop=True)
     E = parts(os.path.join(W, "hashes-eval-part*.parquet"))
     E = E[E["status"].eq("ok")]
     I = parts(os.path.join(W, "hashes-cand-part*.parquet"))
@@ -824,15 +933,39 @@ def cmd_dedup(limit=None):
     X["dup_eval_photo_id"] = np.where(he, E["photo_id"].to_numpy()[np.maximum(je, 0)], -1)
     X["dup_inat_extra_photo_id"] = np.where(hi, I["photo_id"].to_numpy()[np.maximum(ji, 0)], -1)
     X["dup_within"] = np.where(hw, X["image_id"].to_numpy()[np.maximum(jw, 0)], None)
+    # near-identical copies under DIFFERENT labels: drop the whole group (union-find over the pairs)
+    par = np.arange(len(X))
+
+    def find(a):
+        while par[a] != a:
+            par[a] = par[par[a]]
+            a = par[a]
+        return a
+    for i in np.flatnonzero(hw):
+        ra, rb = find(i), find(jw[i])
+        if ra != rb:
+            par[max(ra, rb)] = min(ra, rb)
+    root = np.array([find(i) for i in range(len(X))])
+    nl = pd.Series(X["u"].to_numpy()).groupby(root).nunique()
+    cross = nl.reindex(root).to_numpy() > 1
+    log(f"near-identical photos across labels: {int(cross.sum())}")
     reason = np.where(he, "near-duplicate of an evaluation photo",
                       np.where(hi, "near-duplicate of an iNat extra photo",
-                               np.where(hw, "near-duplicate within ALA/Commons", "")))
+                               np.where(cross, "near-identical photo under several species",
+                                        np.where(hw, "near-duplicate within ALA/Commons", ""))))
     X["reason"] = reason
     dropped.append(X[reason != ""])
     K = X[reason == ""].copy()
     K = K[K["train_ok"] | K["ref_ok"]]
+    # the 1,000-per-label total (existing training photos count against it; iNat extras fill what is left)
+    Lb = labels()
+    K = K.sort_values(["u", "src_order", "rk"])  # the total keeps ALA (new photographers) before Commons
+    over = K.groupby("u").cumcount().to_numpy() >= np.array([room(Lb[u]["train_photos"]) for u in K["u"]])
+    D2 = K[over].assign(reason="over the 1,000-per-label total")
+    K = K[~over]
+    dropped.append(D2)
     D = pd.concat(dropped, ignore_index=True)
-    K = K.drop(columns=["status", "fetched", "src_order", "reason"], errors="ignore")
+    K = K.drop(columns=["status", "fetched", "src_order", "reason", "nref", "multi"], errors="ignore")
     K["k"] = K.groupby("u").cumcount() + 1
     K["via_name_map"] = False
     K["grade"] = K["basis"]
@@ -862,10 +995,67 @@ def cmd_dedup(limit=None):
     print(json.dumps(summ, indent=1, default=int))
 
 
+# ------------------------------------------------------------------ generalised supplement
+FQ_GEN = ["kingdom:Plantae", "-occurrenceStatus:ABSENT", "-basisOfRecord:FOSSIL_SPECIMEN",
+          "sensitive:* OR dataGeneralizations:*",
+          "decimalLatitude:[-44.0 TO -9.0] AND decimalLongitude:[112.0 TO 154.0]"] + (
+              ["-data_resource_uid:dr1411"] if NOINAT else [])
+
+
+def cmd_counts_generalised(limit=None):
+    """OPTIONAL supplement, not part of ala_counts.parquet: for labels with NO
+    record under the standard filters (mostly threatened species whose ALA
+    points are generalised to ~10 km or withheld), their generalised/sensitive
+    records only → ala_counts_generalised.parquet (u, cy, cx, n). ~10 km
+    accuracy is coarse for 100 m TASVEG joins (why build_records drops them)
+    but on the scale of a 0.05° prior with a 10–25 km kernel."""
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    zero = []
+    for f in sorted(glob.glob(os.path.join(CNT, "occ" + SUF, "*.json.gz"))):
+        d = rjson(f)
+        if d["total"] == 0:
+            zero.append((d["u"], d["query"]))
+    if limit:
+        zero = zero[:limit]
+    os.makedirs(os.path.join(CNT, "gen" + SUF), exist_ok=True)
+
+    def one(a):
+        u, qn = a
+        path = os.path.join(CNT, "gen" + SUF, f"{u:05d}.json.gz")
+        if os.path.exists(path):
+            return
+        d = search(FQ_GEN + [f'species:"{qn}"'], pageSize=0, facets="point-0.001", flimit=-1)
+        pts = {x["label"]: x["count"] for f in d.get("facetResults", []) for x in f["fieldResult"]
+               if x["label"] != "Not supplied"}
+        wjson(path, {"u": u, "query": qn, "total": d["totalRecords"], "points": pts}, gz=True)
+    t0 = time.time()
+    with cf.ThreadPoolExecutor(3) as ex:
+        list(ex.map(one, zero))
+    U, CY, CX, N = [], [], [], []
+    got = 0
+    for u, _ in zero:
+        d = rjson(os.path.join(CNT, "gen" + SUF, f"{u:05d}.json.gz"))
+        got += d["total"] > 0
+        for lab, n in d["points"].items():
+            la, lo = (round(float(x) * 1000) for x in lab.split(","))
+            U.append(u); CY.append((la + 44000) // 50); CX.append((lo - 112000) // 50); N.append(n)
+    U, CY, CX, N = (np.array(x, np.int64) for x in (U, CY, CX, N))
+    key = (CY * 1000 + CX) * 100000 + U
+    uk, inv = np.unique(key, return_inverse=True)
+    n = np.bincount(inv, weights=N).astype(np.int64)
+    pq.write_table(pa.table({"u": uk % 100000, "cy": (uk // 100000) // 1000, "cx": (uk // 100000) % 1000, "n": n}),
+                   os.path.join(CNT, f"ala_counts_generalised{SUF}.parquet"))
+    log(f"generalised supplement: {len(zero)} zero labels queried in {time.time() - t0:.0f} s, {got} have "
+        f"generalised records ({int(N.sum())} records, {len(uk)} cell×class pairs)")
+
+
 if __name__ == "__main__":
     lim = None
+    sys.argv = [a for a in sys.argv if a != "--noinat"]
     if "--limit" in sys.argv:
         lim = int(sys.argv[sys.argv.index("--limit") + 1])
     {"counts": cmd_counts, "counts-table": cmd_counts_table, "ala-list": cmd_ala_list, "ala-info": cmd_ala_info,
      "ala-fetch": cmd_ala_fetch, "commons-list": cmd_commons_list, "commons-fetch": cmd_commons_fetch,
-     "dedup": cmd_dedup}[sys.argv[1]](lim)
+     "dedup": cmd_dedup, "counts-generalised": cmd_counts_generalised}[sys.argv[1]](lim)

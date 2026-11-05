@@ -99,3 +99,142 @@ leptostachys → P. tasmanica. The 0-photo twins can never win; merge them
   last fallback — informative for a botanically literate user. Expected:
   field photo for ~2,500 of the 6,354 photo-less labels, any image for
   ~5,500.
+
+---
+
+# The pulls (approved by Leo 2026-11-05)
+
+Code `pipeline/plantid/sources_pull.py` (subcommands and licence rules in its
+docstring). Everything resumable (per-label / per-image cache files), polite
+(ALA biocache ≤ 3 concurrent, images.ala.org.au 6 keep-alive workers,
+Wikimedia API 3 workers and ONE thumbnail worker ≥ 0.4 s apart).
+
+## 1. ALA occurrence counts for the national prior
+
+`sources_pull.py counts` then `counts-table`: 22,122 labels, one
+`point-0.001` facet query each (`species:"<label>"`; 0 records → ALA name
+matching, retried under ALA's accepted name: 317 labels "ala-accepted"),
+filters = build_records.py's minus the Tasmania limits (kingdom Plantae,
+ABSENT out, `dataGeneralizations`/`sensitive` out, fossils out,
+coordinateUncertainty > 1 km out but missing kept), bbox = the prior grid
+(lat −44…−9, lon 112…154; Macquarie, Lord Howe, Norfolk, Christmas Island
+out). Coarse georeferences dropped locally: points whose lat AND lon are both
+the 0.001° rounding of a whole arc-minute (the 0.1° grid is a subset).
+**Measured 2026-11-05: 22 min** (0.06 s per label wall at 3 workers — much
+faster than the 0.8 s/label estimate).
+
+- 19,484 labels with records, 21.33M records at 15.67M distinct
+  (label, 0.001° point) pairs; arc-minute points dropped: 747k points /
+  1.12M records → **20.21M records kept, 5.61M (0.05° cell, class) pairs**.
+- `sources/ala_counts/ala_counts.parquet` (u, cy, cx, n on the 0.05° prior
+  grid lat0 −44 / lon0 112; integer cell maths) for `prior_v2.py build
+  --counts …/ala_counts.parquet`; `ala_points.parquet` (u, lat, lon, n at
+  0.001°) for anything finer; `summary.json` (filters, relations, the 50
+  ALA species shared by > 1 label — e.g. Callistemon citrinus / Melaleuca
+  citrina, the Bossiaea cinerea twin; class merges in train_v2 handle
+  these).
+- **2,638 labels have NO record under these filters**: almost all
+  threatened natives whose ALA points are generalised to ~10 km
+  ("Critically Endangered in WA. Generalised to 10km by WA DEC") or have no
+  coordinates at all (checked on 40: 10 lost to the sensitive filter, the
+  rest's ungeneralised records carry no coordinates). OPTIONAL supplement
+  `counts-generalised` (2 min): their generalised/sensitive records only →
+  `ala_counts_generalised.parquet` — **2,498 of the 2,638 have some** (136k
+  records, 32k cell × class pairs). 10 km is useless for 100 m TASVEG joins
+  (why build_records drops them) but at the scale of a 0.05° prior with a
+  10–25 km kernel; add it as a second `--counts` table if the eval agrees.
+
+- **No-iNat variant** (`counts --noinat`, `counts-table --noinat`,
+  `counts-generalised --noinat`; 16 min): ALA's iNaturalist Australia copy
+  (dr1411) leaks iNat val/test observations into the prior, so the same pull
+  with `fq=-data_resource_uid:dr1411` (same query name per label as the
+  main pull) → `ala_counts_noinat.parquet` (16.88M records kept, 4.97M cell ×
+  class pairs, 19,462 labels with records, 2,660 without),
+  `ala_points_noinat.parquet`, `ala_counts_generalised_noinat.parquet`
+  (2,504 labels, 122k records), `summary_noinat.json`.
+
+## 2. ALA field photos
+
+`ala-list → ala-info → ala-fetch`: every label (most-needed first: 0, 1–9,
+10–19, rest), non-iNat field records with images (basis HUMAN_OBSERVATION /
+OBSERVATION / MACHINE_OBSERVATION / LIVING_SPECIMEN; NatureMapr, any
+iNaturalist resource and herbarium sheets out), APII first, up to room =
+1,000 − existing training photos per label (Leo: ≤ 1,000 training photos per
+label over all sources, non-iNat first). Per-image licence from
+images.ala.org.au (`getImageInfoForIdList`); an empty image licence falls
+back to the occurrence record's (→ training only).
+
+- 295,841 candidate images over 13,870 labels; fetched 209,844 distinct
+  (the rest are the same image under several labels) in 2 h at 29/s.
+- Gotchas: biocache answers `pageSize=300` with an instant 503 (nginx) —
+  page by 100. images.ala.org.au redirects every image to the CloudFront
+  host images-assets.ala.org.au; requesting that host first halves the
+  latency (~half are cache hits; misses 302 back to images.ala.org.au?nr).
+  Latency-bound, no throttling seen: 6 / 12 / 16 workers = 20 / 40 / 52 per s
+  with flat p50 0.13 s → 12 workers (ALA publishes no image rate limit).
+- **Site photos**: habitat-restoration / koala / flying-fox / nest-box
+  projects attach ONE site photo (paddock, tree guards, forest view) to
+  every species recorded at the site — eyeballed. Rule in `dedup`: a
+  resource whose images sit under > 1 label for > 20 % of its images is
+  dropped whole (23 resources), and any image filed under several labels
+  is dropped everywhere.
+
+## 3. Wikimedia Commons
+
+`commons-list → commons-fetch` (and `sources_bg.sh`, the resumable
+background driver): Wikidata P225 → P18/P373 for all 22,122 names (21,794
+have an item; `commons/wikidata.json` doubles as a QID/APNI/GBIF/iNat
+crosswalk), species category + every non-specimen subcategory one level
+deep + P18; JPEG only; files whose categories/description mention
+herbarium/specimen/illustration/map etc. out; iNaturalist mirrors out
+(Commons copies of iNat photos: our iNat pipeline owns those); CC/PD only
+(GFDL-only and "copyrighted free use" out). All labels, no per-label cap
+except the 1,000 total (Commons takes what ALA leaves).
+
+- Wikimedia robot policy (wikitech Robot_policy, read 2026-11-05): total
+  concurrency ≤ 2, ≤ 25 Mbps, identifying UA, standard thumbnail sizes.
+  UA = "izzymap-plantid-eval/1 (https://github.com/lgruen/izzy-map;
+  non-commercial research)". 3 workers with the bare UA drew 429s with
+  Retry-After 600. No thumbnail width is pre-cached for these files (50
+  GETs over 250/330/500/960/1280 px: all CDN misses, all 200 when serial),
+  so ~1 s per render-miss → ~2/s at 2 workers, 0.8–1.6/s with 1 worker
+  while an API job runs. No sanctioned bulk path: no media dumps any more;
+  CapyWiki-34M (HF) = links only; Zahide4/testdataset (HF, 384 px WebP,
+  CC0/BY/BY-SA, SHA-1 per file) is a test set of unknown coverage; the
+  Internet Archive WikiTeam grabs are per-day original tarballs. imageinfo
+  records `sha1` so a mirror could still be matched later.
+- Listing: 293,463 files over 10,806 labels before filters; imageinfo is
+  capped at 50 titles per call without a bot flag (~20 files/s, ~4 h).
+  The < 20-photo labels' 17,243 candidates (3,980 labels) were fetched
+  first; the rest trickles in via `sources_bg.sh` (snapshot of the extras
+  list every 25k photos).
+
+## 4. Dedup and the extras list
+
+`sources_pull.py dedup` → `sources/extra_photos_sources.parquet` (columns
+as extra/extra_photos.parquet plus image_id, data_resource, dr_name, basis,
+licence_source, licence_raw, page_url, src_url, train_ok, ref_ok, ref_note)
++ `dropped_sources.parquet` + `extra_photos_sources-summary.json`. Stage 1
+(dedup.py hashes, calibrated pHash ≤ 8 AND dHash ≤ 10): vs the 85k
+evaluation photos, vs the 261k iNat extra candidates, within (one copy per
+label; reference-eligible copies win, e.g. a CC BY Commons upload of an
+APII photo beats the training-only APII row; near-identical photos under
+DIFFERENT labels are dropped as a group). Stage 2 (embedding cosine vs the
+680k existing training photos — never hashed, not on disk) has to follow
+the cloud embedding, as for the iNat extras.
+
+## Status 2026-11-05 17:56 (ALA complete, Commons tail complete)
+
+Snapshot `sources/extra_photos_sources.parquet`: **253,676 photos kept**
+(ALA 238,543: APII 113,392, QuestaGame "Earth Guardians" 63,230, OzAtlas
+43,423, NatureShare 10,390, …; Commons 15,133). Licences CC BY 167,502,
+BY-NC 76,635, BY-SA 9,076, CC0 271, PD 191. Reference-eligible: ALA 45,506
++ Commons 15,101 (APII is training only). Labels gaining training photos:
+2,107 of the 0-photo labels (757 with ≥ 5) and 5,649 of the 1–19 labels
+(3,180 with ≥ 5); reference photos for 1,029 + 3,717 of them. Dropped:
+site-photo resources 24,969, same image under several species 9,810,
+near-identical under several species 6,491, within duplicates 11,173, iNat
+extra duplicates 1,030, evaluation duplicates 115, 404 upstream 7,139.
+Disk 15.2 GB of photos (sources/ 17 GB). Commons for the remaining labels:
+265,695 candidates over 9,729 labels, 234,601 still to fetch at ~2/s
+(≈ 33 h) via `sources_bg.sh`, snapshots every 25k.
