@@ -17,6 +17,7 @@ enum PackDiagnostics {
         lines.append("IzzyMap \(info["CFBundleShortVersionString"] ?? "?") (\(info["CFBundleVersion"] ?? "?"))")
         lines.append("\(UIDevice.current.systemName) \(UIDevice.current.systemVersion) · \(machine()) · \(Date.now.formatted(.iso8601))")
         lines.append("online: \(Connectivity.shared.online)")
+        lines.append("memory: \(MemoryUse.line())")
         let volume = VolumeSpace.current()
         lines.append("free: \(volume.free.map { StorageText.size(Int($0)) } ?? "?") of \(volume.capacity.map { StorageText.size(Int($0)) } ?? "?")")
         lines.append("store: \(store.mode) · resolved \(store.isResolved) · BA unavailable \(store.backgroundAssetsUnavailable)")
@@ -27,6 +28,7 @@ enum PackDiagnostics {
         if case let .files(dir)? = PlantIDSession.source(packs: store) {
             let id = await Task.detached { PlantIDModelIdentity.load(dir) }.value
             lines.append("plant ID model: \(id.map { "\($0.line)\($0.summary.map { " · \($0)" } ?? "")" } ?? "no pipeline.json model block")")
+            lines.append("plant ID last load: \(PlantIDLoadLog.lastLine ?? "none recorded")")
         }
         if let dir = PlantIDRefPhotos.locate(packs: store) {
             let index = await Task.detached {
@@ -190,7 +192,6 @@ struct PackDiagnosticsView: View {
     let packs: PackStore
     @State private var report = "Gathering…"
     @State private var copied = false
-
     var body: some View {
         ScrollView {
             Text(report)

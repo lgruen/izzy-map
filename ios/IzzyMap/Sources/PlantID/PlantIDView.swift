@@ -448,7 +448,7 @@ struct PlantIDNoProfile: View {
                                 .frame(width: s, height: s)
                                 .clipped()
                                 .accessibilityLabel("Your photo")
-                                RefPhotoImage(photo: ref, side: s)
+                                RefPhotoImage(photo: ref, side: s, label: label)
                                     .accessibilityIdentifier("plant-id-noprofile-ref")
                             }
                         }

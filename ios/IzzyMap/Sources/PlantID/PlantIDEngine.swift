@@ -53,6 +53,9 @@ nonisolated final class CoreMLPlantEncoder: PlantEncoding, @unchecked Sendable {
 
     private init(model: MLModel) { self.model = model }
 
+    /// An all-zero input (the warm-up prediction).
+    static let blank = [Float](repeating: 0, count: 3 * PlantIDPreprocess.size * PlantIDPreprocess.size)
+
     func embedding(_ tensor: [Float]) async throws -> [Float] {
         let input = MLMultiArray(MLShapedArray<Float>(scalars: tensor, shape: [1, 3, PlantIDPreprocess.size, PlantIDPreprocess.size]))
         let features = try MLDictionaryFeatureProvider(dictionary: ["pixel_values": MLFeatureValue(multiArray: input)])
@@ -86,10 +89,7 @@ actor PlantIDEngine {
         let source = source
         let known = scorer
         let task = Task.detached(priority: .userInitiated) { () throws -> (PlantIDModel, any PlantEncoding) in
-            let start = ContinuousClock.now
-            let pair = try await Self.load(source, scorer: known)
-            Self.logger.info("loaded in \(start.duration(to: .now), privacy: .public)")
-            return pair
+            try await Self.load(source, scorer: known)
         }
         loading = task
         do {
@@ -105,9 +105,20 @@ actor PlantIDEngine {
         }
     }
 
+    /// Timed (the Diagnostics line): the scorer's files, Core ML's load,
+    /// a first prediction (warm-up: the first one carries one-off setup
+    /// costs that would otherwise land on her first Identify).
     private static func load(_ source: PlantIDSource, scorer known: PlantIDModel?) async throws -> (PlantIDModel, any PlantEncoding) {
         switch source {
         case let .files(dir):
+            let start = ContinuousClock.now
+            var mark = start
+            var steps: [String] = []
+            func step(_ name: String) {
+                let now = ContinuousClock.now
+                steps.append("\(name) \(Int(((now - mark) / .milliseconds(1)).rounded())) ms")
+                mark = now
+            }
             let encoderURL = dir.appending(path: PlantIDFiles.encoder, directoryHint: .isDirectory)
             guard FileManager.default.fileExists(atPath: encoderURL.appending(path: "coremldata.bin").path(percentEncoded: false))
             else { throw PlantIDFailure.missingFiles }
@@ -117,10 +128,19 @@ actor PlantIDEngine {
                 do { scorer = try PlantIDModel(directory: dir) } catch {
                     throw PlantIDFailure.model(error.localizedDescription)
                 }
+                step("scorer")
                 let m = scorer.parameters
                 Self.logger.info("model: \(scorer.labels.count) classes, T \(m.temperature), ladder \(m.ladder.species) / \(m.ladder.genus)")
             }
-            return (scorer, try await CoreMLPlantEncoder.load(encoderURL))
+            let encoder = try await CoreMLPlantEncoder.load(encoderURL)
+            step("Core ML load")
+            _ = try? await encoder.embedding(CoreMLPlantEncoder.blank)
+            step("warm-up prediction")
+            let took = start.duration(to: .now)
+            Self.logger.info("loaded in \(took, privacy: .public): \(steps.joined(separator: ", "), privacy: .public)")
+            PlantIDLoadLog.record(dir: dir, took: took, steps: steps)
+            Self.logger.info("memory after load: \(MemoryUse.line(), privacy: .public)")
+            return (scorer, encoder)
         #if DEBUG
         case let .fake(mode):
             try await Task.sleep(for: .milliseconds(300))

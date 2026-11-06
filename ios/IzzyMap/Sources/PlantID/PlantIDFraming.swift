@@ -159,11 +159,11 @@ struct PlantIDFraming: View {
             ProgressView()
                 .tint(.white)
                 .controlSize(.large)
-            Text(session.preparing ? "Getting the identifier ready…" : "Identifying…")
+            Text(session.preparing ? "Loading the identifier…" : "Identifying…")
                 .font(.headline)
                 .foregroundStyle(.white)
-            if session.preparing {
-                Text("The first time takes a few seconds.")
+            if session.preparing, session.firstLoad {
+                Text("The first time after an update takes longer.")
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.8))
             }

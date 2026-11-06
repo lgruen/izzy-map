@@ -334,7 +334,7 @@ struct PlantIDResults: View {
                         HStack(alignment: .top, spacing: 8) {
                             Group {
                                 switch shown {
-                                case let .ref(ref): RefPhotoImage(photo: ref, side: 28, showsCaption: false)
+                                case let .ref(ref): RefPhotoImage(photo: ref, side: 28, showsCaption: false, label: label(i))
                                 case let .guide(plant, _): PlantThumb(plant: plant, side: 28)
                                 }
                             }
@@ -410,7 +410,7 @@ struct CandidatePhoto: View {
 
     var body: some View {
         if let ref {
-            RefPhotoImage(photo: ref, side: side)
+            RefPhotoImage(photo: ref, side: side, label: label)
                 .overlay { Rectangle().strokeBorder(DesignColor.keyline.opacity(0.5), lineWidth: 0.5) }
         } else {
             guidePhoto
@@ -565,7 +565,7 @@ struct CandidateRow: View {
         HStack(alignment: .top, spacing: 12) {
             Group {
                 if let ref {
-                    RefPhotoImage(photo: ref, side: thumb, showsCaption: false)
+                    RefPhotoImage(photo: ref, side: thumb, showsCaption: false, label: label)
                 } else if let plant {
                     PlantThumb(plant: plant, side: thumb)
                 } else {

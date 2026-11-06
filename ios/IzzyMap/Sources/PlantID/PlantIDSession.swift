@@ -29,6 +29,9 @@ final class PlantIDSession {
     private(set) var labels: [PlantIDLabel] = []
     /// The model is being loaded (the first Identify waits for it).
     private(set) var preparing = false
+    /// No load of the installed model has completed on this device yet
+    /// (a new install or update: Core ML compiles it for this device first).
+    private(set) var firstLoad = false
     private(set) var prepareFailed: String?
     /// A photo that couldn't be read.
     var photoError: String?
@@ -86,14 +89,24 @@ final class PlantIDSession {
         identifyTask?.cancel()
         if step == .identifying { step = .framing }
         guard let source else { engine = nil; return }
-        let engine = PlantIDEngine(source: source)
+        // the engine kept from an earlier Identify this run (loaded), else
+        // a new load
+        let engine = PlantIDEngineKeeper.shared.take(source) ?? PlantIDEngine(source: source)
         self.engine = engine
         prepareFailed = nil
         preparing = true
+        firstLoad = false
+        if case let .files(dir) = source {
+            Task {
+                let first = await Task.detached(priority: .userInitiated) { PlantIDLoadLog.isFirstLoad(dir) }.value
+                guard self.engine === engine, preparing else { return }
+                firstLoad = first
+            }
+        }
         Task {
             do {
-                let labels = try await engine.labels()
                 try await engine.prepare()
+                let labels = try await engine.labels()
                 guard self.engine === engine else { return }
                 self.labels = labels
                 preparing = false
@@ -107,11 +120,14 @@ final class PlantIDSession {
 
     var hasModel: Bool { engine != nil }
 
-    /// Identify closed: everything goes (the model is ~0.4 GB of memory).
+    /// Identify closed: the engine goes to the app-level keeper, so the
+    /// next Identify this run starts loaded (released there on a memory
+    /// warning or after 10 min in the background).
     func close() {
         placeTask?.cancel()
         identifyTask?.cancel()
-        if let engine { Task { await engine.release() } }
+        // kept for the next Identify this run (a load in flight is called off)
+        if let engine { PlantIDEngineKeeper.shared.keep(engine) }
         engine = nil
         if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
         memoryObserver = nil
