@@ -504,7 +504,7 @@ struct LayerThumbnailTests {
         // (tile z16): map z15.3 draws tile z16 (ceil(15.3 + 0.5)), z14.4 tile z15
         let topo = ThumbnailSubject.base(.topo).state(from: .default)
         #expect(LayerThumbnails.streamsAtThumbnailZoom(topo, data: StyleBuilderTests.all, camera: (-42.9, 147.3, 15.3)))
-        #expect(!LayerThumbnails.streamsAtThumbnailZoom(topo, data: StyleBuilderTests.all, camera: (-42.9, 147.3, StyleBuilder.levelEndZoom(15, tileSize: StyleBuilder.defaultTileSize) - 0.1)))
+        #expect(!LayerThumbnails.streamsAtThumbnailZoom(topo, data: StyleBuilderTests.all, camera: (-42.9, 147.3, StyleBuilder.levelEndZoom(15, tileSize: StyleBuilder.defaultTileSize(.topo)) - 0.1)))
         #expect(LayerThumbnails.coveringZoom(12) == 13)
         #expect(LayerThumbnails.coveringZoom(14.5) == 15)
         #expect(LayerThumbnails.coveringZoom(14.6) == 16)
@@ -514,8 +514,17 @@ struct LayerThumbnailTests {
         #expect(LayerThumbnails.coveringZoom(14.0, tileSize: 181) == 16)
         #expect(StyleBuilder.levelEndZoom(16, tileSize: 256) == 15.5)
         #expect(abs(StyleBuilder.levelEndZoom(16, tileSize: 181) - 15.0) < 0.001)
-        // release builds and test runs without the launch argument use the default
-        #expect(StyleBuilder.tileSize(.tasmap) == StyleBuilder.defaultTileSize)
+        // release builds and test runs without the launch argument use the
+        // family's default: topo 181; Tasmap and photos 128 (one zoom earlier
+        // than 256: the 1:25K sheets from map z12.5, the 1:100K from z10.5)
+        for family in [StyleBuilder.RasterFamily.topo, .tasmap, .aerial] {
+            #expect(StyleBuilder.tileSize(family) == StyleBuilder.defaultTileSize(family))
+        }
+        #expect(StyleBuilder.defaultTileSize(.topo) == 181)
+        #expect(StyleBuilder.defaultTileSize(.tasmap) == 128 && StyleBuilder.defaultTileSize(.aerial) == 128)
+        #expect(StyleBuilder.levelEndZoom(14, tileSize: 128) == 12.5)
+        #expect(LayerThumbnails.coveringZoom(12.49, tileSize: 128) == 14)
+        #expect(LayerThumbnails.coveringZoom(12.51, tileSize: 128) == 15)
     }
 
     @Test func keysFollowStateAndScale() {

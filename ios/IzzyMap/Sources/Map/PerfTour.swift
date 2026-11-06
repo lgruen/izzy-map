@@ -88,7 +88,8 @@ final class PerfTour {
             func mean(_ a: [Double]) -> Double { a.isEmpty ? 0 : a.reduce(0, +) / Double(a.count) }
             let hitches = intervals.filter { $0 > 25 }.count
             let summary: [String: Any] = [
-                "tileSize": StyleBuilder.tileSize(.tasmap),
+                "tileSizeTasmap": StyleBuilder.tileSize(.tasmap), "tileSizeTopo": StyleBuilder.tileSize(.topo),
+                "tileSizeAerial": StyleBuilder.tileSize(.aerial),
                 "seconds": CACurrentMediaTime() - tourStart,
                 "frames": encode.count,
                 "displayFrames": intervals.count,

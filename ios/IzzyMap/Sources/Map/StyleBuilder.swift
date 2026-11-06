@@ -205,14 +205,28 @@ nonisolated enum StyleBuilder {
     /// switch. 256 (the tiles' real size) shows each level from 0.71× to
     /// 1.41× — just past a switch the coarser level is magnified ~1.4×.
     /// 181 (≈ 256/√2) shifts every switch half a zoom earlier: tiles are only
-    /// ever shrunk (0.5×–1.0×), at ~2× the tiles on screen.
-    /// Shipped: 181 for every family (2026-11-06, Leo: the 1:100K magnified
-    /// 1.4× next to crisp 1:25K sheets; simulator frame times unchanged,
-    /// ~1.75× tile textures — check the seasons stack on the device).
+    /// ever shrunk (0.5×–1.0× in points), at ~2× the tiles on screen. 128
+    /// shifts a whole zoom: 0.35×–0.71× — on a @3x phone that is still 1.06–2.1
+    /// device pixels per tile pixel (the scan or photo is never subsampled
+    /// there; 181 shows 1.5–3), on the @2x iPad 0.71–1.41.
+    /// One plain rule per family (2026-11-06, Leo; no per-level cases):
+    /// - topo 181 (2026-11-06: was 256);
+    /// - Tasmap 128: each zoom is a different printed series and the finer
+    ///   one shrunk beats the coarser one magnified — at "500 m" on the
+    ///   phone's scale bar 181 still showed the 1:100K; 128 switches to the
+    ///   1:25K sheets at map zoom 12.5 (181: 13.0) and to the 1:100K at 10.5;
+    /// - aerial and seasons 128: photos carry no text, so more resolution is
+    ///   simply better (~1.5× tile textures of 181 in the simulator; 96 was
+    ///   sharper only on @3x screens for ~1.4× more again).
     /// DEBUG override: `-rasterTileSize 256` for every base family, or
     /// `-rasterTileSizeTopo` / `-rasterTileSizeTasmap` / `-rasterTileSizeAerial`
     /// (aerial includes the seasons) per family.
-    nonisolated static let defaultTileSize = 181
+    nonisolated static func defaultTileSize(_ family: RasterFamily) -> Int {
+        switch family {
+        case .topo: 181
+        case .tasmap, .aerial: 128
+        }
+    }
 
     nonisolated static func tileSize(_ family: RasterFamily) -> Int {
         #if DEBUG
@@ -223,7 +237,7 @@ nonisolated enum StyleBuilder {
             if (64 ... 512).contains(v) { return v }
         }
         #endif
-        return defaultTileSize
+        return defaultTileSize(family)
     }
 
     /// The map zoom from which a source of `tileSize` stops drawing its tile
