@@ -309,8 +309,11 @@ struct StorageTests {
         let dir = FileManager.default.temporaryDirectory.appending(path: "fake-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
+        // complete (tiny) archives: a cut-short file is a damaged pack (PackRepairTests)
         for archive in [Archive.tasveg, .geology, .pre1750, .season2021] {
-            try Data([0]).write(to: dir.appending(path: archive.fileName))
+            let w = try PMTilesWriter(destination: dir.appending(path: archive.fileName), tileType: .png)
+            try w.add(z: 0, x: 0, y: 0, data: Data([0]))
+            _ = try w.finish(name: "t", attribution: "t", metadata: [:])
         }
         let store = PackStore(fake: FakePacks(spec: "vector", directory: dir, seconds: 0.1))
         #expect(store.location.url(for: .tasveg) != nil)

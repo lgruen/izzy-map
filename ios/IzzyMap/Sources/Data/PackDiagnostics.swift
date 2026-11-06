@@ -1,5 +1,6 @@
 import BackgroundAssets
 import Foundation
+import IzzyKit
 import System
 import SwiftUI
 import UIKit
@@ -54,7 +55,11 @@ enum PackDiagnostics {
             if let u = store.updates[pack] { head += " · updating \(Int(u * 100)) %" }
             if let v = store.manifestVersions[pack] { head += " · server v\(v)" }
             if let size = store.downloadSizes[pack] { head += " · download \(StorageText.size(size))" }
+            if store.repairing.contains(pack) { head += " · REPAIRING (damaged files removed, downloading again)" }
             lines.append(head)
+            var report = store.integrity[pack]
+            if report == nil, store.lastFound?.installed.contains(pack) == true { report = await store.checkIntegrityNow(pack) }
+            if let report { lines.append(contentsOf: integrityLines(report)) }
             let systemInfo = system ? await systemLines(pack) : nil
             for error in store.errorLog[pack] ?? [] {
                 let stale = staleness(of: error, state: store.state(pack), system: systemInfo?.status, lastSync: store.lastSync)
@@ -64,6 +69,16 @@ enum PackDiagnostics {
         }
         if !system { lines.append("\n(not Background Assets: the system isn't asked)") }
         return lines.joined(separator: "\n")
+    }
+
+    /// The integrity check per file ("size ok" / "TRUNCATED (have X, need
+    /// Y)"); a long sample (reference photos) only its damaged files.
+    private static func integrityLines(_ report: PackIntegrity.Report) -> [String] {
+        let verdict = report.isDamaged ? "DAMAGED" : report.isConclusive ? "complete" : "not all checked"
+        var out = ["  files: \(verdict) (\(report.files.count) checked)"]
+        let shown = report.files.count <= 12 ? report.files : report.files.filter { $0.verdict != .ok }
+        for file in shown.prefix(20) { out.append("    \(file.path): \(file.line)") }
+        return out
     }
 
     /// The download queue: what's in flight, what waits, and how.

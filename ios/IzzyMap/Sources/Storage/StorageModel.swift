@@ -114,7 +114,8 @@ final class StorageModel {
     func status(_ pack: Pack) -> PackRowStatus {
         PackRowStatus.of(packs.state(pack), pack: pack, canFetch: packs.canFetch, resolved: packs.isResolved,
                          update: packs.updates[pack], online: Connectivity.shared.online,
-                         queued: packs.queuePosition(pack))
+                         queued: packs.queuePosition(pack), repairing: packs.repairing.contains(pack),
+                         blocked: packs.repairBlocked[pack])
     }
 
     /// Every core pack (maps and plant ID) is on the device and nothing

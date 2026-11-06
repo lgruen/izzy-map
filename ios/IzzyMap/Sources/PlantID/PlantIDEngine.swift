@@ -23,12 +23,19 @@ nonisolated enum PlantIDSource: Sendable, Equatable {
 
 nonisolated enum PlantIDFailure: LocalizedError, Equatable {
     case missingFiles
+    /// The pack's files are cut short (`PackVerification`): the store
+    /// repairs the pack, the model downloads again.
+    case damaged(String)
     case model(String)
     case prediction(String)
+
+    /// What Identify says while a damaged model is being replaced.
+    static let repairing = "Plant ID is being repaired — the model is downloading again."
 
     var errorDescription: String? {
         switch self {
         case .missingFiles: "The identification model’s files aren’t complete on this device."
+        case .damaged: Self.repairing
         case let .model(why): "The identification model couldn’t be loaded (\(why))."
         case let .prediction(why): "The photo couldn’t be identified (\(why))."
         }
@@ -144,6 +151,17 @@ actor PlantIDEngine {
             guard FileManager.default.fileExists(atPath: encoderURL.appending(path: "coremldata.bin").path(percentEncoded: false))
             else { throw PlantIDFailure.missingFiles }
             guard PlantIDModel.available(in: dir) else { throw PlantIDFailure.missingFiles }
+            // complete files only: a model cut short (storage ran out
+            // mid-download, yet the system said "downloaded") fails deep in
+            // the scorer or Core ML with a baffling error — the store
+            // repairs the pack instead (a few ms: sizes and blob headers)
+            let report = PackVerification.plantID(dir)
+            if report.isDamaged {
+                Self.logger.error("plant ID files damaged: \(report.summary ?? "", privacy: .public)")
+                NotificationCenter.default.post(name: PackVerification.damagedNotification, object: Pack.plantid.rawValue)
+                throw PlantIDFailure.damaged(report.summary ?? "")
+            }
+            step("integrity")
             let scorer: PlantIDModel
             if let known { scorer = known } else {
                 do { scorer = try PlantIDModel(directory: dir) } catch {

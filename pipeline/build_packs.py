@@ -164,6 +164,14 @@ def stage_plantid(out: Path, ship: Path) -> Path:
     pipe = json.loads((ship / "pipeline.json").read_text())
     table = next(p for p in json.loads(TABLE.read_text())["packs"] if p["id"] == "plantid")
     wanted = {f.split("/", 1)[1].rstrip("/") for f in table["files"]}
+    # pipeline.json's `files` = exactly the packed tables: the app checks
+    # each packed file's size against it (PackIntegrity.plantID), so a
+    # pack must never list a file it doesn't carry, nor carry one unlisted
+    packed = {n for n in wanted if n != "pipeline.json" and "/" not in n and not n.endswith(".mlmodelc")}
+    recorded = set(pipe.get("files", {}))
+    if recorded != packed:
+        sys.exit(f"plantid: ship/pipeline.json `files` {sorted(recorded)} != the packed tables {sorted(packed)} "
+                 f"(only in pipeline.json: {sorted(recorded - packed)}; only packed: {sorted(packed - recorded)})")
     for old in dest.iterdir():   # a previous model's tables (never packed: the manifest lists files) — gone from -dataDir too
         if old.is_file() and old.name not in wanted:
             old.unlink()

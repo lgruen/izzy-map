@@ -65,6 +65,9 @@ nonisolated struct PackResolution: Sendable {
     /// Local, but an older version of the pack (plant ID's v1 model, from
     /// before the v2 files existed): the system updates it by itself.
     var outdated: Set<Pack> = []
+    /// The folder holding each installed pack's other files (plant ID,
+    /// reference photos) — what the integrity check reads.
+    var folders: [Pack: URL] = [:]
 }
 
 // MARK: - The real manager
@@ -145,6 +148,7 @@ nonisolated final class ApplePackSystem: PackSystem {
         var systemLocal: Set<Pack> = []
         var outdated: Set<Pack> = []
         var plantID: URL?
+        var folders: [Pack: URL] = [:]
         for pack in Pack.allCases {
             guard manager.assetPackIsAvailableLocally(withID: pack.rawValue) else { continue }
             systemLocal.insert(pack)
@@ -167,9 +171,10 @@ nonisolated final class ApplePackSystem: PackSystem {
             archives.merge(found) { a, _ in a }
             installed.insert(pack)
             if pack == .plantid { plantID = folder }
+            if let folder { folders[pack] = folder }
         }
         return PackResolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: installed,
-                              systemLocal: systemLocal, plantID: plantID, outdated: outdated)
+                              systemLocal: systemLocal, plantID: plantID, outdated: outdated, folders: folders)
     }
 
     private static func readable(_ path: String, manager: AssetPackManager, fileManager: FileManager) -> Bool {
@@ -263,6 +268,8 @@ nonisolated final class FakePackSystem: PackSystem {
         var log: [String] = []
         var manifestFails = false
         var subscriber: AsyncStream<PackSystemEvent>.Continuation?
+        /// Runs when a request "downloads" a pack (tests write its files).
+        var onInstall: (@Sendable (String) -> Void)?
     }
 
     private let inner: Mutex<Inner>
@@ -288,6 +295,9 @@ nonisolated final class FakePackSystem: PackSystem {
 
     // test controls and observations
     func script(_ pack: Pack, _ script: Script) { inner.withLock { $0.scripts[pack.rawValue] = script } }
+    /// Called with the pack's ID whenever a request installs it (the
+    /// download "writes" its files: tests replace truncated ones).
+    func onInstall(_ hook: @escaping @Sendable (String) -> Void) { inner.withLock { $0.onInstall = hook } }
     var requests: [String] { inner.withLock { $0.requests } }
     var log: [String] { inner.withLock { $0.log } }
     /// The log without the return marks ("<id"): calls and removals.
@@ -440,6 +450,7 @@ nonisolated final class FakePackSystem: PackSystem {
             return false
         }
         if removed { throw CancellationError() }
+        inner.withLock { $0.onInstall }?(id)
         emit(id, .finished)
         if let error = script.throwsAfterInstalling { throw error }
     }
@@ -475,15 +486,26 @@ nonisolated final class FakePackSystem: PackSystem {
         var have: Set<Pack> = []
         var local: Set<Pack> = []
         var outdated: Set<Pack> = []
+        var folders: [Pack: URL] = [:]
         for pack in Pack.allCases where installed.contains(pack.rawValue) {
             local.insert(pack)
             if old.contains(pack.rawValue) { outdated.insert(pack); continue }
             guard !unreadable.contains(pack.rawValue) else { continue }
             have.insert(pack)
             for archive in pack.archives { archives[archive] = scanned?.url(for: archive) }
+            // a test's pack folder (`<directory>/plantid/pipeline.json`,
+            // `<directory>/refphotos/index.json`): the integrity check reads it
+            let marker: String? = switch pack {
+            case .plantid: "\(PlantIDFiles.folder)/\(PlantIDFiles.pipeline)"
+            case .refphotos: "\(RefPhotoFiles.folder)/\(RefPhotoFiles.index)"
+            default: nil
+            }
+            if let directory, let marker, FileManager.default.fileExists(atPath: directory.appending(path: marker).path(percentEncoded: false)) {
+                folders[pack] = directory.appending(path: marker).deletingLastPathComponent()
+            }
         }
         return PackResolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: have,
-                              systemLocal: local, plantID: nil, outdated: outdated)
+                              systemLocal: local, plantID: nil, outdated: outdated, folders: folders)
     }
 }
 #endif

@@ -382,7 +382,11 @@ struct PlantIDModelStatus: View {
     /// An older model on the device (v1), its replacement on its way.
     private var updating: Bool { packs.outdated.contains(.plantid) }
 
+    /// Its files were found cut short: removed, downloading again.
+    private var repairing: Bool { packs.repairing.contains(.plantid) }
+
     private func headline(_ s: PackState) -> String {
+        if repairing { return PlantIDFailure.repairing }
         if updating {
             if case let .downloading(f?) = s { return "Model update on its way · \(StorageText.percent(f))" }
             return "Model update on its way"
@@ -399,6 +403,10 @@ struct PlantIDModelStatus: View {
     }
 
     private func detail(_ s: PackState) -> String {
+        if repairing, s != .paused {
+            let progress = if case let .downloading(f?) = s { " (\(StorageText.percent(f)))" } else { "" }
+            return "Its files on this \(DeviceNoun.current) were incomplete\(progress). You can take or choose the photo now — Identify works once it’s in."
+        }
         if updating, s != .paused {
             return "This \(DeviceNoun.current) has an older identification model; the new one downloads by itself. You can take or choose the photo now — Identify works once it’s in."
         }

@@ -614,7 +614,7 @@ private struct PackControl: View {
             GetButton(title: "Get", action: get)
                 .accessibilityLabel("Get \(pack.storageTitle)")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-get")
-        case .failed:
+        case .failed, .noSpace:
             GetButton(title: "Retry", action: get)
                 .accessibilityLabel("Try \(pack.storageTitle) again")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-get")
@@ -643,7 +643,7 @@ private struct PackControl: View {
             .hoverEffect(.highlight)
             .accessibilityLabel("Remove \(pack.storageTitle)")
             .accessibilityIdentifier("pack-\(pack.rawValue)-remove")
-        case .checking, .downloading, .queued, .updating, .onDevice, .unavailable, .unpublished:
+        case .checking, .downloading, .queued, .updating, .onDevice, .unavailable, .unpublished, .repairing:
             EmptyView()
         }
     }

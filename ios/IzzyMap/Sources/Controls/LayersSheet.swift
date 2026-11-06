@@ -141,7 +141,7 @@ struct LayersSheet: View {
         guard store.canFetch, store.isResolved, !missing.isEmpty else { return nil }
         let states = missing.map {
             PackRowStatus.of(store.state($0), pack: $0, canFetch: true, online: Connectivity.shared.online,
-                             queued: store.queuePosition($0))
+                             queued: store.queuePosition($0), repairing: store.repairing.contains($0))
         }
         let busy = states.filter(\.isBusy)
         // waiting its turn in the queue is no progress either
