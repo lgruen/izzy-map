@@ -51,6 +51,7 @@ struct PlantIDView: View {
         // Escape: plant sheet / credits → the suggestions, then closes
         .modalEscape(model, depth: path.count) { if !path.isEmpty { path.removeLast() } }
         .onAppear {
+            PlantIDOpenTiming.appeared()
             session.use(source)
             PlantIDRefPhotos.shared.use(packs: packs)
         }
@@ -157,7 +158,10 @@ struct PlantIDCapture: View {
     @State private var loading = false
     @ScaledMetric(relativeTo: .largeTitle) private var glyph = 64
 
-    private var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+    /// Asked once per run (it was asked on every body evaluation: a device
+    /// query, on the main thread, while the sheet opened).
+    private static let hasCamera = UIImagePickerController.isSourceTypeAvailable(.camera)
+    private var cameraAvailable: Bool { Self.hasCamera }
 
     var body: some View {
         ScrollView {

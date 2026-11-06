@@ -22,15 +22,21 @@ nonisolated enum PlantIDPlace: Equatable, Sendable {
 /// has one, else one request with a time limit. Never keeps updating.
 @MainActor
 final class PlantIDLocator: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
+    /// Made on the first request, not with Identify: creating it (and
+    /// asking it anything) talks to the location daemon synchronously, and
+    /// SwiftUI creates a session — so a locator — on every PlantIDView
+    /// init, the open of the sheet included.
+    private var made: CLLocationManager?
+    private var manager: CLLocationManager {
+        if let made { return made }
+        let m = CLLocationManager()
+        m.delegate = self
+        m.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        made = m
+        return m
+    }
     private var waiting: [CheckedContinuation<GeoPoint?, Never>] = []
     private var timeout: Task<Void, Never>?
-
-    override init() {
-        super.init()
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-    }
 
     /// The current position, or nil (denied, no fix within `limit`).
     func current(limit: Duration = .seconds(8)) async -> GeoPoint? {

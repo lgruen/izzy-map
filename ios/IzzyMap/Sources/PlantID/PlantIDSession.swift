@@ -48,10 +48,18 @@ final class PlantIDSession {
     @ObservationIgnored private var memoryObserver: NSObjectProtocol?
     nonisolated private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "PlantID")
 
+    @ObservationIgnored private var releaseObserver: NSObjectProtocol?
+
     private func observeMemory() {
         guard memoryObserver == nil else { return }
         memoryObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.memoryWarning() }
+        }
+        // the Diagnostics benchmark (pushed inside Identify) measures alone
+        releaseObserver = NotificationCenter.default.addObserver(
+            forName: PlantIDEngineKeeper.releaseAll, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.memoryWarning() }
         }
@@ -130,7 +138,9 @@ final class PlantIDSession {
         if let engine { PlantIDEngineKeeper.shared.keep(engine) }
         engine = nil
         if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
+        if let releaseObserver { NotificationCenter.default.removeObserver(releaseObserver) }
         memoryObserver = nil
+        releaseObserver = nil
     }
 
     private func memoryWarning() {

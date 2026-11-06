@@ -402,6 +402,7 @@ final class AppModel {
 
     func present(_ presentation: Presentation) {
         if presentation == .layers || presentation == .plantID { dismissWelcome() }
+        if presentation == .plantID, modal?.presentation != .plantID { PlantIDOpenTiming.begin() }
         modal = ModalRequest(presentation: presentation, layout: panelLayout)
     }
 

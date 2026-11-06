@@ -23,12 +23,13 @@ nonisolated enum PlantIDLoadLog {
         UserDefaults.standard.string(forKey: loadedKey) != modelKey(dir)
     }
 
-    static func record(dir: URL, took: Duration, steps: [String]) {
+    static func record(dir: URL, took: Duration, steps: [String], location: PlantIDModelLocation, units: String) {
         let key = modelKey(dir)
         let first = UserDefaults.standard.string(forKey: loadedKey) != key
         UserDefaults.standard.set(key, forKey: loadedKey)
         let ms = Int((took / .milliseconds(1)).rounded())
         let line = "\(ms) ms · \(first ? "first load of this model here" : "model loaded here before")"
+            + " · from \(location.rawValue) · compute units \(units)"
             + " (\(steps.joined(separator: ", "))) · \(Date.now.formatted(.iso8601))"
         UserDefaults.standard.set(line, forKey: lastKey)
     }
@@ -80,6 +81,15 @@ final class PlantIDEngineKeeper {
         }
     }
 
+    /// Every loaded identifier lets go (the Diagnostics benchmark measures
+    /// on its own): the kept one here, an open Identify's encoder (it loads
+    /// again when she identifies).
+    static let releaseAll = Notification.Name("PlantIDReleaseAll")
+    func releaseAll() {
+        drop("benchmark")
+        NotificationCenter.default.post(name: Self.releaseAll, object: nil)
+    }
+
     private func drop(_ why: String?) {
         guard let engine else { return }
         if let why { Self.logger.notice("kept identifier released: \(why, privacy: .public)") }
@@ -112,6 +122,16 @@ final class PlantIDEngineKeeper {
 /// pages — what jetsam judges) and resident (incl. clean mapped pages the
 /// system can drop, such as Core ML's mmapped weights).
 nonisolated enum MemoryUse {
+    /// The footprint alone, in MB (nil: unknown).
+    static func footprintMB() -> Int? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : nil
+    }
+
     static func line() -> String {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)

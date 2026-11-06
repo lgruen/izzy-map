@@ -25,10 +25,13 @@ enum PackDiagnostics {
         for entry in store.catalogueLog { lines.append("catalogue: \(entry)") }
         lines.append("plant ID folder: \(store.plantIDDirectory?.path(percentEncoded: false) ?? "none")")
         lines.append("plant ID source: \(PlantIDSession.source(packs: store).map { "\($0)" } ?? "none")")
+        lines.append("Identify open: \(PlantIDOpenTiming.lastLine ?? "none recorded")")
         if case let .files(dir)? = PlantIDSession.source(packs: store) {
             let id = await Task.detached { PlantIDModelIdentity.load(dir) }.value
             lines.append("plant ID model: \(id.map { "\($0.line)\($0.summary.map { " · \($0)" } ?? "")" } ?? "no pipeline.json model block")")
             lines.append("plant ID last load: \(PlantIDLoadLog.lastLine ?? "none recorded")")
+            let copy = await Task.detached { PlantIDModelCopy.describe() }.value
+            lines.append("plant ID app copy: \(copy ?? "none")")
         }
         if let dir = PlantIDRefPhotos.locate(packs: store) {
             let index = await Task.detached {
@@ -194,6 +197,10 @@ struct PackDiagnosticsView: View {
     @State private var copied = false
     var body: some View {
         ScrollView {
+            if case let .files(dir)? = PlantIDSession.source(packs: packs) {
+                PlantIDBenchmarkSection(dir: dir)
+                    .padding([.horizontal, .top], 16)
+            }
             Text(report)
                 .font(.caption.monospaced())
                 .foregroundStyle(DesignColor.ink)

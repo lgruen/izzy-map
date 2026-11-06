@@ -309,4 +309,48 @@ final class PlantIDShotsUITests: XCTestCase {
         print("PLANTID-SCROLL worst \(String(format: "%.2f", worst)) s")
         XCTAssertLessThan(worst, 5, "a swipe over the results waited > 5 s for the app")
     }
+
+    /// The Diagnostics benchmark with the real model (pack + app copy, CPU
+    /// only — the simulator has no Neural Engine and each load is ~20 s):
+    /// the run starts only after the confirmation, writes a row per load
+    /// and finishes. Opt-in: TEST_RUNNER_PLANTID_BENCH=1, with the staged
+    /// plantid pack. Also checks that Identify's open was timed.
+    @MainActor
+    func testRealModelBenchmark() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PLANTID_BENCH"] == "1", "TEST_RUNNER_PLANTID_BENCH=1")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/v3-head.bin"), "no staged plantid pack")
+        let app = run(["-plantIDDir", Self.model, "-plantIDBenchmarkUnits", "0"])
+        let credits = app.buttons["plant-id-credits"]
+        XCTAssertTrue(credits.waitForExistence(timeout: 30))
+        credits.press(forDuration: 1.6)
+        let bench = app.buttons["diagnostics-benchmark"]
+        if !bench.waitForExistence(timeout: 5) {
+            // the release also tapped the button: Credits on top of Diagnostics
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+        XCTAssertTrue(bench.waitForExistence(timeout: 10), "Diagnostics with the benchmark button")
+        let report = app.staticTexts["diagnostics-report"]
+        let timed = eventually(30) { report.label.contains("Identify open: ") && !report.label.contains("Identify open: none") }
+        XCTAssertTrue(timed, "the open of Identify was timed: \(report.label.prefix(1500))")
+        // the identifier loading in the background: refused until it has loaded
+        let text = app.staticTexts["diagnostics-benchmark-text"]
+        let run = app.buttons["Run Benchmark"].firstMatch
+        let started = eventually(120) {
+            bench.tap()
+            XCTAssertTrue(run.waitForExistence(timeout: 5), "the confirmation")
+            run.tap()
+            if eventually(3, { bench.label == "Benchmarking…" }) { return true }
+            sleep(5)
+            return false
+        }
+        XCTAssertTrue(started, "the benchmark started once the identifier had loaded")
+        XCTAssertTrue(eventually(300) { bench.label != "Benchmarking…" }, "the benchmark finished")
+        let result = text.label
+        XCTAssertTrue(result.contains("footprint after release"), result)
+        print("PLANTID-BENCH\n\(result)")
+        XCTAssertTrue(result.contains("pack      CPU only"), result)
+        XCTAssertTrue(result.contains("app copy  CPU only"), result)
+        XCTAssertFalse(result.contains("failed"), result)
+        shot("benchmark")
+    }
 }

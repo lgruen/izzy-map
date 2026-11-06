@@ -2,6 +2,7 @@ import CoreML
 import Foundation
 import IzzyKit
 import os
+import Synchronization
 
 /// Turns the 1 × 3 × 224 × 224 input into the 1024-value embedding.
 nonisolated protocol PlantEncoding: Sendable {
@@ -35,15 +36,20 @@ nonisolated enum PlantIDFailure: LocalizedError, Equatable {
 }
 
 /// The Core ML image encoder (BioCLIP 2.5, 8-bit weights), compute units
-/// ALL (Neural Engine where it can). Loaded on first use, released by its
-/// owner when Identify closes or memory runs short: the model holds ~0.4 GB
-/// of app memory once loaded.
+/// ALL (Neural Engine where it can) unless the benchmark asks otherwise.
+/// Loaded on first use, released by its owner on a memory warning or a long
+/// time in the background: the model holds ~0.4–1.7 GB of app memory once
+/// loaded (device, build 11 — the Diagnostics benchmark measures each
+/// compute-unit choice).
 nonisolated final class CoreMLPlantEncoder: PlantEncoding, @unchecked Sendable {
     let model: MLModel
+    /// The default (unchanged until the benchmark has spoken).
+    static let defaultUnits: MLComputeUnits = .all
 
-    static func load(_ url: URL) async throws -> CoreMLPlantEncoder {
+    static func load(_ url: URL, units: MLComputeUnits = defaultUnits) async throws -> CoreMLPlantEncoder {
         let config = MLModelConfiguration()
-        config.computeUnits = .all
+        config.computeUnits = units
+        config.modelDisplayName = "PlantEncoder-w8"
         do {
             return CoreMLPlantEncoder(model: try await MLModel.load(contentsOf: url, configuration: config))
         } catch {
@@ -65,6 +71,16 @@ nonisolated final class CoreMLPlantEncoder: PlantEncoding, @unchecked Sendable {
         }
         return MLShapedArray<Float>(e).scalars
     }
+
+    static func name(_ units: MLComputeUnits) -> String {
+        switch units {
+        case .cpuOnly: "CPU only"
+        case .cpuAndGPU: "CPU+GPU"
+        case .all: "all"
+        case .cpuAndNeuralEngine: "CPU+ANE"
+        @unknown default: "units \(units.rawValue)"
+        }
+    }
 }
 
 /// Loads the scorer and encoder on demand and identifies photos, all off
@@ -75,6 +91,8 @@ actor PlantIDEngine {
     private var encoder: (any PlantEncoding)?
     private var loading: Task<(PlantIDModel, any PlantEncoding), Error>?
     private var busy = 0
+    /// Loads running anywhere in the app (the benchmark waits for none).
+    nonisolated static let loadsInFlight = Mutex(0)
     nonisolated private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "PlantID")
 
     init(source: PlantIDSource) { self.source = source }
@@ -88,8 +106,12 @@ actor PlantIDEngine {
         if let loading { return try await loading.value }
         let source = source
         let known = scorer
-        let task = Task.detached(priority: .userInitiated) { () throws -> (PlantIDModel, any PlantEncoding) in
-            try await Self.load(source, scorer: known)
+        // utility: the photo picker, the camera and framing come first (an
+        // Identify that waits for the load raises its priority by awaiting)
+        let task = Task.detached(priority: .utility) { () throws -> (PlantIDModel, any PlantEncoding) in
+            Self.loadsInFlight.withLock { $0 += 1 }
+            defer { Self.loadsInFlight.withLock { $0 -= 1 } }
+            return try await Self.load(source, scorer: known)
         }
         loading = task
         do {
@@ -132,13 +154,27 @@ actor PlantIDEngine {
                 let m = scorer.parameters
                 Self.logger.info("model: \(scorer.labels.count) classes, T \(m.temperature), ladder \(m.ladder.species) / \(m.ladder.genus)")
             }
-            let encoder = try await CoreMLPlantEncoder.load(encoderURL)
+            // the app's own copy of the encoder (made on first use of a model)
+            let placed = await PlantIDModelCopy.place(dir)
+            step("app copy \(placed.note)")
+            let units = CoreMLPlantEncoder.defaultUnits
+            var location = placed.location
+            let encoder: CoreMLPlantEncoder
+            do {
+                encoder = try await CoreMLPlantEncoder.load(placed.url, units: units)
+            } catch where placed.location == .appCopy {
+                // a damaged copy: gone (made again next time), the pack's own now
+                Self.logger.error("app copy failed to load (\(String(describing: error), privacy: .public)); loading from the pack")
+                await PlantIDModelCopy.discard(placed.url)
+                encoder = try await CoreMLPlantEncoder.load(encoderURL, units: units)
+                location = .pack
+            }
             step("Core ML load")
             _ = try? await encoder.embedding(CoreMLPlantEncoder.blank)
             step("warm-up prediction")
             let took = start.duration(to: .now)
-            Self.logger.info("loaded in \(took, privacy: .public): \(steps.joined(separator: ", "), privacy: .public)")
-            PlantIDLoadLog.record(dir: dir, took: took, steps: steps)
+            Self.logger.info("loaded in \(took, privacy: .public) from \(location.rawValue, privacy: .public): \(steps.joined(separator: ", "), privacy: .public)")
+            PlantIDLoadLog.record(dir: dir, took: took, steps: steps, location: location, units: CoreMLPlantEncoder.name(units))
             Self.logger.info("memory after load: \(MemoryUse.line(), privacy: .public)")
             return (scorer, encoder)
         #if DEBUG

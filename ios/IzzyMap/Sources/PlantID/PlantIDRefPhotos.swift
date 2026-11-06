@@ -77,18 +77,50 @@ final class PlantIDRefPhotos {
             return RefPhotoFiles.staged(in: data).first(where: has)
         }
         #endif
-        guard packs.state(.refphotos).isInstalled,
+        return locateInPack(installed: packs.state(.refphotos).isInstalled)
+    }
+
+    /// The installed pack's folder (a synchronous call into the system:
+    /// off the main thread).
+    nonisolated static func locateInPack(installed: Bool) -> URL? {
+        guard installed,
               let index = try? AssetPackManager.shared.url(for: FilePath("\(RefPhotoFiles.folder)/\(RefPhotoFiles.index)"))
         else { return nil }
         let dir = index.deletingLastPathComponent()
-        return has(dir) ? dir : nil
+        return FileManager.default.fileExists(atPath: dir.appending(path: RefPhotoFiles.index).path(percentEncoded: false)) ? dir : nil
     }
 
     /// Reads the index when the pack's folder is new (cheap when unchanged);
     /// forgets it when the pack is gone (removed, or replaced by a version
     /// whose files aren't in place yet), so no view points at missing files.
     func use(packs: PackStore) {
-        guard let dir = Self.locate(packs: packs) else {
+        // where the pack's files are, asked off the main thread: url(for:)
+        // is a synchronous call into the system (it ran on every open of
+        // Identify, and again when the camera closed)
+        lookups += 1
+        let generation = lookups
+        Task {
+            let dir = await lookUp(packs)
+            guard generation == lookups else { return }   // a newer look meanwhile
+            apply(dir, packs: packs)
+        }
+    }
+
+    @ObservationIgnored private var lookups = 0
+
+    /// `locate`, with the system's part off the main thread.
+    private func lookUp(_ packs: PackStore) async -> URL? {
+        #if DEBUG
+        if UserDefaults.standard.string(forKey: "refPhotosDir")?.isEmpty == false || packs.mode != .assetPacks {
+            return Self.locate(packs: packs)
+        }
+        #endif
+        let installed = packs.state(.refphotos).isInstalled
+        return await Task.detached(priority: .userInitiated) { Self.locateInPack(installed: installed) }.value
+    }
+
+    private func apply(_ found: URL?, packs: PackStore) {
+        guard let dir = found else {
             if folder != nil || loading != nil { forget() }
             // installed but its files not in place yet (the pack arriving):
             // look again shortly — no further state change may come
@@ -97,7 +129,7 @@ final class PlantIDRefPhotos {
                     for delay in [1, 3, 10, 30] {
                         try? await Task.sleep(for: .seconds(delay))
                         guard !Task.isCancelled, folder == nil else { break }
-                        if Self.locate(packs: packs) != nil { recheck = nil; use(packs: packs); return }
+                        if await lookUp(packs) != nil { recheck = nil; use(packs: packs); return }
                     }
                     recheck = nil
                 }
