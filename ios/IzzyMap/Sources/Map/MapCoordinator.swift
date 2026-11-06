@@ -57,6 +57,7 @@ final class MapCoordinator: NSObject {
         }
     private var tapStarted: ContinuousClock.Instant?
     private var openedLayers = false
+    private let perfTour = PerfTour()
     private static let timing = Logger(subsystem: "org.gruenschloss.izzymap", category: "Timing")
     #endif
 
@@ -542,7 +543,10 @@ extension MapCoordinator: MLNMapViewDelegate {
     #if DEBUG
     /// Finding-14 timing: from the tap's filter change to the first frame
     /// MapLibre reports fully rendered (every tile re-laid out).
-    func mapViewDidFinishRenderingFrame(_ mapView: MLNMapView, fullyRendered: Bool) {
+    /// (The stats variant: MapLibre calls only one of the frame callbacks;
+    /// `-perfTour YES` records the stats, PerfTour.)
+    func mapViewDidFinishRenderingFrame(_ mapView: MLNMapView, fullyRendered: Bool, renderingStats: MLNRenderingStats) {
+        perfTour.frame(renderingStats)
         guard fullyRendered, let started = tapStarted else { return }
         tapStarted = nil
         Self.timing.notice("tap → fully rendered \(started.duration(to: .now).formatted(.units(allowed: [.milliseconds], fractionalPart: .show(length: 1))), privacy: .public) (highlight on overlay source: \(StyleBuilder.highlightOnOverlaySource, privacy: .public))")
@@ -564,6 +568,7 @@ extension MapCoordinator: MLNMapViewDelegate {
             openedLayers = true
             model.startFraming()
         }
+        perfTour.idle(mapView)
         if !debugTaps.isEmpty {
             let p = debugTaps.removeFirst()
             tap(at: CGPoint(x: p.x * mapView.bounds.width, y: p.y * mapView.bounds.height))

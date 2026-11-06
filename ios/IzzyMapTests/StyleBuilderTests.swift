@@ -504,10 +504,18 @@ struct LayerThumbnailTests {
         // (tile z16): map z15.3 draws tile z16 (ceil(15.3 + 0.5)), z14.4 tile z15
         let topo = ThumbnailSubject.base(.topo).state(from: .default)
         #expect(LayerThumbnails.streamsAtThumbnailZoom(topo, data: StyleBuilderTests.all, camera: (-42.9, 147.3, 15.3)))
-        #expect(!LayerThumbnails.streamsAtThumbnailZoom(topo, data: StyleBuilderTests.all, camera: (-42.9, 147.3, 14.4)))
+        #expect(!LayerThumbnails.streamsAtThumbnailZoom(topo, data: StyleBuilderTests.all, camera: (-42.9, 147.3, StyleBuilder.levelEndZoom(15, tileSize: StyleBuilder.defaultTileSize) - 0.1)))
         #expect(LayerThumbnails.coveringZoom(12) == 13)
         #expect(LayerThumbnails.coveringZoom(14.5) == 15)
         #expect(LayerThumbnails.coveringZoom(14.6) == 16)
+        // a 181 px declared size (the shrink-only prototype) switches half a
+        // zoom earlier: MapLibre's round(z + log2(512 / 181)) = round(z + 1.5004)
+        #expect(LayerThumbnails.coveringZoom(13.9, tileSize: 181) == 15)
+        #expect(LayerThumbnails.coveringZoom(14.0, tileSize: 181) == 16)
+        #expect(StyleBuilder.levelEndZoom(16, tileSize: 256) == 15.5)
+        #expect(abs(StyleBuilder.levelEndZoom(16, tileSize: 181) - 15.0) < 0.001)
+        // release builds and test runs without the launch argument use the default
+        #expect(StyleBuilder.tileSize(.tasmap) == StyleBuilder.defaultTileSize)
     }
 
     @Test func keysFollowStateAndScale() {

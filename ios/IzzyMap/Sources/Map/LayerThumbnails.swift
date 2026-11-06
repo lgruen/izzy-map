@@ -408,22 +408,25 @@ final class LayerThumbnails {
     /// Whether the tile's style streams a live LIST source at the zoom the
     /// snapshot draws its raster tiles at: 256 px tiles at map zoom z come
     /// from tile zoom round(z + 1) (MapLibre's covering zoom for 256 px
-    /// tiles in its 512 px world), i.e. ceil(z + 0.5).
+    /// tiles in its 512 px world), i.e. ceil(z + 0.5); other declared sizes
+    /// shift that by log2(256 / tileSize).
     nonisolated static func streamsAtThumbnailZoom(
         _ state: LayerState, data: DataLocation, camera: (latitude: Double, longitude: Double, zoom: Double)
     ) -> Bool {
-        let tileZoom = coveringZoom(camera.zoom)
         let style = StyleBuilder.style(state: state, data: data, tables: .empty, online: true)
         let sources = style["sources"] as? [String: Any] ?? [:]
         return sources.values.contains { value in
             guard let source = value as? [String: Any], source["tiles"] != nil else { return false }
+            let tileZoom = coveringZoom(camera.zoom, tileSize: source["tileSize"] as? Int ?? 256)
             let lo = source["minzoom"] as? Int ?? 0, hi = source["maxzoom"] as? Int ?? 22
             return (lo ... hi).contains(tileZoom)
         }
     }
 
-    /// The tile zoom MapLibre draws 256 px raster tiles from at map zoom z.
-    nonisolated static func coveringZoom(_ z: Double) -> Int { Int((z + 0.5).rounded(.up)) }
+    /// The tile zoom MapLibre draws raster tiles of `tileSize` from at map zoom z.
+    nonisolated static func coveringZoom(_ z: Double, tileSize: Int = 256) -> Int {
+        Int((z + log2(512 / Double(tileSize)) - 0.5).rounded(.up))
+    }
 
     // MARK: Keys and files
 

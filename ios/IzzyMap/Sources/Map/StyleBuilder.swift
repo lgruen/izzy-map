@@ -192,6 +192,48 @@ nonisolated enum StyleBuilder {
     /// The packs stop at z15; MapLibre stretches z15 natively above.
     static let packMaxZoom = 15
 
+    // MARK: Raster tile size (which tile level a base map draws from)
+
+    /// The base-map families whose pack, live LIST source and detailed areas
+    /// must agree on one tile size (seasons count as aerial).
+    nonisolated enum RasterFamily: String, Sendable { case topo, tasmap, aerial }
+
+    /// The `tileSize` a base family's raster sources declare. MapLibre Native
+    /// (7.0.0, `util::coveringZoomLevel`) draws a raster source from tile zoom
+    /// round(map zoom + log2(512 / tileSize)); the pixels themselves always
+    /// fill the tile's extent, so the declared size only moves the level
+    /// switch. 256 (the tiles' real size) shows each level from 0.71× to
+    /// 1.41× — just past a switch the coarser level is magnified ~1.4×.
+    /// 181 (≈ 256/√2) shifts every switch half a zoom earlier: tiles are only
+    /// ever shrunk (0.5×–1.0×), at ~2× the tiles on screen.
+    /// Shipped: 181 for every family (2026-11-06, Leo: the 1:100K magnified
+    /// 1.4× next to crisp 1:25K sheets; simulator frame times unchanged,
+    /// ~1.75× tile textures — check the seasons stack on the device).
+    /// DEBUG override: `-rasterTileSize 256` for every base family, or
+    /// `-rasterTileSizeTopo` / `-rasterTileSizeTasmap` / `-rasterTileSizeAerial`
+    /// (aerial includes the seasons) per family.
+    nonisolated static let defaultTileSize = 181
+
+    nonisolated static func tileSize(_ family: RasterFamily) -> Int {
+        #if DEBUG
+        let defaults = UserDefaults.standard
+        let key = "rasterTileSize" + family.rawValue.prefix(1).uppercased() + family.rawValue.dropFirst()
+        for k in [key, "rasterTileSize"] {
+            let v = defaults.integer(forKey: k)
+            if (64 ... 512).contains(v) { return v }
+        }
+        #endif
+        return defaultTileSize
+    }
+
+    /// The map zoom from which a source of `tileSize` stops drawing its tile
+    /// level `level` (and asks for `level + 1`): round(z + log2(512 / size))
+    /// passes level + 0.5 at z = level + 0.5 − log2(512 / size); for 256 px
+    /// that is level − 0.5.
+    nonisolated static func levelEndZoom(_ level: Int, tileSize: Int) -> Double {
+        Double(level) + 0.5 - log2(512 / Double(tileSize))
+    }
+
     /// Self-hosted glyphs in the app bundle. Only the 0–255 range ships: any
     /// character outside Latin-1 makes MapLibre drop the whole label.
     static let glyphs = "asset://glyphs/{fontstack}/{range}.pbf"
@@ -272,20 +314,22 @@ nonisolated enum StyleBuilder {
         // A `url:` (PMTiles) source takes zoom range, bounds and attribution
         // from the archive header/metadata (MapLibre ignores those style keys
         // there): only type, url and tileSize. Credits: Attribution.swift.
-        func pack(_ archive: Archive, id: String, paint: [String: Any] = [:]) -> Bool {
+        func pack(_ archive: Archive, id: String, family: RasterFamily, paint: [String: Any] = [:]) -> Bool {
             guard let url = data.url(for: archive) else { return false }
-            sources[id] = ["type": "raster", "url": pmtilesURL(url), "tileSize": 256] as [String: Any]
+            sources[id] = ["type": "raster", "url": pmtilesURL(url), "tileSize": tileSize(family)] as [String: Any]
             layers.append(["id": id, "type": "raster", "source": id, "paint": paint])
             return true
         }
         /// A plain LIST source above the pack: full resolution online; offline
         /// its tiles fail and the stretched pack shows through. Without a pack
         /// it is the only source and streams every zoom.
-        func live(_ service: String, id: String, hasPack: Bool, maxzoom: Int, minzoomWithoutPack: Int = 0,
-                  paint: [String: Any] = [:]) {
+        /// Same tile size as its pack, so both pick the same tile level and
+        /// the live z16 sits exactly where the pack starts to stretch.
+        func live(_ service: String, id: String, family: RasterFamily, hasPack: Bool, maxzoom: Int,
+                  minzoomWithoutPack: Int = 0, paint: [String: Any] = [:]) {
             guard online else { return }
             sources[id] = [
-                "type": "raster", "tiles": [listTiles(service)], "tileSize": 256,
+                "type": "raster", "tiles": [listTiles(service)], "tileSize": tileSize(family),
                 "minzoom": hasPack ? packMaxZoom + 1 : minzoomWithoutPack, "maxzoom": maxzoom, "bounds": listBounds,
             ] as [String: Any]
             layers.append(["id": id, "type": "raster", "source": id, "paint": paint])
@@ -295,16 +339,16 @@ nonisolated enum StyleBuilder {
         /// live source. With a live source in the style that goes deeper
         /// than an area (`liveMaxZoom`), the area hands over where it would
         /// only stretch: its layer stops at map zoom (its deepest tile level
-        /// − 0.5) — MapLibre draws 256 px raster tiles at round(map zoom +
-        /// 1), so from there the live source's next level is sharper. A
-        /// second copy of the area (same source) sits UNDER the live source
-        /// with no limit: while live tiles load or fail ("online" is a
-        /// network path, not theLIST answering) the area still stretches
-        /// over the statewide pack instead of the z15 mush.
+        /// − 0.5 for 256 px tiles, `levelEndZoom`) — MapLibre draws them at
+        /// round(map zoom + 1), so from there the live source's next level is
+        /// sharper. A second copy of the area (same source) sits UNDER the
+        /// live source with no limit: while live tiles load or fail
+        /// ("online" is a network path, not theLIST answering) the area
+        /// still stretches over the statewide pack instead of the z15 mush.
         func areaUnder(_ layer: AreaLayer, liveMaxZoom: Int, paint: [String: Any] = [:]) {
             guard online else { return }
             for a in areas where a.layer == layer && a.maxZoom < liveMaxZoom {
-                sources[a.id] = ["type": "raster", "url": pmtilesURL(a.url), "tileSize": 256] as [String: Any]
+                sources[a.id] = ["type": "raster", "url": pmtilesURL(a.url), "tileSize": tileSize(layer.family)] as [String: Any]
                 layers.append(["id": a.id + areaUnderSuffix, "type": "raster", "source": a.id, "paint": paint])
             }
         }
@@ -312,9 +356,12 @@ nonisolated enum StyleBuilder {
         func area(_ layer: AreaLayer, liveMaxZoom: Int?, paint: [String: Any] = [:]) {
             for a in areas where a.layer == layer {
                 drawnAreas.insert(a.areaID)
-                sources[a.id] = ["type": "raster", "url": pmtilesURL(a.url), "tileSize": 256] as [String: Any]
+                let size = tileSize(layer.family)
+                sources[a.id] = ["type": "raster", "url": pmtilesURL(a.url), "tileSize": size] as [String: Any]
                 var l: [String: Any] = ["id": a.id, "type": "raster", "source": a.id, "paint": paint]
-                if online, let liveMaxZoom, a.maxZoom < liveMaxZoom { l["maxzoom"] = Double(a.maxZoom) - 0.5 }
+                if online, let liveMaxZoom, a.maxZoom < liveMaxZoom {
+                    l["maxzoom"] = levelEndZoom(a.maxZoom, tileSize: size)
+                }
                 layers.append(l)
             }
         }
@@ -334,9 +381,9 @@ nonisolated enum StyleBuilder {
         }
 
         if showsTopo(state, data: data) {
-            let local = pack(.topo, id: SourceID.topo)
+            let local = pack(.topo, id: SourceID.topo, family: .topo)
             areaUnder(.topo, liveMaxZoom: 18)
-            live("Topographic", id: SourceID.topoLive, hasPack: local, maxzoom: 18)
+            live("Topographic", id: SourceID.topoLive, family: .topo, hasPack: local, maxzoom: 18)
             area(.topo, liveMaxZoom: 18)
         }
         switch state.base {
@@ -344,14 +391,14 @@ nonisolated enum StyleBuilder {
             break
         case .tasmap:
             // TasmapRaster stops at z16 (the 25K sheets)
-            let local = pack(.tasmap, id: SourceID.tasmap)
+            let local = pack(.tasmap, id: SourceID.tasmap, family: .tasmap)
             areaUnder(.tasmap, liveMaxZoom: 16)
-            live("TasmapRaster", id: SourceID.tasmapLive, hasPack: local, maxzoom: 16)
+            live("TasmapRaster", id: SourceID.tasmapLive, family: .tasmap, hasPack: local, maxzoom: 16)
             area(.tasmap, liveMaxZoom: 16)
         case .aerial:
-            let local = pack(.aerial, id: SourceID.aerial)
+            let local = pack(.aerial, id: SourceID.aerial, family: .aerial)
             areaUnder(.aerial, liveMaxZoom: 18)
-            live("Orthophoto", id: SourceID.aerialLive, hasPack: local, maxzoom: 18)
+            live("Orthophoto", id: SourceID.aerialLive, family: .aerial, hasPack: local, maxzoom: 18)
             area(.aerial, liveMaxZoom: 18)
         case .seasons:
             // Oldest → newest, so the newest flown photo paints on top and the
@@ -361,7 +408,7 @@ nonisolated enum StyleBuilder {
             let cutoff = state.seasonClamped
             var topLocal = false
             for (i, season) in Season.all.enumerated() where i <= cutoff {
-                let local = pack(season.archive, id: season.sourceID, paint: noFade)
+                let local = pack(season.archive, id: season.sourceID, family: .aerial, paint: noFade)
                 if i == cutoff { topLocal = local } else { area(.season(season.year), liveMaxZoom: nil, paint: noFade) }
             }
             // Live above the packs only for the newest season shown. The
@@ -376,7 +423,7 @@ nonisolated enum StyleBuilder {
             // (SeasonCoverage) promises streaming on the same rule.
             let top = Season.all[cutoff]
             areaUnder(.season(top.year), liveMaxZoom: 18, paint: noFade)
-            live(top.service, id: SourceID.seasonLive, hasPack: topLocal, maxzoom: 18,
+            live(top.service, id: SourceID.seasonLive, family: .aerial, hasPack: topLocal, maxzoom: 18,
                  minzoomWithoutPack: SeasonCoverage.liveMinZoomWithoutPack, paint: noFade)
             // the newest season's areas above its live source
             area(.season(top.year), liveMaxZoom: 18, paint: noFade)
@@ -486,7 +533,8 @@ nonisolated enum StyleBuilder {
         }
 
         // Where detail ends: each finished area's frame, a fine dashed line
-        // from where the statewide packs stop (tile z15, map zoom 14.5) —
+        // from where the statewide packs stop (tile z15, map zoom 14.5 at
+        // 256 px, `levelEndZoom`) —
         // the frame she drew, so it reads as "full detail inside".
         let frames = Dictionary(areas.filter { drawnAreas.contains($0.areaID) }.map { ($0.areaID, $0.box) },
                                 uniquingKeysWith: { a, _ in a })
@@ -501,7 +549,8 @@ nonisolated enum StyleBuilder {
             sources[SourceID.areaOutlines] = ["type": "geojson", "data": ["type": "FeatureCollection", "features": features]
                 as [String: Any]] as [String: Any]
             layers.append([
-                "id": LayerID.areaOutlines, "type": "line", "source": SourceID.areaOutlines, "minzoom": 14.5,
+                "id": LayerID.areaOutlines, "type": "line", "source": SourceID.areaOutlines,
+                "minzoom": levelEndZoom(packMaxZoom, tileSize: tileSize(state.base.family)),
                 "paint": ["line-color": state.base.isPhoto ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.45)",
                           "line-width": 1, "line-dasharray": [4, 3]] as [String: Any],
             ])
@@ -784,5 +833,27 @@ nonisolated enum StyleBuilder {
     /// Polygons of one community; matches nothing for nil.
     static func sameCommunityFilter(_ code: String?) -> [Any] {
         ["==", ["get", "VEGCODE"], code.flatMap { MapText.isLatin1($0) ? $0 : nil } ?? ""]
+    }
+}
+
+extension BaseMap {
+    /// The family whose tile size the base's rasters share.
+    nonisolated var family: StyleBuilder.RasterFamily {
+        switch self {
+        case .topo: .topo
+        case .tasmap: .tasmap
+        case .aerial, .seasons: .aerial
+        }
+    }
+}
+
+extension AreaLayer {
+    /// The base family whose tile size an area's layer shares.
+    nonisolated var family: StyleBuilder.RasterFamily {
+        switch self {
+        case .topo: .topo
+        case .tasmap: .tasmap
+        case .aerial, .season: .aerial
+        }
     }
 }

@@ -663,15 +663,15 @@ struct AreaStyleTests {
         let online = StyleBuilder.style(state: state, data: StyleBuilderTests.all, tables: .empty, areas: [fine])
         #expect(Array(ids(online).prefix(5)) == ["bg", "aerial", "area-aaaa0003-aerial-under", "aerial-live", "area-aaaa0003-aerial"])
         let layers = online["layers"] as? [[String: Any]] ?? []
-        #expect(layers.first { $0["id"] as? String == "area-aaaa0003-aerial" }?["maxzoom"] as? Double == 16.5)
+        #expect(layers.first { $0["id"] as? String == "area-aaaa0003-aerial" }?["maxzoom"] as? Double == StyleBuilder.levelEndZoom(17, tileSize: StyleBuilder.defaultTileSize))
         #expect(layers.first { $0["id"] as? String == "area-aaaa0003-aerial-under" }?["maxzoom"] == nil)
         let offline = StyleBuilder.style(state: state, data: StyleBuilderTests.all, tables: .empty, online: false, areas: [fine])
         let offLayers = offline["layers"] as? [[String: Any]] ?? []
         #expect(Array(ids(offline).prefix(3)) == ["bg", "aerial", "area-aaaa0003-aerial"])
         #expect(offLayers.first { $0["id"] as? String == "area-aaaa0003-aerial" }?["maxzoom"] == nil)
-        // where detail ends: the frame, dashed, from map zoom 14.5
+        // where detail ends: the frame, dashed, from the pack level 15 end zoom
         let outline = try #require(layers.first { $0["id"] as? String == StyleBuilder.LayerID.areaOutlines })
-        #expect(outline["minzoom"] as? Double == 14.5)
+        #expect(outline["minzoom"] as? Double == StyleBuilder.levelEndZoom(15, tileSize: StyleBuilder.defaultTileSize))
         #expect(ids(online).firstIndex(of: StyleBuilder.LayerID.areaOutlines)! > ids(online).firstIndex(of: "tasveg-fill")!)
         // an area of a base not shown: no outline
         state.base = .topo
