@@ -301,6 +301,15 @@ public struct PlantIDResult: Sendable, Equatable {
     /// sparse), nil without a location.
     public var priorSigmaKm: Double? = nil
 
+    /// The sentence tail under the results. Claims only the radius actually
+    /// counted (`nearbyKm`, the same as the candidates' "Recorded within" badge),
+    /// never the prior's kernel σ.
+    public var locationEffect: String {
+        let km = Int(nearbyKm.rounded())
+        return nearbySpecies > 0 ? "plants recorded within \(km) km rank higher."
+            : "no plants are recorded within \(km) km, so the photo and records further afield decide."
+    }
+
     public init(answer: Answer, candidates: [Candidate], genera: [GenusShare], usedLocation: Bool,
                 scope: Scope = .australia, nearbyKm: Double = PlantIDModel.nearbyKm,
                 ladder: PlantIDLadder = .simple, genusSpecies: [Candidate] = [], nearbySpecies: Int = 0,

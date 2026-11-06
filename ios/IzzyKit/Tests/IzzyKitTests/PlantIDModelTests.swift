@@ -167,9 +167,13 @@ import Testing
         #expect(r.answer == .species(label: 0, p: r.candidates[0].p) && r.usedLocation && r.scope == .australia)
         #expect(r.candidates.first { $0.label == 1 }?.nearbyRecords == 2)
         #expect(r.nearbySpecies == 1 && r.priorSigmaKm == 10)
+        #expect(r.locationEffect == "plants recorded within 10 km rank higher.")
         // no records around the place: nothing "recorded nearby"
         let far = m.identify(embedding: [1, 0.05, 0.05], location: GeoPoint(longitude: 147.33, latitude: -42.6))
         #expect(far.nearbySpecies == 0, "usedLocation \(far.usedLocation)")
+        // sparse sentence claims the counted radius (the badges' 10 km), never σ
+        #expect(far.locationEffect == "no plants are recorded within 10 km, so the photo and records further afield decide.")
+        #expect(far.priorSigmaKm != nil && PlantIDResult(answer: .notSure, candidates: [], genera: [], usedLocation: true, nearbySpecies: 0, priorSigmaKm: 20).locationEffect == far.locationEffect)
         let g = m.identify(embedding: [1, 1, 0.9], location: nil)
         guard case let .genus(name, _) = g.answer else { Issue.record("genus expected: \(g.answer)"); return }
         #expect(name == "Alpha" && g.genusSpecies.count == 2 && !g.usedLocation && g.nearbySpecies == 0)

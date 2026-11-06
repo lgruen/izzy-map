@@ -61,6 +61,9 @@ final class PlantIDUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["plant-id-ladder"].exists, "the ladder graphic")
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'plant-id-candidate-' AND label CONTAINS 'Recorded within 10 km'")).firstMatch.exists,
                       "the prior's marker")
+        // the location sentence quotes the counted radius (= the badges' 10 km), not the prior's σ
+        let loc = app.descendants(matching: .any)["plant-id-location"]
+        XCTAssertTrue(loc.exists && loc.label.contains("within 10 km"), "location sentence: \(loc.label)")
         attachScreenshot("plant-id-results-species")
         // the top candidate opens the existing plant sheet
         let row = app.buttons["plant-id-candidate-0"]

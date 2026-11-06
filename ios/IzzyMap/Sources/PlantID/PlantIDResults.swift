@@ -224,11 +224,7 @@ struct PlantIDResults: View {
     }
 
     private var locationLine: some View {
-        // the prior's kernel σ where the photo was taken (adaptive: narrower where records are dense)
-        let km = max(1, Int((result.priorSigmaKm ?? 10).rounded()))
-        // "recorded nearby" only when the records there hold any plant
-        let effect = result.nearbySpecies > 0 ? "plants recorded within about \(km) km rank higher."
-            : "no plants are recorded within about \(km) km, so the photo and records further afield decide."
+        let effect = result.locationEffect
         let text: String = switch session.place {
         case .none: "No location: ranked on the photo and how common each plant is across Australia."
         case .photo: result.usedLocation ? "Location from the photo: \(effect)"
