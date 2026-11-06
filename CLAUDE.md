@@ -576,6 +576,32 @@ milestones, map-proof results); the design brief and language is
 
 ## Native gotchas (map proof + milestone 1, 2026-11-03)
 
+- **Core ML can't reuse its Neural Engine cache for a model inside a
+  Background Assets pack** (device-measured 2026-11-06, iPhone 16e, iOS
+  27.2): every cold load from the pack's staging folder (another
+  container, `InternalDaemon`) took 17–32 s. Copying the .mlmodelc once
+  per model version into the app's own Application Support (APFS clone,
+  44 ms) made relaunch loads 0.3 s. Plant ID therefore loads from that
+  copy with `.cpuAndNeuralEngine` (~53 ms per photo, ~1.1 GB while
+  loaded — released when Identify closes); `.all` was no faster and its
+  first specialisation slower (35–45 s). The first load per model
+  version still specialises for ~30 s (UI says so). Diagnostics has an
+  on-demand "Benchmark identifier load" (location × compute units).
+- **MapLibre Native picks a raster tile level by ROUNDING**
+  (`util::coveringZoomLevel`: round(zoom + log2(512/tileSize))), so with
+  the tiles' real 256 px size the coarser level is shown magnified up to
+  1.41× just past each switch. The declared `tileSize` only moves the
+  switch (the tile always fills its extent); per family: topo 181
+  (print labels), Tasmap 128 (its zoom levels are different printed
+  series — 1:25K sheets from z12.5), aerial + seasons 128 (photos: more
+  resolution wins). No mipmaps/anisotropy in MapLibre Native 7.0.0
+  (Metal textures are created un-mipmapped); `raster-resampling` linear
+  is the only filter choice. `-rasterTileSize[Topo|Tasmap|Aerial]` and
+  `-perfTour YES` are DEBUG tools.
+- **Never do work on the main thread when Identify opens** (pack URL
+  lookups, CLLocationManager creation, camera availability checks cost
+  ~1 s on the device before build 12).
+
 - **A character outside Latin-1 drops the whole label** in MapLibre Native
   too (en dash seen) — glyphs ship as `0-255.pbf` only, so every
   `text-field` uses the Latin-1 `label` fields (trees.json, the community
@@ -823,6 +849,21 @@ tree data sheets are fetched by the device straight from their publishers
 
 ## Status log
 
+- 2026-11-05/06: Australia-wide plant ID (TestFlight builds 9–13). One
+  model over 22,122 labels on frozen BioCLIP 2.5: two multi-prototype
+  heads (balanced softmax + class-balanced sampling, τ-norm), an
+  adaptive-bandwidth location prior (iNat + ALA, leak-free for eval), a
+  Tasmania-box kNN bank, ladder by training-photo count; trained on 3.9M
+  photos (iNat K=1,000 incl. SA/ND, ALA incl. APII, Commons; RunPod for
+  embedding). Chosen on a tail-reweighted val; AU-test 85.7 % per species
+  (+1.2 vs v2, CI excludes 0), Tasmania level and better calibrated. Long
+  ablation trail (heads, imbalance strategies, banks, pruning, encoder
+  fine-tune pilot: no-go) in pipeline/plantid/README.md + notes/.
+  Offline reference photos (refphotos pack, 18,373 species, Opus-picked).
+  Published the heads + prior on Hugging Face (Leo's name, CC BY-NC 4.0):
+  leonhard-gruenschloss/bioclip-2.5-vith14-australian-plants. Device
+  fixes: model copy into the app container (Core ML cache), Neural
+  Engine, release on close; sharper raster maps (per-family tileSize).
 - 2026-11-04: Native TestFlight build 3 integration: search, Storage,
   Show on map, detailed areas (per-area PMTiles, background downloads),
   plant ID (BioCLIP 2.5 8-bit "w8" Core ML encoder + linear head ⊕ int8
