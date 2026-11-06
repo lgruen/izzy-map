@@ -59,7 +59,7 @@ final class PlantIDSession {
         }
         // the Diagnostics benchmark (pushed inside Identify) measures alone
         releaseObserver = NotificationCenter.default.addObserver(
-            forName: PlantIDEngineKeeper.releaseAll, object: nil, queue: .main
+            forName: PlantIDRelease.all, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.memoryWarning() }
         }
@@ -97,9 +97,7 @@ final class PlantIDSession {
         identifyTask?.cancel()
         if step == .identifying { step = .framing }
         guard let source else { engine = nil; return }
-        // the engine kept from an earlier Identify this run (loaded), else
-        // a new load
-        let engine = PlantIDEngineKeeper.shared.take(source) ?? PlantIDEngine(source: source)
+        let engine = PlantIDEngine(source: source)
         self.engine = engine
         prepareFailed = nil
         preparing = true
@@ -128,14 +126,12 @@ final class PlantIDSession {
 
     var hasModel: Bool { engine != nil }
 
-    /// Identify closed: the engine goes to the app-level keeper, so the
-    /// next Identify this run starts loaded (released there on a memory
-    /// warning or after 10 min in the background).
+    /// Identify closed: the encoder is released (reloading is ~0.3 s; the
+    /// map gets its memory back).
     func close() {
         placeTask?.cancel()
         identifyTask?.cancel()
-        // kept for the next Identify this run (a load in flight is called off)
-        if let engine { PlantIDEngineKeeper.shared.keep(engine) }
+        if let engine { Task { await engine.release() } }
         engine = nil
         if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
         if let releaseObserver { NotificationCenter.default.removeObserver(releaseObserver) }

@@ -36,15 +36,14 @@ nonisolated enum PlantIDFailure: LocalizedError, Equatable {
 }
 
 /// The Core ML image encoder (BioCLIP 2.5, 8-bit weights), compute units
-/// ALL (Neural Engine where it can) unless the benchmark asks otherwise.
-/// Loaded on first use, released by its owner on a memory warning or a long
-/// time in the background: the model holds ~0.4–1.7 GB of app memory once
-/// loaded (device, build 11 — the Diagnostics benchmark measures each
-/// compute-unit choice).
+/// CPU + Neural Engine unless the benchmark asks otherwise. Loaded on first
+/// use, released when Identify closes and on a memory warning: ~1.1 GB of
+/// app memory while loaded, ~0.3 s to load again (device, build 12).
 nonisolated final class CoreMLPlantEncoder: PlantEncoding, @unchecked Sendable {
     let model: MLModel
-    /// The default (unchanged until the benchmark has spoken).
-    static let defaultUnits: MLComputeUnits = .all
+    /// Explicitly CPU+ANE, not .all (device benchmark, build 12: .all's first
+    /// load took 35-45 s; 315 ms load, 53 ms predictions, ~1.1 GB loaded).
+    static let defaultUnits: MLComputeUnits = .cpuAndNeuralEngine
 
     static func load(_ url: URL, units: MLComputeUnits = defaultUnits) async throws -> CoreMLPlantEncoder {
         let config = MLModelConfiguration()

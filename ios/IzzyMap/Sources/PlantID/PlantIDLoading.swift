@@ -1,6 +1,5 @@
 import Foundation
 import os
-import UIKit
 
 /// What the identifier's last load took (Diagnostics), and whether this
 /// model has been loaded here before — the honest "the first time after an
@@ -18,13 +17,18 @@ nonisolated enum PlantIDLoadLog {
         return "pipeline.json@\(date.map { "\($0.timeIntervalSince1970)" } ?? "?")"
     }
 
-    /// No load of this model has completed on this device yet.
-    static func isFirstLoad(_ dir: URL) -> Bool {
-        UserDefaults.standard.string(forKey: loadedKey) != modelKey(dir)
+    /// The model + the compute units it was specialised for: Core ML's
+    /// on-device specialisation cache is per model and per units.
+    static func loadKey(_ dir: URL, units: String) -> String { modelKey(dir) + "|" + units }
+
+    /// No load of this model with these compute units has completed on this
+    /// device yet (so Core ML will specialise it: ~30 s).
+    static func isFirstLoad(_ dir: URL, units: String = CoreMLPlantEncoder.name(CoreMLPlantEncoder.defaultUnits)) -> Bool {
+        UserDefaults.standard.string(forKey: loadedKey) != loadKey(dir, units: units)
     }
 
     static func record(dir: URL, took: Duration, steps: [String], location: PlantIDModelLocation, units: String) {
-        let key = modelKey(dir)
+        let key = loadKey(dir, units: units)
         let first = UserDefaults.standard.string(forKey: loadedKey) != key
         UserDefaults.standard.set(key, forKey: loadedKey)
         let ms = Int((took / .milliseconds(1)).rounded())
@@ -38,84 +42,12 @@ nonisolated enum PlantIDLoadLog {
     static var lastLine: String? { UserDefaults.standard.string(forKey: lastKey) }
 }
 
-/// Owns the loaded identifier at app level, beyond Identify's lifetime:
-/// once loaded it stays for the rest of the run, so reopening Identify is
-/// instant — until a memory warning (the encoder's weights are ~0.6 GB of
-/// mapped file, its working memory more; the map wins) or a return from
-/// more than 10 minutes in the background. Nothing loads before Identify
-/// opens (the map is the main use); closing Identify mid-load calls the
-/// load off.
+/// Posted before the Diagnostics benchmark runs: an open Identify lets go
+/// of its encoder (it reloads, ~0.3 s, when she identifies).
 @MainActor
-final class PlantIDEngineKeeper {
-    static let shared = PlantIDEngineKeeper()
-
-    private var engine: PlantIDEngine?
-    private var observers: [NSObjectProtocol] = []
-    private var backgroundSince: Date?
-    static let backgroundLimit: TimeInterval = 10 * 60
-    nonisolated private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "PlantID")
-
-    /// The kept engine for `source`, handed over to the Identify screen.
-    func take(_ source: PlantIDSource) -> PlantIDEngine? {
-        guard let engine, engine.source == source else {
-            drop("another model")
-            return nil
-        }
-        self.engine = nil
-        return engine
-    }
-
-    /// Identify closed: keep its engine if it is loaded; a load still in
-    /// flight is called off (it would only compete with the map).
-    func keep(_ engine: PlantIDEngine) {
-        drop(nil)
-        self.engine = engine
-        observe()
-        Task {
-            guard await engine.isLoaded else {
-                await engine.release()
-                if self.engine === engine { self.engine = nil }
-                return
-            }
-            Self.logger.info("identifier kept after Identify closed · memory \(MemoryUse.line(), privacy: .public)")
-        }
-    }
-
-    /// Every loaded identifier lets go (the Diagnostics benchmark measures
-    /// on its own): the kept one here, an open Identify's encoder (it loads
-    /// again when she identifies).
-    static let releaseAll = Notification.Name("PlantIDReleaseAll")
-    func releaseAll() {
-        drop("benchmark")
-        NotificationCenter.default.post(name: Self.releaseAll, object: nil)
-    }
-
-    private func drop(_ why: String?) {
-        guard let engine else { return }
-        if let why { Self.logger.notice("kept identifier released: \(why, privacy: .public)") }
-        Task { await engine.release() }
-        self.engine = nil
-    }
-
-    private func observe() {
-        guard observers.isEmpty else { return }
-        let center = NotificationCenter.default
-        observers = [
-            center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.drop("memory warning") }
-            },
-            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.backgroundSince = .now }
-            },
-            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, let since = self.backgroundSince else { return }
-                    self.backgroundSince = nil
-                    if Date.now.timeIntervalSince(since) > Self.backgroundLimit { self.drop("over 10 min in the background") }
-                }
-            },
-        ]
-    }
+enum PlantIDRelease {
+    static let all = Notification.Name("PlantIDReleaseAll")
+    static func releaseAll() { NotificationCenter.default.post(name: all, object: nil) }
 }
 
 /// The app's memory as the system counts it: footprint (dirty + compressed

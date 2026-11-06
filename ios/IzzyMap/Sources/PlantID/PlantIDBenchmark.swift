@@ -131,7 +131,7 @@ final class PlantIDBenchmarkRunner {
             return
         }
         running = true
-        PlantIDEngineKeeper.shared.releaseAll()
+        PlantIDRelease.releaseAll()
         let d = UserDefaults.standard
         if let text {
             previous = text
