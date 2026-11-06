@@ -5,7 +5,7 @@ import SwiftUI
 /// The real decision is visual — "is it this one?" — so her crop sits
 /// beside each candidate's photo at the same size, swipeable through the
 /// top 5; the ladder is drawn as ink bars per genus split into species,
-/// with the line where the ladder in force names it (pipeline.json: genus 55 %, species 50–75 % by training photos); the headline says what the ladder says. Ink only:
+/// with the line where the ladder in force names it (pipeline.json: genus 50 %, species 50–75 % by training photos); the headline says what the ladder says. Ink only:
 /// no traffic-light colours, no reward for an unsure answer.
 struct PlantIDResults: View {
     let session: PlantIDSession
@@ -224,7 +224,8 @@ struct PlantIDResults: View {
     }
 
     private var locationLine: some View {
-        let km = result.scope == .tasmania ? 5 : 10
+        // the prior's kernel σ where the photo was taken (adaptive: narrower where records are dense)
+        let km = max(1, Int((result.priorSigmaKm ?? 10).rounded()))
         // "recorded nearby" only when the records there hold any plant
         let effect = result.nearbySpecies > 0 ? "plants recorded within about \(km) km rank higher."
             : "no plants are recorded within about \(km) km, so the photo and records further afield decide."

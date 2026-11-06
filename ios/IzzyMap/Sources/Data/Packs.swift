@@ -76,12 +76,12 @@ nonisolated enum PlantIDFiles {
     /// The image encoder, compiled (`xcrun coremlcompiler`): Core ML loads
     /// it in place — no on-device compile, no second 0.6 GB copy.
     static let encoder = "PlantEncoder-w8.mlmodelc"
-    /// The single model's head: its presence marks a staged pack (DEBUG `-dataDir`).
-    static let head = "v2-head.bin"
+    /// The model's heads: their presence marks a staged pack (DEBUG `-dataDir`).
+    static let head = "v3-head.bin"
     /// The pack path that tells this version's pack from an older one (the
-    /// v1 Tasmanian model had no v2 files): local without it = an update
-    /// on its way, not a failure.
-    static let currentMarker = "plantid/v2-head.bin"
+    /// v1 Tasmanian model and the single-head v2 had no v3 files): local
+    /// without it = an update on its way, not a failure.
+    static let currentMarker = "plantid/v3-head.bin"
     /// The Tasmanian photo bank (the model's Tasmania-box term).
     static let bank = "bank-int8.bin"
     static let pipeline = "pipeline.json"
@@ -100,8 +100,8 @@ nonisolated enum PlantIDFiles {
         "plantid/pipeline.json",
         "plantid/credits.json",
         "plantid/credits-photos.tsv.gz",
-        "plantid/v2-head.bin",
-        "plantid/v2-prior.bin",
+        "plantid/v3-head.bin",
+        "plantid/v3-prior.bin",
         "plantid/v2-labels.json",
     ]
 }

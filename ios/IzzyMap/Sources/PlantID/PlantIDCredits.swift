@@ -1,7 +1,7 @@
 import IzzyKit
 import SwiftUI
 
-/// The installed model's identity: pipeline.json `model` (build_ship.py v2):
+/// The installed model's identity: pipeline.json `model` (build_ship.py v3):
 /// run id, scripts' git commit, build date, classes, a parameter summary.
 nonisolated struct PlantIDModelIdentity: Decodable, Sendable {
     var id: String
@@ -17,7 +17,7 @@ nonisolated struct PlantIDModelIdentity: Decodable, Sendable {
         (try? JSONDecoder().decode(Pipeline.self, from: Data(contentsOf: dir.appending(path: PlantIDFiles.pipeline))))?.model
     }
 
-    /// "final-cb50-s1 · git 85d6f486d6 · 2026-11-05 · 22,122 classes"
+    /// "final-mpA01-adaptive · git 93dfd0a2cc · 2026-11-06 · 22,122 classes"
     var line: String {
         [id, git.map { "git \($0)\(git_clean == false ? "+" : "")" }, built,
          classes.map { "\($0.formatted()) classes" }].compactMap { $0 }.joined(separator: " · ")

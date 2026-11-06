@@ -166,7 +166,7 @@ final class PlantIDShotsUITests: XCTestCase {
     @MainActor
     func testRealModelShots() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PLANTID_SHOTS"] == "1", "design shots: TEST_RUNNER_PLANTID_SHOTS=1")
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/v2-head.bin"), "no staged plantid pack")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/v3-head.bin"), "no staged plantid pack")
         let pad = UIDevice.current.userInterfaceIdiom == .pad
         XCUIDevice.shared.orientation = pad ? .landscapeLeft : .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -233,7 +233,7 @@ final class PlantIDShotsUITests: XCTestCase {
     @MainActor
     func testRealModelResultsScroll() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PLANTID_SCROLL"] == "1", "TEST_RUNNER_PLANTID_SCROLL=1")
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/v2-head.bin"), "no staged plantid pack")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: "\(Self.model)/v3-head.bin"), "no staged plantid pack")
         let photos = [("637002849", " -43.475,146.642"), ("474508960", " -41.907,146.062"), ("594582089", " -41.806,147.507")]
         var worst = 0.0
         for (id, loc) in photos {

@@ -23,6 +23,12 @@ Subcommands (run in order; each is resumable / cheap to repeat):
              training photo, pipeline.json "v2" + provenance, then a check
              of the written files against the evaluation (eval env with
              V2DATA=…/data-final.npz; ~3 min).
+  v3         the final configuration (README "Final configuration (v3):
+             shipping"; final_sweep.py `mpA01|adaptive|box`): v3-head.bin (two
+             multi-prototype heads), v3-prior.bin (v2's counts + the adaptive
+             σ raster), pipeline.json "v3" + provenance + `model`; then a check
+             of the written files against the sweep's test.json (~1 min;
+             --check-only / --check-n N). v2-labels.json + credits stay.
   fixture    numbers-only test fixtures for the Swift scorer/preprocessing
              (ios/IzzyKit/Tests/Fixtures/plantid-*; needs only numpy,
              pyarrow, pillow: `uv run --with numpy --with pyarrow --with
@@ -1157,10 +1163,12 @@ def cmd_fixture(a):
 
     - plantid-mini/bank-int8.bin: a tiny synthetic Tasmanian photo bank (6
       labels, 8 dims), the Tasmania-box term of the mini single model.
-    - plantid-mini/v2-* + plantid-v2-mini.json: a 9-class single model and
-      V2Ship's log p / ladder for 14 embeddings — runs in CI.
-    - plantid-v2-real.json: w8 Core ML embeddings of test photos (Tasmania,
-      mainland, eucalypts; some without a location) and V2Ship's top 10 +
+    - plantid-mini/v3-*, v2-labels.json + plantid-v3-mini.json: a 9-class
+      model with two multi-prototype heads (K 1–4 per class) and an adaptive
+      prior raster, V3Ship's log p / ladder for 14 embeddings (+ the
+      no-location switch) — runs in CI.
+    - plantid-v3-real.json: w8 Core ML embeddings of test photos (Tasmania,
+      mainland, eucalypts; some without a location) and V3Ship's top 10 +
       ladder on ship/ — the Swift test skips when the files are absent.
     - plantid-preprocess.{json,bin}: Pillow's resize + centre crop of a
       synthetic image (whole, and a square crop), uint8 224×224×3 each."""
@@ -1207,8 +1215,8 @@ def cmd_fixture(a):
               open(os.path.join(FIX, "plantid-preprocess.json"), "w"), indent=1)
     print(f"fixtures → {FIX}")
 
-    # ---- single model v2 (only when its files exist in ship/)
-    v2_fixtures(FIX, md, rng, a.n, mu, real=os.path.exists(os.path.join(SHIP, "v2-head.bin")))
+    # ---- the final configuration v3 (real cases only when its files exist in ship/)
+    v3_fixtures(FIX, md, rng, a.n, mu, real=os.path.exists(os.path.join(SHIP, "v3-head.bin")))
 
 
 def v2_write_prior(path, cy, cx, cls, cnt, C, grid, sigma, alpha, about):
@@ -1341,6 +1349,160 @@ def v2_fixtures(FIX, md, rng, n_real, tas_centre, real=True):
                "cases": cases}, open(os.path.join(FIX, "plantid-v2-real.json"), "w"), indent=0)
     kinds = collections.Counter((c["set"], c["ladder"]["kind"]) for c in cases)
     print(f"v2 fixtures: mini {len(json.load(open(os.path.join(FIX, 'plantid-v2-mini.json')))['cases'])} cases, "
+          f"real {len(cases)} cases {dict(kinds)} → {FIX}")
+
+
+def v3_fixtures(FIX, md, rng, n_real, tas_centre, real=True):
+    """plantid-mini/v3-* + v2-labels.json + plantid-v3-mini.json (a 9-class model:
+    two multi-prototype heads with different K per class, an adaptive prior
+    raster, the mini Tasmanian bank; CI) and plantid-v3-real.json (w8 embeddings
+    of Tasmanian, mainland and eucalypt test photos, some without a location;
+    V3Ship on ship/ — the Swift test skips without the files)."""
+    for f in ("v2-head.bin", "v2-prior.bin"):
+        if os.path.exists(os.path.join(md, f)):
+            os.remove(os.path.join(md, f))
+    for f in ("plantid-v2-mini.json", "plantid-v2-real.json"):
+        if os.path.exists(os.path.join(FIX, f)):
+            os.remove(os.path.join(FIX, f))
+    C, D = 9, 8
+    genus = ["Alpha", "Alpha", "Alpha", "Beta", "Beta", "Gamma", "Delta", "Delta", "Alpha"]
+    names = ["Alpha prima", "Alpha secunda", "Alpha tertia", "Beta una", "Beta duo", "Gamma sola",
+             "Delta borealis", "Delta australis", "Alpha gemina"]
+    photos = [120, 30, 4, 0, 60, 9, 55, 2, 0]
+    ship_of = [3, 0, 5, -1, 1, 4, -1, 2, -1]      # mini bank labels (6 Tasmanian classes)
+    base = rng.normal(size=(C, D)).astype(np.float32)
+    base[6] = 0.8 * base[7] + 0.3 * rng.normal(size=D)   # close congeners (Delta)
+    KCS = [[4, 2, 1, 1, 2, 1, 4, 1, 1], [2, 2, 1, 1, 4, 1, 2, 1, 2]]
+    W8, S8, B, KC, R0, hh = [], [], [], [], [], []
+    r = 0
+    for h, Kc in enumerate(KCS):
+        Kc = np.array(Kc)
+        row0 = v3_row0(Kc)
+        W = np.zeros((int(Kc.sum()), D), np.float32)
+        for c in range(C):
+            W[row0[c]:row0[c] + Kc[c]] = 4.0 * base[c] + 1.5 * rng.normal(size=(Kc[c], D))
+        q8, s8 = int8_rows32(W)
+        b = (0.2 * rng.normal(size=C)).astype(np.float32)
+        b[8] = -1e4                                  # a merged twin
+        W8.append(q8), S8.append(s8), B.append(b), KC.append(Kc.astype(np.uint8)), R0.append((row0 + r).astype(np.int32))
+        hh.append({"run": f"mini-{h}", "rows": [r, r + len(W)], "pool_temperature": [2.0, 3.5][h]})
+        r += len(W)
+    mu = (0.1 * rng.normal(size=D)).astype(np.float32)
+    s2u = np.zeros(6, np.int64)
+    for u, j in enumerate(ship_of):
+        if j >= 0:
+            s2u[j] = u
+    s2u[4] = 2                                      # two Tasmanian labels on one class: the last wins
+    prm = {"temperature": 1.4, "image_temperature": 0.8, "lam": 0.8,
+           "prior": {"kind": "adaptive", "transform": "log1p", "file": "v3-prior.bin"},
+           "tasmania": {"box": list(TAS_BOX), "omega": 1.5, "knn_floor": -1.5, "bank": "bank-int8.bin"},
+           "no_location": "australia",
+           "ladder": {"species": [0.6, 0.5, 0.5, 0.75], "bucket_edges": list(BUCKET_EDGES), "genus": 0.55,
+                      "image_floor": 0.0, "congener_ratio": 1.0}}
+    write_blob(os.path.join(md, "v3-head.bin"), {"kind": "plantid-head-v3", "version": 1, "labels": C, "id": "mini",
+                                                 "variant": "int8 per prototype row", "heads": hh, "scoring": prm},
+               {"weight": np.concatenate(W8), "scale": np.concatenate(S8), "bias": np.stack(B), "kc": np.stack(KC),
+                "row0": np.stack(R0), "centre": mu, "tas_centre": np.asarray(tas_centre, np.float32),
+                "tas_classes": s2u.astype(np.int32)})
+    g = {"cell": 0.1, "lat0": -44.0, "lon0": 144.0, "ny": 110, "nx": 80}
+    pts = [(-42.88 + 0.1 * rng.normal(), 147.33 + 0.1 * rng.normal(), int(rng.integers(0, 6))) for _ in range(50)] + \
+          [(-33.87 + 0.1 * rng.normal(), 151.21 + 0.1 * rng.normal(), int(rng.choice([3, 6, 7])))
+           for _ in range(40)]
+    key = {}
+    for la, lo, c in pts:
+        k_ = (int((la - g["lat0"]) // g["cell"]), int((lo - g["lon0"]) // g["cell"]), c)
+        key[k_] = key.get(k_, 0) + int(rng.integers(1, 30))
+    kk = np.array(list(key))
+    v2_write_prior(os.path.join(md, "v3-prior.bin"), kk[:, 0], kk[:, 1], kk[:, 2], np.array(list(key.values())),
+                   C, g, 10.0, 8.0, "synthetic test records near Hobart and Sydney")
+    ph, pa = read_blob(os.path.join(md, "v3-prior.bin"))
+    iy, ix = np.mgrid[0:g["ny"], 0:g["nx"]]
+    code = ((iy // 7 + ix // 5) % 7).astype(np.uint8)          # σ varies cell to cell (stripes)
+    sig = 2.0 * 2.0 ** (np.arange(7) / 3.0)
+    alp = 8.0 * (sig / 10.0) ** 0.5                               # α per level too (δ 0.5)
+    ph = {k: v for k, v in ph.items() if k != "arrays"}
+    ph.update({"version": 3, "adaptive": {"about": "synthetic stripes"}})
+    write_blob(os.path.join(md, "v3-prior.bin"), ph, {**pa, "sigma_code": code, "sigma_km": sig, "alpha": alp})
+    lab = []
+    for u in range(C):
+        r_ = {"name": names[u], "genus": genus[u], "family": genus[u] + "aceae", "native": True, "photos": photos[u],
+              "inat": 1000 + u}
+        if ship_of[u] >= 0:
+            r_["ship"] = ship_of[u]
+        if u == 1:
+            r_["common"] = "second alpha"
+        if u == 8:
+            r_["merged_into"] = 0
+        lab.append(r_)
+    json.dump({"version": 1, "count": C, "labels": lab}, open(os.path.join(md, "v2-labels.json"), "w"), indent=0)
+    sh = V3Ship(md)
+    E = rng.normal(size=(14, D)).astype(np.float32)
+    Bn = unit(base)
+    E[:6] = 3 * Bn[[0, 3, 6, 1, 4, 7]] + 0.3 * E[:6]
+    locs = [(-42.88, 147.33), (-33.87, 151.21), (-42.95, 147.2), None, (-37.8, 145.0), (-39.9, 144.0), (-41.4, 146.8)] * 2
+    cases = []
+    for e, l in zip(E, locs):
+        lat, lon = (None, None) if l is None else ([l[0]], [l[1]])
+        L, Li, path = sh.logp(e[None], lat, lon)
+        L, Li = L[0], Li[0]
+        alt = dict(sh.sc["ladder"], image_floor=0.3, congener_ratio=0.5)
+        sh.sc["ladder"], keep = alt, sh.sc["ladder"]
+        lad_alt = sh.ladder(L, Li)
+        sh.sc["ladder"] = keep
+        c_ = {"embedding": e.tolist(), "location": list(l) if l else None, "path": str(path[0]),
+              "logp": L.tolist(), "image": Li.tolist(), "ladder": sh.ladder(L, Li), "ladder_alt": lad_alt}
+        if l is None:   # the switch: no location scored as inside the Tasmania box
+            sh.sc["no_location"] = "tasmania"
+            Lt, Lit, pt = sh.logp(e[None])
+            sh.sc["no_location"] = "australia"
+            assert str(pt[0]) == "tasmania"
+            c_["logp_as_tasmania"] = Lt[0].tolist()
+        cases.append(c_)
+    hl = sh.head_logits(unit(unit(E) - sh.mu[None]).astype(np.float32))
+    json.dump({"version": 3, "ladder_alt": {"image_floor": 0.3, "congener_ratio": 0.5},
+               "head_logits": hl.tolist(), "cases": cases},
+              open(os.path.join(FIX, "plantid-v3-mini.json"), "w"), indent=0)
+    if not real:
+        print(f"v3 fixtures: mini only (no ship/v3-head.bin) → {FIX}")
+        return
+    # ---- real: Tasmania (A-test), mainland + eucalypts (C report half), some without a location
+    sh = V3Ship(SHIP)
+    ids, embs = load_parts(os.path.join(SHIP, "eval", "coreml-w8"))
+    te = pq.read_table(os.path.join(CACHE, "sets", "test.parquet"), columns=["photo_id", "lat", "lon"]).to_pydict()
+    where = {p: (la, lo) for p, la, lo in zip(te["photo_id"], te["lat"], te["lon"])}
+    au_dir = os.path.join(CACHE, "australia")
+    cid, cemb = load_parts(os.path.join(au_dir, "emb-w8"))
+    C_ = pq.read_table(os.path.join(au_dir, "C.parquet"), columns=["photo_id", "lat", "lon", "subset", "half"]).to_pydict()
+    cinfo = {p: (la, lo, s_, h_) for p, la, lo, s_, h_ in zip(C_["photo_id"], C_["lat"], C_["lon"], C_["subset"], C_["half"])}
+    r3 = np.random.default_rng(3)
+    n_tas, n_euc = n_real * 3 // 10, n_real * 3 // 10
+    pick = [("tasmania", embs[i], where[int(ids[i])]) for i in np.sort(r3.permutation(len(ids))[:n_tas])]
+    rep = [i for i in range(len(cid)) if cinfo.get(int(cid[i]), (0, 0, "", ""))[3] == "report"]
+    euc = [i for i in rep if cinfo[int(cid[i])][2] == "euc"]
+    main = [i for i in rep if cinfo[int(cid[i])][2] == "main"]
+    pick += [("eucalypt", cemb[i], cinfo[int(cid[i])][:2]) for i in sorted(r3.choice(euc, n_euc, replace=False))]
+    pick += [("mainland", cemb[i], cinfo[int(cid[i])][:2])
+             for i in sorted(r3.choice(main, n_real - n_tas - n_euc, replace=False))]
+    cases = []
+    for j, (kind, e, (la, lo)) in enumerate(pick):
+        e = np.asarray(e, np.float32)
+        loc = None if j % 6 == 5 else (round(float(la), 3), round(float(lo), 3))
+        L, Li, path = sh.logp(e[None], None if loc is None else [loc[0]], None if loc is None else [loc[1]])
+        L, Li = L[0], Li[0]
+        top = np.argsort(-L)[:10]
+        cases.append({"set": kind, "embedding": __import__("base64").b64encode(e.astype("<f4").tobytes()).decode(),
+                      "location": list(loc) if loc else None, "path": str(path[0]),
+                      "top": [[int(t), float(L[t])] for t in top], "image_named": float(Li[top[0]]),
+                      "ladder": sh.ladder(L, Li)})
+    pj = json.load(open(os.path.join(SHIP, "pipeline.json")))["files"]
+    json.dump({"version": 3, "encoder": "w8",
+               "note": "embeddings = PlantEncoder-w8 Core ML outputs of test photos (A-test Tasmania, C report half "
+                       "eucalypts / mainland; numbers only); expected = build_ship.V3Ship on ship/ (v3-head, "
+                       "v3-prior, v2-labels, bank-int8 inside the Tasmania box)",
+               "files": {f: pj[f]["sha256"] for f in V3_FILES + ("bank-int8.bin",)},
+               "cases": cases}, open(os.path.join(FIX, "plantid-v3-real.json"), "w"), indent=0)
+    kinds = collections.Counter((c["set"], c["path"], c["ladder"]["kind"]) for c in cases)
+    print(f"v3 fixtures: mini {len(json.load(open(os.path.join(FIX, 'plantid-v3-mini.json')))['cases'])} cases, "
           f"real {len(cases)} cases {dict(kinds)} → {FIX}")
 
 
@@ -2058,6 +2220,494 @@ def v2_check(W_fp32, b):
     json.dump(res, open(os.path.join(SHIP, "v2-check.json"), "w"), indent=1)
 
 
+# ------------------------------------------- final configuration v3 (final_sweep.py)
+#
+# README "Final configuration (v3): shipping": the final sweep's choice
+# `mpA01|adaptive|box` — the MEAN of two multi-prototype heads (head_capacity.py
+# mproto "mpAc", seeds 0 and 1: adaptive K per class, logsumexp pooling with the
+# log K correction), the adaptive-bandwidth prior (prior_adaptive.py F2) everywhere
+# (no separate Tasmania-box prior), and inside the Tasmania box the Tasmanian
+# bank's kNN at ω 3 with a SOFT floor. Every number is read from the sweep's
+# outputs: refine.json (cfg), calib.json (T, ladder); test.json holds the report
+# numbers the check of the written files must reproduce. Same 22,122 classes,
+# merges and training photos as v2 (asserted) → v2-labels.json and the credits stay.
+
+V3_CFG = "mpA01|adaptive|box"
+V3_ID = "final-mpA01-adaptive"
+V3_FILES = ("v3-head.bin", "v3-prior.bin", "v2-labels.json")
+# THE no-location switch: "australia" = no bank, prior K = 0 (the country-wide
+# frequency; as v2); "tasmania" = a photo without a location is scored as inside
+# the Tasmania box (bank term on, prior still K = 0). Read by the app from
+# scoring.no_location — flip here and rebuild the pack.
+V3_NO_LOCATION = "australia"
+V3_HEADS_GCS = "gs://leo-superresolution-izzy-plantid/au/hc/runs/"
+
+
+def v3_sweep():
+    """(final_sweep module, cfg, calib row, test row) of V3_CFG, asserted consistent."""
+    sys.path.insert(0, HERE)
+    import final_sweep as FSW
+    ref = json.load(open(os.path.join(FSW.FS, "refine.json")))[V3_CFG]
+    cal = json.load(open(os.path.join(FSW.FS, "calib.json")))[V3_CFG]
+    te = json.load(open(os.path.join(FSW.FS, "test.json")))[V3_CFG]
+    c = ref["cfg"]
+    assert FSW.cfg_name(c) == V3_CFG and c["ens"] == "mpA01" and c["prior"] == "adaptive" and not c["nat"], c
+    assert te["cfg"] == c and te["T"] == cal["T"] and te["ladder"] == cal["ladder"], "test.json ≠ refine.json / calib.json"
+    return FSW, c, cal, te
+
+
+def v3_params():
+    """The scoring block (v3-head.bin header `scoring`, pipeline.json v3.scoring)."""
+    import ladder_v3 as L3
+    import prior_adaptive as PA
+    FSW, c, cal, _ = v3_sweep()
+    probe = np.array([0, 1, 9, 10, 49, 50, 4000])
+    assert (L3.bucket(probe) == v2_bucket(probe)).all(), "ladder_v3 buckets ≠ BUCKET_EDGES"
+    lad = cal["ladder"]
+    F2 = dict(FSW.F2)
+    return {
+        "temperature": float(cal["T"]),
+        "image_temperature": float(c["t"]),
+        "combine": "mean of the heads' logits",
+        "tau_norm": float(c["tn"]),
+        "lam": float(c["lam"]),
+        "prior": {"kind": "adaptive", "transform": F2["t"], "file": "v3-prior.bin",
+                  "fit": {**F2, "steps_per_octave": PA.STEPS}},
+        "tasmania": {"box": list(TAS_BOX), "omega": float(c["om_b"]), "knn_floor": float(c["fl_b"]),
+                     "bank": "bank-int8.bin", "centre": "tas_centre (head.bin's centre: the bank's query space)"},
+        "no_location": V3_NO_LOCATION,
+        "ladder": {"species": [float(x) for x in lad["s"]], "bucket_edges": list(BUCKET_EDGES),
+                   "genus": float(lad["g"]), "image_floor": float(lad["f"]), "congener_ratio": float(lad["r"])},
+    }
+
+
+def v3_row0(Kc):
+    """First prototype row of every class in head_capacity.mp_blocks' layout (rows
+    grouped by K, then class ascending, then slot: a class's K rows are contiguous)."""
+    Kc = np.asarray(Kc, np.int64)
+    row0, a = np.zeros(len(Kc), np.int64), 0
+    for K in sorted(np.unique(Kc)):
+        cls = np.nonzero(Kc == K)[0]
+        row0[cls] = a + K * np.arange(len(cls))
+        a += K * len(cls)
+    return row0
+
+
+def v3_load_head(path, tn):
+    """A head_capacity mproto run → (W fp32 with mp_taunorm baked (R × D), b, Kc, row0, pool T, n_c, cfg)."""
+    z = np.load(path)
+    assert "Kc" in z.files and not int(z["tn_applied"]), f"{path}: not an un-normed mproto head"
+    Kc = z["Kc"].astype(np.int64)
+    row0 = v3_row0(Kc)
+    W = z["W"].astype(np.float32)
+    assert len(W) == int(Kc.sum())
+    slot = np.arange(len(W)) - np.repeat(np.cumsum(Kc) - Kc, Kc)       # 0 … K_c − 1 within each class
+    row_cls = np.empty(len(W), np.int64)
+    row_cls[np.repeat(row0, Kc) + slot] = np.repeat(np.arange(len(Kc)), Kc)
+    assert np.array_equal(np.sort(np.repeat(row0, Kc) + slot), np.arange(len(W))), "layout isn't a partition of the rows"
+    # head_capacity.mp_taunorm (scale-kept τ-norm on the per-class mean prototype norm), in numpy
+    nr = np.linalg.norm(W, axis=1)
+    cn = np.maximum(np.bincount(row_cls, nr, minlength=len(Kc)) / Kc, 1e-6)
+    W = W * ((cn.mean() / cn) ** tn)[row_cls][:, None].astype(np.float32)
+    cfg = json.loads(str(z["meta"]))["cfg"]
+    return W, z["b"].astype(np.float32), Kc, row0, float(z["T"]), z["n_c"].astype(np.int64), cfg
+
+
+def int8_rows32(X):
+    """Per-row symmetric int8 with a float32 scale (max|x|/127)."""
+    X = np.asarray(X, np.float32)
+    scale = (np.maximum(np.abs(X).max(1), 1e-12) / np.float32(127.0)).astype(np.float32)
+    return np.clip(np.round(X / scale[:, None]), -127, 127).astype(np.int8), scale
+
+
+def v3_sigma_codes(prior_path, fit):
+    """prior_adaptive's balloon σ per grid cell, as codes k: σ = smin · 2^(k/STEPS)."""
+    import prior_adaptive as PA
+    P = PA.AdaptivePrior(prior_path)
+    sm = P.sigma_map(fit)
+    code = np.round(np.log2(sm / fit["smin"]) * PA.STEPS).astype(np.int64)
+    assert np.allclose(fit["smin"] * 2.0 ** (code / PA.STEPS), sm) and code.min() >= 0 and code.max() < 256
+    rho0 = float(np.median(P.rho(fit["srho"])[P.tot > 0]))
+    return code.astype(np.uint8), rho0
+
+
+class V3Prior(V2Prior):
+    """v3-prior.bin: v2-prior.bin's arrays (the same counts and freq_<t>) plus the
+    adaptive kernel per grid cell — sigma_code (ny × nx uint8; row iy, column ix as
+    the counts) indexing sigma_km / alpha (float64 per code). At a point: its cell
+    (iy, ix clipped to the grid) → (σ, α), then V2Prior's kernel sum and
+    shrinkage. `sigma` = (code, sigma_km, alpha) overrides the file's (the check
+    scores the leak-free eval counts with their own raster)."""
+
+    def __init__(self, path, sigma=None):
+        super().__init__(path)
+        if sigma is None:
+            a = read_blob(path)[1]
+            sigma = (a["sigma_code"], a["sigma_km"], a["alpha"])
+        self.code = np.asarray(sigma[0])
+        self.sig, self.alp = np.asarray(sigma[1], np.float64), np.asarray(sigma[2], np.float64)
+        assert self.code.shape == (self.h["ny"], self.h["nx"]) and int(self.code.max()) < len(self.sig)
+        self.tcnt = {}
+
+    def kernel(self, lat, lon):
+        h = self.h
+        lat, lon = np.asarray(lat, float), np.asarray(lon, float)
+        iy = np.clip(np.floor((lat - h["lat0"]) / h["cell_deg"]).astype(np.int64), 0, h["ny"] - 1)
+        ix = np.clip(np.floor((lon - h["lon0"]) / h["cell_deg"]).astype(np.int64), 0, h["nx"] - 1)
+        return self.code[iy, ix].astype(np.int64)
+
+    def log_prior(self, lat, lon, transform):
+        f = self.freqs[transform]
+        if lat is None:
+            return np.log(f)[None, :]
+        lat, lon = np.asarray(lat, float), np.asarray(lon, float)
+        if transform not in self.tcnt:
+            self.tcnt[transform] = self.T[transform](self.raw)
+        P = DegPrior.__new__(DegPrior)
+        P.h, P.rowptr, P.sp, P.cnt, P.freq = self.h, self.rowptr, self.sp, self.tcnt[transform], f
+        k = self.kernel(lat, lon)
+        out = np.zeros((len(lat), len(f)), np.float32)
+        for c in np.unique(k):
+            i = np.nonzero(k == c)[0]
+            s, a = float(self.sig[c]), float(self.alp[c])
+            K = P.density(lat[i], lon[i], s)
+            out[i] = np.log((K + a * f[None]) / (K.sum(1, keepdims=True) + a))
+        return out
+
+
+class V3Ship:
+    """The final configuration from the shipped files only (the spec for the
+    Swift side, IzzyKit PlantIDModel). emb = raw encoder output; lat/lon = None
+    for no location. Returns (log p displayed, image-only log p, path)."""
+
+    def __init__(self, d, prior=None):
+        self.h, a = read_blob(os.path.join(d, "v3-head.bin"))
+        self.sc = self.h["scoring"]
+        self.mu, self.tmu = a["centre"].astype(np.float32), a["tas_centre"].astype(np.float32)
+        self.tcls = a["tas_classes"].astype(np.int64)
+        self.heads = []
+        for j, hh in enumerate(self.h["heads"]):
+            r0, r1 = hh["rows"]
+            W = a["weight"][r0:r1].astype(np.float32) * a["scale"][r0:r1].astype(np.float32)[:, None]
+            kc, row0 = a["kc"][j].astype(np.int64), a["row0"][j].astype(np.int64) - r0
+            groups = [(int(K), np.nonzero(kc == K)[0]) for K in np.unique(kc)]
+            groups = [(K, cls, row0[cls][:, None] + np.arange(K)[None]) for K, cls in groups]
+            self.heads.append((W, a["bias"][j].astype(np.float32), groups, float(hh["pool_temperature"])))
+        self.prior = prior or V3Prior(os.path.join(d, self.sc["prior"]["file"]))
+        self.bh, ba = read_blob(os.path.join(d, self.sc["tasmania"]["bank"]))
+        self.B, self.bl, self.bs = ba["vectors"], ba["labels"], ba["scale"].astype(np.float32)
+        lab = json.load(open(os.path.join(d, "v2-labels.json")))["labels"]
+        gn = {}
+        self.genus = np.array([gn.setdefault(l["genus"], len(gn)) for l in lab])
+        self.gnames = list(gn)
+        self.photos = np.array([l["photos"] for l in lab])
+        self.C = len(lab)
+
+    def head_logits(self, q):
+        """Ensemble-mean logits: per head, class c's K_c prototype logits z pooled as
+        T·(logsumexp(z/T) − log K_c) (= z for K_c = 1) + bias."""
+        out = np.zeros((len(q), self.C), np.float32)
+        for W, b, groups, T in self.heads:
+            Z = q @ W.T
+            for K, cls, idx in groups:
+                if K == 1:
+                    out[:, cls] += Z[:, idx[:, 0]] + b[cls]
+                    continue
+                zz = Z[:, idx]
+                m = zz.max(-1)
+                out[:, cls] += m + T * (np.log(np.exp((zz - m[..., None]) / T).sum(-1)) - np.log(K)) + b[cls]
+        return out / len(self.heads)
+
+    def knn(self, e):
+        qs = unit(unit(e) - self.tmu[None]).astype(np.float32)
+        p = self.bh["scoring"]
+        sims, idx = knn_neighbours(qs, self.B, self.bs, p["k"])
+        Lk = np.full((len(e), self.C), -1e4, np.float32)
+        Lk[:, self.tcls] = log_softmax(p["knn_temp"] * knn_vote(sims, idx, self.bl, len(self.tcls), p["k"], p["tau"]))
+        return Lk
+
+    def logp(self, emb, lat=None, lon=None):
+        e = np.asarray(emb, np.float32)
+        s = self.sc
+        q = unit(unit(e) - self.mu[None]).astype(np.float32)
+        Lh = log_softmax(self.head_logits(q) / s["image_temperature"])
+        tas = np.full(len(e), s["no_location"] == "tasmania") if lat is None else in_tas(lat, lon)
+        Li = Lh
+        if tas.any():
+            i = np.nonzero(tas)[0]
+            t = s["tasmania"]
+            Li = Lh.copy()
+            Li[i] = log_softmax(Lh[i] + t["omega"] * np.maximum(self.knn(e[i]), t["knn_floor"]))
+        P = s["lam"] * self.prior.log_prior(lat, lon, s["prior"]["transform"])
+        T = s["temperature"]
+        return log_softmax(log_softmax(Li + P) / T), log_softmax(Li / T), np.where(tas, "tasmania", "australia")
+
+    ladder = V2Ship.ladder
+
+
+def v3_tas_classes(C, mf, mt):
+    """Per Tasmanian label (labels.json row): its class (as cmd_v2)."""
+    tas_lab = json.load(open(os.path.join(SHIP, "labels.json")))["labels"]
+    mapv = np.arange(C)
+    mapv[mf] = mt
+    s2u = np.full(len(tas_lab), -1, np.int64)
+    for u, l in enumerate(json.load(open(os.path.join(SHIP, "au-labels.json")))["labels"]):
+        if l.get("ship", -1) >= 0:
+            assert s2u[l["ship"]] < 0
+            s2u[l["ship"]] = mapv[u]
+    assert (s2u >= 0).all(), "every Tasmanian label maps to a class"
+    return s2u
+
+
+def cmd_v3(a):
+    """The final configuration's pack files → ship/: v3-head.bin (both heads' int8
+    prototype rows × per-row scale, per head bias / K_c / first row per class,
+    centres, the Tasmanian bank's class map, every scoring parameter + the
+    ladder in its header), v3-prior.bin (v2's counts + the σ-code raster),
+    pipeline.json "v3" + provenance + `model`. v2-labels.json, bank-int8.bin and
+    the credits are kept (same classes and training photos, asserted). Then
+    checks the WRITTEN files (V3Ship, leak-free eval counts) against the sweep's
+    test.json. Env: the eval env (V2DATA=…/data-final.npz)."""
+    sys.path.insert(0, HERE)
+    import train_v2 as V
+    assert os.path.abspath(V.DATA) == os.path.abspath(os.path.join(V2DIR, "data-final.npz")), \
+        f"V2DATA must be data-final.npz (is {V.DATA})"
+    assert not os.environ.get("HC_T"), "HC_T would rescale the reference heads"
+    FSW, cfg, cal, te = v3_sweep()
+    prm = v3_params()
+    heads = [(h, FSW.HEADS[h]) for h in FSW.ENS[cfg["ens"]]]
+    if a.check_only:
+        return v3_check(a.check_n)
+    D = np.load(V.DATA, mmap_mode="r")
+    mf, mt = D["merge_from"].astype(np.int64), D["merge_to"].astype(np.int64)
+    n_v2 = np.load(os.path.join(V2DIR, "runs", V2_RUN + ".npz"))["n_c"].astype(np.int64)
+    C = len(n_v2)
+    W8, S8, B, KC, R0, hh = [], [], [], [], [], []
+    r = 0
+    for name, path in heads:
+        W, b, Kc, row0, T, n_c, hcfg = v3_load_head(path, prm["tau_norm"])
+        assert len(b) == C and (n_c == n_v2).all(), f"{name}: classes / training counts differ from {V2_RUN}"
+        assert int(Kc.max()) < 256 and int(Kc.min()) >= 1
+        q8, s8 = int8_rows32(W)
+        b = b.copy()
+        b[mf] = -1e4  # the sweep's column mask (merged twins), baked into each head's bias
+        W8.append(q8), S8.append(s8), B.append(b), KC.append(Kc.astype(np.uint8)), R0.append((row0 + r).astype(np.int32))
+        hh.append({"run": name, "file": os.path.basename(path), "sha256": sha256(path), "rows": [r, r + len(W)],
+                   "pool_temperature": T, "kbreaks": hcfg["kbreaks"], "seed": hcfg["seed"],
+                   "k_histogram": {int(k): int((Kc == k).sum()) for k in np.unique(Kc)},
+                   "gcs": V3_HEADS_GCS + os.path.basename(path)})
+        r += len(W)
+    D_ = W8[0].shape[1]
+    mu = np.asarray(D["mu"], np.float32)
+    Z_mu = np.load(os.path.join(V2DIR, "bank_analysis", "sets.npz"))["mu"]
+    assert np.allclose(Z_mu, mu, atol=1e-6), "the sweep's query centre ≠ data-final mu"
+    ship_h, ship_a = read_blob(os.path.join(SHIP, "head.bin"))
+    s2u = v3_tas_classes(C, mf, mt)
+    # labels: v2-labels.json as shipped — its photos ARE the merged training counts the ladder buckets
+    lab = json.load(open(os.path.join(SHIP, "v2-labels.json")))
+    n_m = n_v2.copy()
+    for f_, t_ in zip(mf, mt):
+        n_m[t_] += n_m[f_]
+        n_m[f_] = 0
+    assert lab["count"] == C and [l["photos"] for l in lab["labels"]] == n_m.tolist(), "v2-labels.json photos ≠ merged n_c"
+    hdr = {"kind": "plantid-head-v3", "version": 1, "labels": C, "id": V3_ID, "sweep": V3_CFG,
+           "variant": "int8 per prototype row (float32 scale = max|w|/127)", "heads": hh, "scoring": prm,
+           "recipe": [
+               "q = normalise(normalise(embedding) − centre)",
+               "per head h: z = scale ⊙ (weight[rows_h] · q); class c's prototypes are rows row0[h][c] … + kc[h][c] − 1; "
+               "s_c = T_h·(logsumexp(z/T_h) − log kc) (= z when kc = 1), T_h = heads[h].pool_temperature; "
+               "logit_h = s + bias[h] (merged twins: −1e4)",
+               "L_head = log_softmax(mean_h logit_h / image_temperature)",
+               "prior = lam · log((K + α f) / (ΣK + α)), K[c] = Σ_cells t(count)·exp(−d²/2σ²) over cells within "
+               "radius_sigmas·σ (v3-prior.bin; t = prior.transform; f = freq_<t>); (σ, α) = (sigma_km, alpha)"
+               "[sigma_code[iy][ix]] of the photo's grid cell (iy, ix clipped to the grid); no location: K = 0 → lam · log f",
+               "inside the Tasmania box [W, S, E, N] (no location: only when no_location = \"tasmania\"): q_t = "
+               "normalise(normalise(embedding) − tas_centre); L_knn over bank-int8.bin as the Tasmanian scorer "
+               "(k, tau, knn_temp from its header; C = its labels) at columns tas_classes (others −1e4; repeated "
+               "column: the last wins); L_img = log_softmax(L_head + omega · max(L_knn, knn_floor)); else L_img = L_head",
+               "L = log_softmax(log_softmax(L_img + prior) / temperature); image-only = log_softmax(L_img / temperature)",
+               "ladder (ladder_v3): named = argmax L; species if p[named] ≥ species[bucket(photos[named])] "
+               "(bucket edges 0 | 1–9 | 10–49 | 50+), image-only p[named] ≥ image_floor and not close congeners "
+               "(congener_ratio < 1: top-2 share a genus and p2 ≥ ratio · p1); else genus (v2-labels genus) "
+               "with summed p ≥ genus → that genus + its top 3; else not sure"]}
+    write_blob(os.path.join(SHIP, "v3-head.bin"), hdr,
+               {"weight": np.concatenate(W8), "scale": np.concatenate(S8), "bias": np.stack(B),
+                "kc": np.stack(KC), "row0": np.stack(R0), "centre": mu,
+                "tas_centre": ship_a["centre"].astype(np.float32), "tas_classes": s2u.astype(np.int32)})
+    # prior: the shipped (all-data) counts + freq_<t> (as v2-prior.bin) + the σ-code raster from the same counts
+    fit = prm["prior"]["fit"]
+    code, rho0 = v3_sigma_codes(V2_PRIOR_SHIP, fit)
+    code_e, rho0_e = v3_sigma_codes(V2_PRIOR_EVAL, fit)
+    nlev = int(round(np.log2(fit["smax"] / fit["smin"]) * fit["steps_per_octave"])) + 1
+    sig = fit["smin"] * 2.0 ** (np.arange(nlev) / fit["steps_per_octave"])
+    alp = fit["a0"] * (sig / fit["s0"]) ** fit["delta"]
+    assert int(code.max()) < nlev
+    ph, pa = read_blob(V2_PRIOR_SHIP)
+    assert len(pa["species_total"]) == C
+    raw = pa["count"].astype(np.float64)
+    freqs = {}
+    for t in ("log1p", "sqrt"):
+        tot = np.bincount(pa["species"].astype(np.int64), V2Prior.T[t](raw), minlength=C) + 1.0
+        freqs["freq_" + t] = tot / tot.sum()
+    old = os.path.join(SHIP, "v2-prior.bin")
+    if os.path.exists(old):
+        _, oa = read_blob(old)
+        assert all(np.array_equal(oa[k], v) for k, v in [("rowptr", pa["rowptr"]), ("species", pa["species"]),
+                                                          ("count", pa["count"])] + list(freqs.items())), \
+            "counts differ from v2-prior.bin"
+    ph2 = {k: v for k, v in ph.items() if k != "arrays"}
+    ph2.update({"version": 3, "source_file": os.path.basename(V2_PRIOR_SHIP), "transforms": ["log1p", "sqrt"],
+                "freq": "freq_<t> = (bincount(species, t(count)) + 1) / Σ, over all classes (float64)",
+                "adaptive": {**fit, "rho0": rho0, "levels": nlev,
+                             "about": "prior_adaptive.py balloon σ: ρ = Gaussian(σ_ρ)-smoothed records/km² of this "
+                                      "file's counts, σ = clip(s0·(ρ0/ρ)^γ, smin, smax) quantised to σ = smin·2^(k/"
+                                      "steps_per_octave) → sigma_code k per cell; α = a0·(σ/s0)^δ"}})
+    ph2.pop("sigma_km", None), ph2.pop("alpha", None)
+    write_blob(os.path.join(SHIP, "v3-prior.bin"), ph2,
+               {"rowptr": pa["rowptr"], "species": pa["species"], "count": pa["count"],
+                "species_total": pa["species_total"], **freqs,
+                "sigma_code": code, "sigma_km": sig.astype(np.float64), "alpha": alp.astype(np.float64)})
+    rec = np.bincount(np.repeat(np.arange(ph["ny"] * ph["nx"]), np.diff(pa["rowptr"].astype(np.int64))),
+                      minlength=ph["ny"] * ph["nx"]).reshape(code.shape) > 0
+    print(f"v3: {len(heads)} heads, {r:,} prototype rows × {D_} int8 ({[h['k_histogram'] for h in hh][0]}), pool T "
+          f"{[round(h['pool_temperature'], 3) for h in hh]}; σ raster {code.shape} levels {sorted(set(code.ravel().tolist()))} "
+          f"(ρ0 ship {rho0:.4f} / eval {rho0_e:.4f}; record cells with the eval code: {(code == code_e)[rec].mean():.4f})")
+    # pipeline.json: v3 replaces v2 (its files leave the pack)
+    pp = os.path.join(SHIP, "pipeline.json")
+    pipe = json.load(open(pp))
+    pipe.pop("v2", None)
+    pipe["v3"] = {"built": time.strftime("%Y-%m-%d"), "id": V3_ID, "sweep": V3_CFG, "files": list(V3_FILES),
+                  "classes": C, "classes_with_photos": int((n_m > 0).sum()), "merged": len(mf), "heads": hh,
+                  "scoring": prm, "recipe": hdr["recipe"],
+                  "sweep_test": {k: te["metrics"][k] for k in ("A-test", "AU-test", "C-main", "AU-test-euc")},
+                  "note": "v3-head/v3-prior/v2-labels + bank-int8.bin (Tasmania box) + the encoder; "
+                          "build_ship.V3Ship is the reference scorer"}
+    keep = set(V3_FILES) | {"bank-int8.bin", "credits.json", "credits-photos.tsv.gz"}
+    pipe["files"] = {f: v for f, v in pipe["files"].items() if f in keep}
+    for f in V3_FILES:
+        p = os.path.join(SHIP, f)
+        pipe["files"][f] = {"bytes": size_of(p), "sha256": sha256(p)}
+    assert set(pipe["files"]) == keep, sorted(keep - set(pipe["files"]))
+    pipe["built"] = time.strftime("%Y-%m-%d")
+    json.dump(pipe, open(pp, "w"), indent=1, ensure_ascii=False)
+    import provenance as PV
+    PV.record("v3 ship", inputs=[p for _, p in heads] + [V2_PRIOR_SHIP, V2_PRIOR_EVAL, V.DATA,
+                                                          os.path.join(V2DIR, "runs", V2_RUN + ".npz"),
+                                                          os.path.join(FSW.FS, "refine.json"), os.path.join(FSW.FS, "calib.json"),
+                                                          os.path.join(FSW.FS, "test.json"), os.path.join(SHIP, "au-labels.json"),
+                                                          os.path.join(SHIP, "labels.json"), os.path.join(SHIP, "head.bin"),
+                                                          os.path.join(SHIP, "v2-labels.json")],
+              outputs=[os.path.join(SHIP, f) for f in ("v3-head.bin", "v3-prior.bin")],
+              extra={"id": V3_ID, "sweep": V3_CFG, "scoring": prm,
+                     "heads": [{k: h[k] for k in ("run", "file", "sha256", "gcs", "seed")} for h in hh],
+                     "heads_trained": "head_capacity.py vm (cfg in each npz `meta`)"})
+    subprocess.run([sys.executable, "-I", os.path.join(HERE, "provenance.py"), "section"], check=True)
+    subprocess.run([sys.executable, "-I", os.path.join(HERE, "provenance.py"), "ship"], check=True)
+    pipe = json.load(open(pp))
+    g = pipe["provenance"]["git"]
+    lad, pr = prm["ladder"], prm["prior"]["fit"]
+    pipe["model"] = {"id": V3_ID, "git": g["commit"][:10], "git_clean": bool(g.get("plantid_clean")),
+                     "built": pipe["built"], "classes": C, "classes_with_photos": int((n_m > 0).sum()),
+                     "encoder": "BioCLIP 2.5 ViT-H/14, 8-bit (w8)",
+                     "summary": f"{len(hh)} multi-prototype heads (t {prm['image_temperature']:g}) · T "
+                                f"{prm['temperature']:.2f} · adaptive prior {pr['t']} σ {pr['smin']:g}–{pr['smax']:g} km "
+                                f"λ {prm['lam']:g} · ladder species {'/'.join(f'{x:g}' for x in lad['species'])} genus "
+                                f"{lad['genus']:g} · Tasmania kNN ω {prm['tasmania']['omega']:g} floor "
+                                f"{prm['tasmania']['knn_floor']:g}"}
+    json.dump(pipe, open(pp, "w"), indent=1, ensure_ascii=False)
+    print(f"model: {pipe['model']}")
+    if not a.no_check:
+        v3_check(a.check_n)
+
+
+def v3_check(n_max=None):
+    """The WRITTEN files against the sweep's test.json: V3Ship on the sweep's sets
+    (bank_analysis cache) with the leak-free eval counts and THEIR σ raster (what
+    the sweep scored) → top-1/5 per species, natural, re-weighted and the ladder
+    rates on A-test and AU-test; int8 vs the fp32 heads (head_capacity's own
+    scorer); V3Ship.ladder vs the sweep's vectorised rule. → ship/v3-check.json."""
+    import bank_analysis as BA
+    import head_capacity as HC
+    import torch
+    FSW, cfg, cal, te = v3_sweep()
+    t0 = time.time()
+    Z = BA.load()
+    shp = V3Prior(os.path.join(SHIP, "v3-prior.bin"))
+    fit = read_blob(os.path.join(SHIP, "v3-prior.bin"))[0]["adaptive"]
+    code_e, _ = v3_sigma_codes(V2_PRIOR_EVAL, fit)
+    sh = V3Ship(SHIP, prior=V3Prior(V2_PRIOR_EVAL, sigma=(code_e, shp.sig, shp.alp)))
+    assert sh.C == len(Z["mapv"]) and (sh.photos == Z["n_tr"]).all(), "v2-labels photos ≠ the sweep's n_tr"
+    # the sweep groups genera by its own table (bank_analysis: 2,610 genera, e.g. Callistemon in Melaleuca);
+    # the app (V3Ship.ladder) by v2-labels' genus names (2,614) — as v2 shipped; reported, not changed
+    pairs = np.unique(np.stack([sh.genus, Z["genus"]], 1), axis=0)
+    sc = BA.Scorer(Z, dev="cpu")
+    lad = cal["ladder"]
+    res = {"files": {f: sha256(os.path.join(SHIP, f)) for f in ("v3-head.bin", "v3-prior.bin")}}
+    G = int(Z["genus"].max()) + 1
+    ladder_agree = []
+    for nm in ("A-test", "AU-test"):
+        y, w = Z[nm + "/y"], Z[nm + "/w"]
+        n = len(y) if not n_max else min(len(y), n_max)
+        top5 = np.full((len(y), 5), -1, np.int64)
+        F = {k: np.zeros(len(y)) for k in ("p1", "p2", "pimg", "gp")}
+        F.update({k: np.zeros(len(y), np.int64) for k in ("named", "second", "gtop")})
+        for i in range(0, n, 1024):
+            j = np.arange(i, min(n, i + 1024))
+            L, Li, _ = sh.logp(Z[nm + "/emb"][j].astype(np.float32), Z[nm + "/lat"][j], Z[nm + "/lon"][j])
+            o = np.argpartition(-L, 5, axis=1)[:, :5]
+            o = np.take_along_axis(o, np.argsort(-np.take_along_axis(L, o, 1), 1), 1)
+            top5[j] = o
+            ar = np.arange(len(j))
+            p = np.exp(L)
+            F["named"][j], F["second"][j] = o[:, 0], o[:, 1]
+            F["p1"][j], F["p2"][j] = p[ar, o[:, 0]], p[ar, o[:, 1]]
+            F["pimg"][j] = np.exp(Li[ar, o[:, 0]])
+            pg = np.bincount((ar[:, None] * G + Z["genus"][None, :]).ravel(), p.ravel(), minlength=len(j) * G).reshape(len(j), G)
+            F["gtop"][j], F["gp"][j] = pg.argmax(1), pg.max(1)
+            if i == 0:   # the per-photo ladder (V3Ship.ladder) vs the sweep's vectorised rule (same genus table)
+                for k in range(0, len(j), 4):
+                    gs = np.bincount(sh.genus, p[k]).max()
+                    ladder_agree.append((sh.ladder(L[k], Li[k])["kind"], j[k], nm, gs))
+        mask = np.arange(len(y)) < n
+        got = sc.metrics(nm, top5, mask)
+        F = FSW.add_feats(F, Z)
+        lr = FSW.ladder_rates(y, w, F, lad, Z["genus"], mask=mask)
+        want, wl = te["metrics"][nm], te["ladder_test"][nm]["chosen"]
+        res[nm] = {"n": got["n"],
+                   **{k: {"files": round(got[k], 5), "sweep": round(want[k], 5), "diff_pp": round(100 * (got[k] - want[k]), 3)}
+                      for k in ("top1_sp", "top5_sp", "top1_nat", "top1_sp_rw")},
+                   **{"ladder_" + k: {"files": round(lr[k], 5), "sweep": round(wl[k], 5), "diff_pp": round(100 * (lr[k] - wl[k]), 3)}
+                      for k in ("species", "species_wrong", "genus", "not_sure")}}
+        for kind, r_, s_, gs in [x for x in ladder_agree if x[2] == nm]:
+            s_thr = np.array(lad["s"])[F["bucket"][r_]]
+            vk = "species" if F["p1"][r_] >= s_thr and F["pimg"][r_] >= lad["f"] else \
+                "genus" if gs >= lad["g"] else "notSure"
+            if vk != kind:
+                res.setdefault("ladder_rule_mismatch", []).append([nm, int(r_), kind, vk])
+        print(f"  {nm}: {time.time() - t0:.0f} s", flush=True)
+    res["ladder_rule_checked"] = len(ladder_agree)
+    res["genus_tables"] = {"v2_labels": int(len(np.unique(sh.genus))), "sweep": int(len(np.unique(Z["genus"]))),
+                           "pairs": int(len(pairs))}
+    # int8 vs the fp32 heads through head_capacity's scorer (τ-norm + pooling as the sweep), on AU-test embeddings
+    e = Z["AU-test/emb"][:2000].astype(np.float32)
+    q = unit(unit(e) - Z["mu"][None].astype(np.float32)).astype(np.float32)
+    with torch.no_grad():
+        qt = torch.from_numpy(q)
+        ref = sum(HC.hc_head_fn(FSW.HEADS[h], tn=cfg["tn"], dev="cpu")(qt) for h in FSW.ENS[cfg["ens"]]).numpy() / 2
+    mine = sh.head_logits(q)
+    live = Z["mapv"] == np.arange(len(Z["mapv"]))
+    res["int8_vs_fp32"] = {"top1_agree": round(float((mine[:, live].argmax(1) == ref[:, live].argmax(1)).mean()), 5),
+                           "max_abs_logit_diff": round(float(np.abs(mine[:, live] - ref[:, live]).max()), 4),
+                           "mean_abs_logit_diff": round(float(np.abs(mine[:, live] - ref[:, live]).mean()), 5)}
+    res["seconds"] = round(time.time() - t0)
+    print("v3 check:", json.dumps(res, indent=1))
+    worst = max(abs(v["diff_pp"]) for nm in ("A-test", "AU-test") for v in res[nm].values() if isinstance(v, dict))
+    res["worst_diff_pp"] = worst
+    json.dump(res, open(os.path.join(SHIP, "v3-check.json"), "w"), indent=1)
+    if not n_max:
+        assert worst <= 0.3 and not res.get("ladder_rule_mismatch"), f"v3 check: off by {worst} pp"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2097,10 +2747,15 @@ def main():
     p.add_argument("--observers", default=os.path.join(CACHE, "meta", "observers.csv.gz"))
     p.add_argument("--no-check", action="store_true", help="skip the check against the evaluation (~2 min)")
     p.add_argument("--check-only", action="store_true", help="only the check, on the files already in ship/")
+    p = sub.add_parser("v3")
+    p.add_argument("--no-check", action="store_true", help="skip the check against the sweep (~minutes)")
+    p.add_argument("--check-only", action="store_true", help="only the check, on the files already in ship/")
+    p.add_argument("--check-n", type=int, help="check on the first N photos per set only (a quick look; no assert)")
     a = ap.parse_args()
     {"data": cmd_data, "encoders": cmd_encoders, "embed": cmd_embed, "fp32ref": cmd_fp32ref,
      "bench": cmd_bench, "benchall": cmd_benchall, "report": cmd_report, "fixture": cmd_fixture,
-     "au": cmd_au, "au-common": cmd_au_common, "au-labels": cmd_au_labels, "v2": cmd_v2}[a.cmd](a)
+     "au": cmd_au, "au-common": cmd_au_common, "au-labels": cmd_au_labels, "v2": cmd_v2,
+     "v3": cmd_v3}[a.cmd](a)
 
 
 if __name__ == "__main__":

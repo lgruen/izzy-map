@@ -296,10 +296,15 @@ public struct PlantIDResult: Sendable, Equatable {
     /// `Candidate.nearbyRecords` counts): 0 = none, or no location — then
     /// "recorded nearby" can't be what ranked them.
     public var nearbySpecies = 0
+    /// The location prior's kernel σ at the photo's place (km; the adaptive
+    /// prior's cell: a few km where records are dense, up to 20 km where
+    /// sparse), nil without a location.
+    public var priorSigmaKm: Double? = nil
 
     public init(answer: Answer, candidates: [Candidate], genera: [GenusShare], usedLocation: Bool,
                 scope: Scope = .australia, nearbyKm: Double = PlantIDModel.nearbyKm,
-                ladder: PlantIDLadder = .simple, genusSpecies: [Candidate] = [], nearbySpecies: Int = 0) {
+                ladder: PlantIDLadder = .simple, genusSpecies: [Candidate] = [], nearbySpecies: Int = 0,
+                priorSigmaKm: Double? = nil) {
         self.answer = answer
         self.candidates = candidates
         self.genera = genera
@@ -309,5 +314,6 @@ public struct PlantIDResult: Sendable, Equatable {
         self.ladder = ladder
         self.genusSpecies = genusSpecies
         self.nearbySpecies = nearbySpecies
+        self.priorSigmaKm = priorSigmaKm
     }
 }

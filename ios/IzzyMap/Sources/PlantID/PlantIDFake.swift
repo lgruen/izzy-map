@@ -45,11 +45,11 @@ nonisolated enum PlantIDFake {
         return n
     }
 
-    /// The shipped model's ladder (pipeline.json `v2.scoring.ladder`,
-    /// ladder_v3 — 2026-11-05), so screenshots show the lines in force:
-    /// species 60 / 50 / 50 / 75 % by the named class's training photos,
-    /// genus 55 %.
-    static let ladder = PlantIDLadder(species: [0.6, 0.5, 0.5, 0.75], bucketEdges: [0, 10, 50], genus: 0.55)
+    /// The shipped model's ladder (pipeline.json `v3.scoring.ladder`, the
+    /// final sweep — 2026-11-06), so screenshots show the lines in force:
+    /// species 50 / 50 / 50 / 75 % by the named class's training photos,
+    /// genus 50 %.
+    static let ladder = PlantIDLadder(species: [0.5, 0.5, 0.5, 0.75], bucketEdges: [0, 10, 50], genus: 0.5)
 
     static func make(_ mode: String) async throws -> (PlantIDModel, any PlantEncoding) {
         let catalog = await PlantLibrary.shared.load()

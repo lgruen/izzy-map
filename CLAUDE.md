@@ -516,16 +516,18 @@ milestones, map-proof results); the design brief and language is
 - **Plant-ID evaluation:** `pipeline/plantid/README.md`; the UN species
   list comes from the bundled `ios/IzzyMap/Resources/Data/plants.json`
   (`--un-plants`).
-- **Plant-ID pack (rebuild after a retrain / new encoder):** the single
-  Australia-wide model (README "Single model (v2)"): `V2DATA=…/data-final.npz
-  <eval env> pipeline/plantid/build_ship.py v2` (V2_RUN, params read from
-  eval.json / ladder_v3.json / tas_gap.json, ~20 s; then a check of the
-  WRITTEN files against the evaluation, `--check-only`, ~70 s) →
-  `ship/v2-head.bin` (int8 + τ-norm baked in), `v2-prior.bin`,
-  `v2-labels.json`, credits of every training photo, pipeline.json `v2` +
-  `provenance` + the `model` identity the app shows (Diagnostics, Model &
-  training photos) → `python3 pipeline/build_packs.py plantid --verify
-  plantid` (encoder + v2-* + bank-int8.bin, sha256-checked; 0.81 GB) →
+- **Plant-ID pack (rebuild after a retrain / new encoder):** the shipped
+  configuration is v3 (README "Final configuration (v3): shipping"; chosen
+  by final_sweep.py on val: two multi-prototype heads averaged, the
+  adaptive-bandwidth location prior everywhere, the Tasmania-box kNN bank
+  with a soft floor): `V2DATA=…/data-final.npz <eval env>
+  pipeline/plantid/build_ship.py v3` (every value read from final_sweep's
+  refine/calib/test JSON; then a check of the WRITTEN files against the
+  sweep's test numbers) → `ship/v3-head.bin`, `v3-prior.bin` (+ σ raster),
+  `v2-labels.json`, `bank-int8.bin`, credits of every training photo,
+  pipeline.json `v3` + `provenance` + the `model` identity the app shows
+  (Diagnostics, Model & training photos) → `python3 pipeline/build_packs.py
+  plantid --verify plantid` (sha256-checked; 0.84 GB) →
   `pipeline/upload_packs.sh plantid` (LOCAL, Leo approves; every device
   re-downloads it). The app's scorer is IzzyKit `PlantIDModel` (port of
   `build_ship.V2Ship`); regenerate the Swift fixtures (`build_ship.py

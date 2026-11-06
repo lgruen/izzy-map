@@ -141,11 +141,44 @@ struct PlantIDPhotoTests {
         #expect(credits.observers.count > 100_000 && credits.photos >= credits.observers.count)
         #expect(credits.sources?["ala"] != nil && credits.sources?["commons"] != nil)
         let id = try #require(PlantIDModelIdentity.load(Self.staged))
-        #expect(id.id == "final-cb50-s1" && id.classes == 22122 && id.line.contains("git "))
+        #expect(id.id == "final-mpA01-adaptive" && id.classes == 22122 && id.line.contains("git "))
         let e = [Float](repeating: 0.03, count: m.dimension)
         #expect(m.identify(embedding: e, location: GeoPoint(longitude: 151.21, latitude: -33.87)).scope == .australia)
         #expect(m.identify(embedding: e, location: GeoPoint(longitude: 147.33, latitude: -42.88)).scope == .tasmania)
         #expect(m.identify(embedding: e, location: nil).scope == .australia)
+    }
+
+    /// Scoring alone (no encoder) on real w8 embeddings from IzzyKit's
+    /// fixture: the median per photo inside the Tasmania box, on the
+    /// mainland and without a location (Debug build, simulator — a guide
+    /// to the device, not its number).
+    @Test(.enabled(if: PlantIDModel.available(in: staged), "needs data/packs/stage-plantid (build_packs.py plantid)"))
+    func scoringTime() throws {
+        struct Real: Decodable {
+            struct Case: Decodable { var embedding: String }
+            var cases: [Case]
+        }
+        let fixture = try ["plantid-v3-real.json", "plantid-v2-real.json"].lazy
+            .map { Self.fixtures.appending(path: $0) }
+            .first { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }.map { try Data(contentsOf: $0) }
+        let real = try JSONDecoder().decode(Real.self, from: try #require(fixture))
+        let embeddings: [[Float]] = real.cases.prefix(12).map {
+            Data(base64Encoded: $0.embedding)!.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        }
+        let m = try PlantIDModel(directory: Self.staged)
+        let places: [(String, GeoPoint?)] = [("tasmania", GeoPoint(longitude: 147.33, latitude: -42.88)),
+                                              ("mainland", GeoPoint(longitude: 151.21, latitude: -33.87)), ("none", nil)]
+        for (name, place) in places {
+            _ = m.identify(embedding: embeddings[0], location: place)   // warm the mapped pages
+            var times: [Duration] = []
+            for e in embeddings {
+                let t = ContinuousClock.now
+                _ = m.identify(embedding: e, location: place)
+                times.append(t.duration(to: .now))
+            }
+            times.sort()
+            print("PlantID scoring time \(name): median \(times[times.count / 2]), max \(times.last!) over \(times.count) photos")
+        }
     }
 
     nonisolated static let ship = repo.appending(path: "pipeline/cache/plantid/ship")

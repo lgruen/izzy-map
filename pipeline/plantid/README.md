@@ -1217,9 +1217,10 @@ $E pipeline/plantid/provenance.py section    # then, when the v2 files are stage
 ```
 
 The exact argv of the shipped build is in `provenance.steps`; the command list
-above is the template. Ship step: `V2DATA=$D $E pipeline/plantid/build_ship.py v2`
-(records "v2 ship", runs `provenance.py section` + `ship`, writes the `model`
-identity into pipeline.json; see "Single model (v2): shipping" below).
+above is the template. Ship step: `V2DATA=$D $E pipeline/plantid/build_ship.py v3`
+(records "v3 ship", runs `provenance.py section` + `ship`, writes the `model`
+identity into pipeline.json; see "Final configuration (v3): shipping" below;
+the heads come from `head_capacity.py vm`, gs://…/au/hc/runs/).
 
 ### Single model (v2): shipping (2026-11-05)
 
@@ -1239,6 +1240,39 @@ F5 94.79); int8 vs fp32 head top-1 agreement 99.8 %. Not re-tuned: the ladder
 inside the box (stated-wrong natural 3.0 % vs 2.5 % main on A-test).
 Pack 0.81 GB (encoder 0.63, bank 85 MB, head 23 MB, prior 25 MB, labels 2.8 MB,
 credits 13 MB + 29 MB per-photo list for 3,897,289 photos by 179,651 creators).
+
+### Final configuration (v3): shipping (2026-11-06)
+
+`build_ship.py v3` (eval env, `V2DATA=…/data-final.npz`) ships the final
+sweep's choice `mpA01|adaptive|box` with every number read from
+`final_sweep/{refine,calib,test}.json` (asserted consistent): the MEAN of the
+two multi-prototype heads `hc-mpAc-s0` / `-s1` (head_capacity.py mproto:
+K_c = 1 / 2 / 4 / 8 prototypes at 0 / 50 / 150 / 300 training photos,
+57,703 rows each; class score T·(logsumexp(z/T) − log K_c), T 4.19 / 4.20
+learned; scale-kept τ-norm 0.5 on the per-class mean prototype norm, baked
+in; int8 per prototype row, float32 scale), image temperature 0.8, the
+adaptive prior (log1p, s0 14 km, γ 0.25, σ 2–20 km in 3 steps per octave,
+σ_ρ 5 km, α 32) at λ 1 everywhere — no separate Tasmania-box prior — and
+inside the box the Tasmanian bank at ω 3 with a SOFT floor −1.5 (every
+non-bank class sits 4.5 nats below a bank class the photo resembles); T 1.91;
+ladder species 0.50 / 0.50 / 0.50 / 0.75 by bucket, genus 0.50, no image
+floor, congener rule off. No location: K = 0 (the country-wide frequency), no
+bank — `V3_NO_LOCATION` / `scoring.no_location` = "tasmania" flips that. The
+σ raster (690 × 850 uint8 codes, one per 0.05° cell) is computed from the
+SHIPPED counts (ρ0 1.108 rec/km²; the eval counts give the same code on
+95.6 % of record cells). v2-labels.json, bank-int8.bin and the credits are
+unchanged (same classes, merges and training photos — asserted).
+
+Check of the WRITTEN files (`v3-check.json`; leak-free eval counts with their
+own σ raster, as the sweep scored): A-test top-1 per species 89.24 (sweep
+89.23), natural 94.82 (94.78), ladder species 85.69 / stated-wrong 8.80
+(85.67 / 8.80); AU-test per species 85.68 (85.69), natural 93.16 (93.15),
+re-weighted 82.33 (82.35), ladder species 81.24 / wrong 4.97 (81.25 / 4.99);
+int8 vs the fp32 heads top-1 agreement 99.85 %, max |Δ logit| 0.09. Note:
+the ladder's genus sums use v2-labels' genus names (2,614 genera) as v2 did;
+the sweep grouped by bank_analysis' table (2,610: e.g. Callistemon in
+Melaleuca) — the genus rates above still match within 0.01 pp. Pack 0.84 GB
+(head 119 MB, prior 26 MB; the rest as v2).
 
 ## Licences
 

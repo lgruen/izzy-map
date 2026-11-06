@@ -163,6 +163,10 @@ def stage_plantid(out: Path, ship: Path) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     pipe = json.loads((ship / "pipeline.json").read_text())
     table = next(p for p in json.loads(TABLE.read_text())["packs"] if p["id"] == "plantid")
+    wanted = {f.split("/", 1)[1].rstrip("/") for f in table["files"]}
+    for old in dest.iterdir():   # a previous model's tables (never packed: the manifest lists files) — gone from -dataDir too
+        if old.is_file() and old.name not in wanted:
+            old.unlink()
     for f in table["files"]:
         name = f.split("/", 1)[1]
         if name.endswith("/"):

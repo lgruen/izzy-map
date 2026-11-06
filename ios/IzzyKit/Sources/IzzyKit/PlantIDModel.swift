@@ -1,29 +1,34 @@
 import Accelerate
 import Foundation
 
-// The single Australia-wide plant identifier (v2): the Swift port of
-// `V2Ship` in pipeline/plantid/build_ship.py (the spec; v2-head.bin's
-// header `recipe`, pipeline.json "v2"). 22,122 classes (v2-labels.json):
-// Tasmania's labels and the Australian natives in ONE trained head; 19
-// merged twins carry a −1e4 bias and are never named.
+// The Australia-wide plant identifier (the final configuration, v3): the
+// Swift port of `V3Ship` in pipeline/plantid/build_ship.py (the spec;
+// v3-head.bin's header `recipe`, pipeline.json "v3"). 22,122 classes
+// (v2-labels.json): Tasmania's labels and the Australian natives; 19 merged
+// twins carry a −1e4 bias and are never named. Every number below comes
+// from the files' headers.
 //
 //   q      = normalise(normalise(embedding) − centre)
-//   L_head = log_softmax(scale ⊙ (W q) + bias)                    int8 rows
-//   prior  = log((K + α f) / (ΣK + α)), K[c] = Σ t(count)·exp(−d²/2σ²)
-//            over the grid cells within 3σ (v2-prior.bin); no location:
-//            K = 0, i.e. log f — the country-wide frequency
-//   L      = log_softmax(log_softmax(L_head + λ · prior) / T)
+//   head h = per class c its K_c prototype rows (int8 × scale):
+//            s_c = T_h · (logsumexp(z / T_h) − log K_c) (= z for K_c = 1) + bias
+//   L_head = log_softmax(mean_h s / image_temperature)
+//   prior  = λ · log((K + α f) / (ΣK + α)), K[c] = Σ t(count)·exp(−d²/2σ²)
+//            over the grid cells within 3σ (v3-prior.bin), (σ, α) of the
+//            point's own cell (the adaptive raster: narrow where records are
+//            dense); no location: K = 0, i.e. λ · log f — the country-wide
+//            frequency
+//   L      = log_softmax(log_softmax(L_img + prior) / T)
 //
-// Inside the Tasmania box the dense Tasmanian photo bank joins in
-// (tas_gap.py F5): L_img = log_softmax(L_head + ω · max(L_knn, floor)),
-// L = log_softmax(log_softmax(L_img + λ_t · prior_t) / T), prior_t its own
-// transform / σ / α. Then the answer ladder (ladder_v3): a species when
-// p(named) reaches the threshold of the named class's training-photo
-// bucket, else a genus whose species sum to ≥ genus (shown with its top
-// 3), else "not sure". Unit tests reproduce V2Ship on the shipped files.
+// L_img = L_head, except inside the Tasmania box (and, when the header's
+// no_location switch says "tasmania", without a location), where the dense
+// Tasmanian photo bank joins in: L_img = log_softmax(L_head + ω · max(L_knn,
+// floor)). Then the answer ladder (ladder_v3): a species when p(named)
+// reaches the threshold of the named class's training-photo bucket, else a
+// genus whose species sum to ≥ genus (shown with its top 3), else "not
+// sure". Unit tests reproduce V3Ship on the shipped files.
 //
-// The big tables (the int8 head, the prior's CSR rows) stay memory-mapped:
-// clean file pages the kernel can drop, not app memory.
+// The big tables (the int8 prototype rows, the prior's CSR rows) stay
+// memory-mapped: clean file pages the kernel can drop, not app memory.
 
 /// Rows of int8 × a per-row scale: value = scale[row] · v[row].
 struct PlantIDInt8Rows: @unchecked Sendable {
@@ -105,14 +110,18 @@ public enum PlantIDCountTransform: String, Sendable {
     }
 }
 
-/// The Australia-wide location prior (v2-prior.bin, kind
-/// "plantid-prior-deg" v2; build_ship.V2Prior): record counts per (cell,
+/// The Australia-wide location prior (v3-prior.bin, kind
+/// "plantid-prior-deg" v3; build_ship.V3Prior): record counts per (cell,
 /// class) on a lat/lon grid of `cell_deg` degrees — row iy = floor((lat −
 /// lat0)/cell_deg), column ix = floor((lon − lon0)/cell_deg), CSR rows —
 /// and per count transform t the class frequency f_t (`freq_<t>`, over
 /// every class). At a point every cell whose centre is within 3σ adds
 /// t(count) · exp(−d²/2σ²), d in km with Δlon scaled by cos(the point's
-/// latitude); then (K + α f) / (ΣK + α).
+/// latitude); then (K + α f) / (ΣK + α). The kernel is ADAPTIVE: per grid
+/// cell a code (`sigma_code`, ny × nx) into `sigma_km` / `alpha` — the
+/// point's own cell (clipped to the grid) picks σ and α, narrow where the
+/// records are dense (prior_adaptive.py's balloon estimator). A synthetic
+/// prior has no raster: the caller's fixed σ and α.
 public final class PlantIDDegPrior: @unchecked Sendable {
     let blob: IZPLBlob?
     /// A synthetic prior's buffers (allocated here, freed in deinit).
@@ -127,14 +136,18 @@ public final class PlantIDDegPrior: @unchecked Sendable {
     let count32: UnsafeBufferPointer<UInt32>?
     let frequency: [PlantIDCountTransform: [Double]]
     public let labels: Int
+    /// The adaptive kernel: a code per grid cell into `sigmaLevels` / `alphaLevels` (nil: a fixed kernel).
+    let sigmaCode: UnsafeBufferPointer<UInt8>?
+    let sigmaLevels: [Double]
+    let alphaLevels: [Double]
 
     init(blob: IZPLBlob, labels: Int) throws {
         self.blob = blob
         owned = []
         self.labels = labels
         let name = blob.file.url.lastPathComponent
-        guard blob.header["kind"] as? String == "plantid-prior-deg", blob.int("version") == 2
-        else { throw PlantIDError.malformed(name, "not a plantid-prior-deg v2 file") }
+        guard blob.header["kind"] as? String == "plantid-prior-deg", blob.int("version") == 3
+        else { throw PlantIDError.malformed(name, "not a plantid-prior-deg v3 file") }
         func n(_ k: String) throws -> Double {
             guard let v = blob.number(k) else { throw PlantIDError.malformed(name, "no \(k)") }
             return v
@@ -172,6 +185,16 @@ public final class PlantIDDegPrior: @unchecked Sendable {
         else { throw PlantIDError.malformed(name, "grid arrays don't fit together") }
         // one pass over the class ids (5.6 M uint16, a few ms): a bad id would index out of range later
         guard species.allSatisfy({ Int($0) < labels }) else { throw PlantIDError.malformed(name, "class id out of range") }
+        let code = try blob.pointer("sigma_code", UInt8.self, dtype: "uint8")
+        let sig = Array(try blob.pointer("sigma_km", Double.self, dtype: "float64"))
+        let alp = Array(try blob.pointer("alpha", Double.self, dtype: "float64"))
+        guard blob.arrays["sigma_code"]?.shape == [ny, nx], !sig.isEmpty, alp.count == sig.count,
+              sig.allSatisfy({ $0 > 0 && $0.isFinite }), alp.allSatisfy({ $0 > 0 && $0.isFinite }),
+              code.allSatisfy({ Int($0) < sig.count })
+        else { throw PlantIDError.malformed(name, "sigma_code / sigma_km / alpha don't fit") }
+        sigmaCode = code
+        sigmaLevels = sig
+        alphaLevels = alp
     }
 
     /// A synthetic prior (DEBUG fakes, tests): each record counts 1 in its
@@ -188,6 +211,9 @@ public final class PlantIDDegPrior: @unchecked Sendable {
         radiusSigmas = 3
         self.labels = labels
         blob = nil
+        sigmaCode = nil
+        sigmaLevels = []
+        alphaLevels = []
         var perCell: [Int: [Int: UInt32]] = [:]
         for r in records {
             let iy = Int(((r.latitude - lat0) / g).rounded(.down)), ix = Int(((r.longitude - lon0) / g).rounded(.down))
@@ -227,6 +253,23 @@ public final class PlantIDDegPrior: @unchecked Sendable {
     @inline(__always) private func count(_ j: Int) -> Double {
         if let count16 { return Double(count16[j]) }
         return Double(count32![j])
+    }
+
+    /// The grid has its own kernel per cell (v3-prior.bin).
+    public var isAdaptive: Bool { sigmaCode != nil }
+
+    /// The widest kernel any cell uses (the fixed one without a raster).
+    func widestSigma(fixed: Double?) -> Double { sigmaLevels.max() ?? fixed ?? 0 }
+
+    /// σ (km) and α at the point: its grid cell's (row and column clipped to
+    /// the grid, as V3Prior.kernel); without a raster the fixed ones.
+    public func kernel(latitude: Double, longitude: Double, fixed: (sigmaKm: Double, alpha: Double)?) -> (sigmaKm: Double, alpha: Double)? {
+        guard let sigmaCode else { return fixed }
+        guard latitude.isFinite, longitude.isFinite else { return nil }
+        let fy = ((latitude - lat0) / cellDeg).rounded(.down), fx = ((longitude - lon0) / cellDeg).rounded(.down)
+        let iy = Int(max(0, min(Double(ny - 1), fy))), ix = Int(max(0, min(Double(nx - 1), fx)))
+        let k = Int(sigmaCode[iy * nx + ix])
+        return (sigmaLevels[k], alphaLevels[k])
     }
 
     /// Whether the point's kernel (radius 3σ) reaches the grid at all.
@@ -343,7 +386,7 @@ public struct PlantIDLadder: Sendable, Equatable {
     }
 
     init(header any: Any?) throws {
-        func bad(_ why: String) -> PlantIDError { .malformed("v2-head.bin", "ladder: \(why)") }
+        func bad(_ why: String) -> PlantIDError { .malformed("v3-head.bin", "ladder: \(why)") }
         guard let d = any as? [String: Any] else { throw bad("missing") }
         guard let s = (d["species"] as? [NSNumber])?.map(\.doubleValue), !s.isEmpty,
               let e = (d["bucket_edges"] as? [NSNumber])?.map(\.intValue), e.count + 1 == s.count,
@@ -358,72 +401,84 @@ public struct PlantIDLadder: Sendable, Equatable {
     }
 }
 
-/// v2-head.bin's `scoring`: everything after the encoder.
+/// v3-head.bin's `scoring`: everything after the encoder.
 public struct PlantIDModelParameters: Sendable, Equatable {
+    /// The prior's count transform, and a fixed kernel for a prior without
+    /// a σ raster (synthetic priors); nil σ / α = per cell from v3-prior.bin.
     public struct PriorTerm: Sendable, Equatable {
         public var transform: PlantIDCountTransform
-        public var sigmaKm: Double
-        public var alpha: Double
+        public var sigmaKm: Double?
+        public var alpha: Double?
 
-        public init(transform: PlantIDCountTransform, sigmaKm: Double, alpha: Double) {
+        public init(transform: PlantIDCountTransform, sigmaKm: Double? = nil, alpha: Double? = nil) {
             self.transform = transform
             self.sigmaKm = sigmaKm
             self.alpha = alpha
         }
+
+        var fixed: (sigmaKm: Double, alpha: Double)? {
+            guard let sigmaKm, let alpha else { return nil }
+            return (sigmaKm, alpha)
+        }
     }
 
+    /// Calibration temperature of the displayed p.
     public var temperature: Double
+    /// The head logits' temperature before the bank and the prior.
+    public var imageTemperature: Double
     public var lam: Double
     public var prior: PriorTerm
     /// W, S, E, N.
     public var tasmaniaBox: [Double]
     public var tasmaniaOmega: Double
     public var knnFloor: Double
-    public var tasmaniaLam: Double
-    public var tasmaniaPrior: PriorTerm
     public var bank: String
+    /// scoring.no_location == "tasmania": a photo without a location is
+    /// scored as inside the Tasmania box (bank term on; the prior stays the
+    /// country-wide frequency). "australia" (as shipped): no bank.
+    public var noLocationAsTasmania: Bool
     public var ladder: PlantIDLadder
 
     /// A model without the Tasmanian bank term (DEBUG fakes, tests).
-    public init(temperature: Double, lam: Double, prior: PriorTerm, ladder: PlantIDLadder) {
+    public init(temperature: Double, imageTemperature: Double = 1, lam: Double, prior: PriorTerm, ladder: PlantIDLadder) {
         self.temperature = temperature
+        self.imageTemperature = imageTemperature
         self.lam = lam
         self.prior = prior
         tasmaniaBox = [143.5, -44.0, 149.0, -39.2]
         tasmaniaOmega = 0
         knnFloor = -30
-        tasmaniaLam = lam
-        tasmaniaPrior = prior
         bank = ""
+        noLocationAsTasmania = false
         self.ladder = ladder
     }
 
     init(header: [String: Any]) throws {
-        func bad(_ why: String) -> PlantIDError { .malformed("v2-head.bin", why) }
+        func bad(_ why: String) -> PlantIDError { .malformed("v3-head.bin", why) }
         guard let s = header["scoring"] as? [String: Any], let t = s["tasmania"] as? [String: Any] else { throw bad("no scoring") }
         func num(_ d: [String: Any], _ k: String) throws -> Double {
             guard let v = (d[k] as? NSNumber)?.doubleValue, v.isFinite else { throw bad("scoring has no \(k)") }
             return v
         }
-        func term(_ any: Any?) throws -> PriorTerm {
-            guard let d = any as? [String: Any], let tr = (d["transform"] as? String).flatMap(PlantIDCountTransform.init(rawValue:))
-            else { throw bad("prior term") }
-            let p = PriorTerm(transform: tr, sigmaKm: try num(d, "sigma_km"), alpha: try num(d, "alpha"))
-            guard p.sigmaKm > 0, p.alpha > 0 else { throw bad("prior σ/α") }
-            return p
-        }
+        guard let p = s["prior"] as? [String: Any], p["kind"] as? String == "adaptive",
+              let tr = (p["transform"] as? String).flatMap(PlantIDCountTransform.init(rawValue:))
+        else { throw bad("prior: an adaptive prior with a transform expected") }
+        prior = PriorTerm(transform: tr)
         temperature = try num(s, "temperature")
+        imageTemperature = try num(s, "image_temperature")
         lam = try num(s, "lam")
-        prior = try term(s["prior"])
         guard let box = (t["box"] as? [NSNumber])?.map(\.doubleValue), box.count == 4 else { throw bad("tasmania box") }
         tasmaniaBox = box
         tasmaniaOmega = try num(t, "omega")
         knnFloor = try num(t, "knn_floor")
-        tasmaniaLam = try num(t, "lam")
-        tasmaniaPrior = try term(t["prior"])
         bank = t["bank"] as? String ?? "bank-int8.bin"
+        switch s["no_location"] as? String {
+        case "australia": noLocationAsTasmania = false
+        case "tasmania": noLocationAsTasmania = true
+        default: throw bad("no_location must be \"australia\" or \"tasmania\"")
+        }
         ladder = try PlantIDLadder(header: s["ladder"])
-        guard temperature > 0 else { throw bad("temperature") }
+        guard temperature > 0, imageTemperature > 0 else { throw bad("temperature") }
     }
 
     public func inTasmania(_ p: GeoPoint) -> Bool {
@@ -437,10 +492,39 @@ struct PlantIDV2LabelsFile: Decodable {
     var labels: [PlantIDLabel]
 }
 
-/// The single model's scorer (v2-head.bin, v2-prior.bin, v2-labels.json +
-/// the Tasmanian bank-int8.bin for the Tasmania box).
+/// One multi-prototype head (head_capacity.py mproto): class c's K_c
+/// prototypes are the rows row0[c] … row0[c] + K_c − 1 of the shared int8
+/// table, pooled as T · (logsumexp(z / T) − log K_c) — the log K_c keeps
+/// classes with different K on one scale (identical prototypes give back
+/// the single prototype's logit), T between the mean (T → ∞) and the max.
+struct PlantIDHead: Sendable {
+    let bias: [Float]
+    let kc: [UInt8]
+    let row0: [Int32]
+    let poolTemperature: Double
+
+    /// Adds this head's class logits / `heads` to `out` (z = every row's dot product).
+    func addLogits(_ z: UnsafePointer<Float>, heads: Double, to out: inout [Double]) {
+        let T = poolTemperature
+        for c in out.indices {
+            let K = Int(kc[c]), r = Int(row0[c])
+            var s = Double(z[r])
+            if K > 1 {
+                var m = s
+                for k in 1 ..< K { m = max(m, Double(z[r + k])) }
+                var sum = 0.0
+                for k in 0 ..< K { sum += exp((Double(z[r + k]) - m) / T) }
+                s = m + T * (log(sum) - log(Double(K)))
+            }
+            out[c] += (s + Double(bias[c])) / heads
+        }
+    }
+}
+
+/// The final configuration's scorer (v3-head.bin, v3-prior.bin,
+/// v2-labels.json + the Tasmanian bank-int8.bin for the Tasmania box).
 public final class PlantIDModel: @unchecked Sendable {
-    public static let files = ["v2-head.bin", "v2-prior.bin", "v2-labels.json"]
+    public static let files = ["v3-head.bin", "v3-prior.bin", "v2-labels.json"]
     /// "Recorded within 10 km": records in the 0.05° cells whose centre is
     /// within 6 km of the point (a cell reaches ≤ ~4 km further).
     public static let nearbyCellKm = 6.0
@@ -457,8 +541,9 @@ public final class PlantIDModel: @unchecked Sendable {
     /// (settable inside IzzyKit for the ladder tests only)
     public internal(set) var parameters: PlantIDModelParameters
     public let dimension: Int
-    let head: PlantIDInt8Rows
-    let bias: [Float]
+    /// Every head's prototype rows.
+    let rows: PlantIDInt8Rows
+    let heads: [PlantIDHead]
     let centre: [Float]
     let tasCentre: [Float]
     /// Per Tasmanian bank label: its class (repeats allowed: the last wins).
@@ -472,7 +557,7 @@ public final class PlantIDModel: @unchecked Sendable {
     let genusNames: [String]
     let blobs: [IZPLBlob]
 
-    /// All three v2 files are in the folder (the pack from 2026-11 on).
+    /// All three files are in the folder (the pack from 2026-11-06 on).
     public static func available(in directory: URL) -> Bool {
         files.allSatisfy { FileManager.default.fileExists(atPath: directory.appending(path: $0).path(percentEncoded: false)) }
     }
@@ -486,20 +571,41 @@ public final class PlantIDModel: @unchecked Sendable {
         guard file.version == 1, file.labels.count == file.count else { throw PlantIDError.malformed("v2-labels.json", "version/count") }
         let C = file.count
         labels = file.labels
-        let h = try IZPLBlob(url: directory.appending(path: "v2-head.bin"))
-        guard h.header["kind"] as? String == "plantid-head-v2", h.int("version") == 1,
-              let w = h.arrays["weight"], w.shape.count == 2, w.shape[0] == C
-        else { throw PlantIDError.malformed("v2-head.bin", "not a v2 head over the labels") }
-        let D = w.shape[1]
+        let h = try IZPLBlob(url: directory.appending(path: "v3-head.bin"))
+        func bad(_ why: String) -> PlantIDError { .malformed("v3-head.bin", why) }
+        guard h.header["kind"] as? String == "plantid-head-v3", h.int("version") == 1, h.int("labels") == C,
+              let w = h.arrays["weight"], w.shape.count == 2,
+              let info = h.header["heads"] as? [[String: Any]], !info.isEmpty
+        else { throw bad("not a v3 head over the labels") }
+        let D = w.shape[1], H = info.count
         dimension = D
-        head = try PlantIDInt8Rows(blob: h, name: "weight", dimension: D)
-        bias = try h.floats("bias")
+        let table = try PlantIDInt8Rows(blob: h, name: "weight", dimension: D)
+        rows = table
+        guard h.arrays["bias"]?.shape == [H, C], h.arrays["kc"]?.shape == [H, C], h.arrays["row0"]?.shape == [H, C]
+        else { throw bad("bias / kc / row0 aren't heads × labels") }
+        let bias = try h.floats("bias")
+        let kc = Array(try h.pointer("kc", UInt8.self, dtype: "uint8"))
+        let row0 = Array(try h.pointer("row0", Int32.self, dtype: "int32"))
+        heads = try info.enumerated().map { j, d in
+            guard let span = (d["rows"] as? [NSNumber])?.map(\.intValue), span.count == 2, span[0] >= 0, span[0] < span[1],
+                  span[1] <= table.rows, let T = (d["pool_temperature"] as? NSNumber)?.doubleValue, T > 0, T.isFinite
+            else { throw bad("head \(j): rows / pool_temperature") }
+            let k = Array(kc[j * C ..< (j + 1) * C]), r = Array(row0[j * C ..< (j + 1) * C])
+            // every class's prototypes inside this head's rows, together covering them exactly
+            var covered = 0
+            for c in 0 ..< C {
+                guard k[c] >= 1, Int(r[c]) >= span[0], Int(r[c]) + Int(k[c]) <= span[1] else { throw bad("head \(j): class \(c)'s rows") }
+                covered += Int(k[c])
+            }
+            guard covered == span[1] - span[0] else { throw bad("head \(j): K_c don't add up to its rows") }
+            return PlantIDHead(bias: Array(bias[j * C ..< (j + 1) * C]), kc: k, row0: r, poolTemperature: T)
+        }
         centre = try h.floats("centre")
         tasCentre = try h.floats("tas_centre")
         let tas = try h.pointer("tas_classes", Int32.self, dtype: "int32").map(Int.init)
         tasClasses = tas
-        guard bias.count == C, centre.count == D, tasCentre.count == D, tas.allSatisfy({ $0 >= 0 && $0 < C })
-        else { throw PlantIDError.malformed("v2-head.bin", "bias/centres/tas_classes don't fit") }
+        guard centre.count == D, tasCentre.count == D, tas.allSatisfy({ $0 >= 0 && $0 < C })
+        else { throw bad("centres / tas_classes don't fit") }
         parameters = try PlantIDModelParameters(header: h.header)
         let b = try IZPLBlob(url: directory.appending(path: parameters.bank))
         let bs = try PlantIDScoring(header: b.header)
@@ -508,10 +614,10 @@ public final class PlantIDModel: @unchecked Sendable {
         else { throw PlantIDError.malformed(parameters.bank, "bank labels don't fit tas_classes") }
         bankScoring = bs
         bank = theBank
-        let pb = try IZPLBlob(url: directory.appending(path: "v2-prior.bin"))
+        let pb = try IZPLBlob(url: directory.appending(path: "v3-prior.bin"))
         let pr = try PlantIDDegPrior(blob: pb, labels: C)
-        guard pr.frequency[parameters.prior.transform] != nil, pr.frequency[parameters.tasmaniaPrior.transform] != nil
-        else { throw PlantIDError.malformed("v2-prior.bin", "no frequency for the prior's transform") }
+        guard pr.frequency[parameters.prior.transform] != nil, pr.isAdaptive
+        else { throw PlantIDError.malformed("v3-prior.bin", "no frequency for the prior's transform / no σ raster") }
         prior = pr
         let rows = file.labels
         photos = rows.map { $0.trainPhotos ?? 0 }
@@ -529,16 +635,19 @@ public final class PlantIDModel: @unchecked Sendable {
     }
 
     /// A synthetic model (DEBUG fakes, tests): `weight` = labels × dimension
-    /// floats (quantised per row like the shipped head), no Tasmanian bank.
+    /// floats (one prototype per class, quantised per row like the shipped
+    /// heads), no Tasmanian bank; the prior's kernel is `parameters.prior`'s.
     public init(labels: [PlantIDLabel], weight: [Float], bias: [Float]? = nil, centre: [Float],
                 parameters: PlantIDModelParameters, prior: PlantIDDegPrior) {
         let C = labels.count, D = centre.count
         precondition(prior.labels == C, "the prior must cover the labels")
+        precondition(prior.isAdaptive || parameters.prior.fixed != nil, "a prior without a raster needs σ and α")
         self.labels = labels
         self.parameters = parameters
         dimension = D
-        head = PlantIDInt8Rows(weight: weight, rows: C, dimension: D)
-        self.bias = bias ?? [Float](repeating: 0, count: C)
+        rows = PlantIDInt8Rows(weight: weight, rows: C, dimension: D)
+        heads = [PlantIDHead(bias: bias ?? [Float](repeating: 0, count: C), kc: [UInt8](repeating: 1, count: C),
+                             row0: (0 ..< C).map(Int32.init), poolTemperature: 1)]
         self.centre = centre
         tasCentre = centre
         tasClasses = []
@@ -562,7 +671,7 @@ public final class PlantIDModel: @unchecked Sendable {
     /// The point takes part in the prior (finite, near the grid).
     func place(_ location: GeoPoint?) -> GeoPoint? {
         guard let location, prior.covers(latitude: location.latitude, longitude: location.longitude,
-                                         sigmaKm: max(parameters.prior.sigmaKm, parameters.tasmaniaPrior.sigmaKm))
+                                         sigmaKm: prior.widestSigma(fixed: parameters.prior.sigmaKm))
         else { return nil }
         return location
     }
@@ -601,42 +710,54 @@ public final class PlantIDModel: @unchecked Sendable {
         return L
     }
 
+    /// The heads' ensemble-mean logits for a centred unit query (before the
+    /// image temperature).
+    func headLogits(_ q: [Float]) -> [Double] {
+        var z = [Float](repeating: 0, count: rows.rows)
+        var scratch = [Float](repeating: 0, count: PlantIDInt8Rows.chunk * dimension)
+        q.withUnsafeBufferPointer { qp in
+            z.withUnsafeMutableBufferPointer { o in
+                scratch.withUnsafeMutableBufferPointer { s in rows.dots(qp.baseAddress!, into: o.baseAddress!, scratch: s.baseAddress!) }
+            }
+        }
+        var out = [Double](repeating: 0, count: labels.count)
+        z.withUnsafeBufferPointer { zp in
+            for h in heads { h.addLogits(zp.baseAddress!, heads: Double(heads.count), to: &out) }
+        }
+        return out
+    }
+
     /// Displayed log p and image-only log p over the classes, and whether
-    /// the Tasmania-box path answered. `location` nil = no location.
+    /// the Tasmania-box path answered. `location` nil = no location; one far
+    /// from the grid takes no part in the prior (and isn't "no location" for
+    /// the no_location switch).
     public func scores(embedding: [Float], location: GeoPoint?) -> (logp: [Double], image: [Double], tasmania: Bool) {
         precondition(embedding.count == dimension, "embedding must have \(dimension) values")
-        let C = labels.count, D = dimension
+        let C = labels.count
         func unit(_ v: [Float]) -> [Float] {
             let n = Float(sqrt(v.reduce(0.0) { $0 + Double($1) * Double($1) }))
             return n > 0 ? v.map { $0 / n } : v
         }
         let q = unit(zip(unit(embedding), centre).map { $0 - $1 })
-        var logits = [Float](repeating: 0, count: C)
-        var scratch = [Float](repeating: 0, count: PlantIDInt8Rows.chunk * D)
-        q.withUnsafeBufferPointer { qp in
-            logits.withUnsafeMutableBufferPointer { o in
-                scratch.withUnsafeMutableBufferPointer { s in head.dots(qp.baseAddress!, into: o.baseAddress!, scratch: s.baseAddress!) }
-            }
-        }
-        var Lh = (0 ..< C).map { Double(logits[$0]) + Double(bias[$0]) }
-        Self.logSoftmax(&Lh)
         let p = parameters
-        let tas = bank != nil && (location.map(p.inTasmania) ?? false)
+        var Lh = headLogits(q)
+        Self.logSoftmax(&Lh, scale: 1 / p.imageTemperature)
+        let tas = bank != nil && (location.map(p.inTasmania) ?? p.noLocationAsTasmania)
         var img = Lh
-        var term = p.prior, lam = p.lam
         if tas {
             let knn = knnLogp(embedding)
             for c in 0 ..< C { img[c] = Lh[c] + p.tasmaniaOmega * max(knn[c], p.knnFloor) }
             Self.logSoftmax(&img)
-            term = p.tasmaniaPrior
-            lam = p.tasmaniaLam
         }
         var L = img
         var K = [Double](repeating: 0, count: C)
+        let place = place(location)
+        let kernel = place.flatMap { prior.kernel(latitude: $0.latitude, longitude: $0.longitude, fixed: p.prior.fixed) }
         L.withUnsafeMutableBufferPointer { l in
             K.withUnsafeMutableBufferPointer { k in
-                prior.addLogPrior(location, transform: term.transform, sigmaKm: term.sigmaKm, alpha: term.alpha,
-                                  lambda: lam, to: l, scratch: k)
+                // no kernel (no place): K = 0, so α cancels → λ · log f
+                prior.addLogPrior(kernel == nil ? nil : place, transform: p.prior.transform, sigmaKm: kernel?.sigmaKm ?? 1,
+                                  alpha: kernel?.alpha ?? p.prior.alpha ?? 1, lambda: p.lam, to: l, scratch: k)
             }
         }
         Self.logSoftmax(&L)
@@ -649,7 +770,7 @@ public final class PlantIDModel: @unchecked Sendable {
     /// from the grid counts as none.
     public func identify(embedding: [Float], location: GeoPoint?) -> PlantIDResult {
         let place = place(location)
-        let (logp, image, tas) = scores(embedding: embedding, location: place)
+        let (logp, image, tas) = scores(embedding: embedding, location: location)
         let p = logp.map { exp($0) }
         let order = Self.order(p)
         let nearby = place.map { prior.records(within: Self.nearbyCellKm, latitude: $0.latitude, longitude: $0.longitude) } ?? [:]
@@ -678,7 +799,10 @@ public final class PlantIDModel: @unchecked Sendable {
         }.sorted { $0.p > $1.p }
         return PlantIDResult(answer: answer, candidates: top, genera: genera, usedLocation: place != nil,
                              scope: tas ? .tasmania : .australia, nearbyKm: Self.nearbyKm, ladder: ladder,
-                             genusSpecies: genusSpecies, nearbySpecies: nearby.values.count { $0 > 0 })
+                             genusSpecies: genusSpecies, nearbySpecies: nearby.values.count { $0 > 0 },
+                             priorSigmaKm: place.flatMap {
+                                 prior.kernel(latitude: $0.latitude, longitude: $0.longitude, fixed: parameters.prior.fixed)?.sigmaKm
+                             })
     }
 
     /// Classes by p, best first (index order among equal p).
