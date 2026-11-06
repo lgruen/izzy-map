@@ -1276,11 +1276,17 @@ Melaleuca) — the genus rates above still match within 0.01 pp. Pack 0.84 GB
 
 ## Licences
 
-Only photos under CC0 / PD / CC BY / CC BY-NC are fetched (iNat's
-per-photo licence, `license` column). ND and SA are excluded because a model
-trained on them might count as an adaptation (which ND forbids sharing and
-SA would force under the same licence). Australia has no text-and-data-mining
-exception (ruled out Oct 2025), so the CC licence is the permission.
+(Updated 2026-11-06.) The first Tasmanian runs fetched only CC0 / PD /
+CC BY / CC BY-NC photos. Since 2026-11-05 (Leo's decision) TRAINING uses
+every Creative Commons licence, incl. BY-SA, BY-NC-SA, BY-ND and BY-NC-ND
+(~7.8 % of the final 3.9M photos): an embedding / trained head is not
+treated as an adaptation of any one photo and no photo is redistributed.
+All-rights-reserved photos are never used. Australia has no text-and-data-
+mining exception (ruled out Oct 2025), so the CC licence is the permission.
+REFERENCE photos (redistributed in the refphotos pack) follow stricter
+rules: CC0/BY/BY-NC/BY-SA/BY-NC-SA re-encodable, ND only byte-for-byte,
+APII per docs/LICENSING.md §1e. The public Hugging Face release of the
+heads is CC BY-NC 4.0 and states this position in its model card.
 Photos stay in `pipeline/cache/` (gitignored) and are never committed or
 uploaded. If a trained head ever ships, it needs a credits file (photo id,
 observer login, licence) — `train.parquet` has the ids, the observers table

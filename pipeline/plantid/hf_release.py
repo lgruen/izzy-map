@@ -64,6 +64,7 @@ HEAD_RUNS = [os.path.join(V2DIR, "head_capacity", "runs", f"hc-mpAc-s{s}.npz") f
 BIOCLIP_REPO = "imageomics/bioclip-2.5-vith14"
 BIOCLIP_REV = "6e3d04e3d6522012c88181085c5ae666e14c45cd"
 CODE_REPO = "https://github.com/lgruen/izzy-map"
+HF_REPO = "leonhard-gruenschloss/bioclip-2.5-vith14-australian-plants"
 AUTHOR = "Leonhard Grünschloss"
 os.makedirs(WORK, exist_ok=True)
 
@@ -618,7 +619,7 @@ iNaturalist taxa. Encoder: BioCLIP 2.5 by the Imageomics Institute (MIT):
   author = {{Leonhard Grünschloss}},
   title  = {{IzzyMap plant identifier (Australia): multi-prototype heads and an adaptive location prior on BioCLIP 2.5}},
   year   = {{2026}},
-  howpublished = {{Hugging Face model, HF_REPO_ID}},
+  howpublished = {{Hugging Face model, https://huggingface.co/{HF_REPO}}},
   note   = {{Code: {CODE_REPO}, commit {short}}}
 }}
 ```
