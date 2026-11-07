@@ -34,9 +34,11 @@ follows, by the first candidate each species would get:
 
 So 2,273 species get candidates: 779 with a field photo first and 1,494
 with specimens only, which Opus is expected to reject so that the
-captioned fallback applies. The Opus-rejected 125 mostly get ALA field
-photos (APII) that were never candidates before: these are the 77 APII
-species from the thread. The first-pass facet counts in the thread (22
+captioned fallback applies. (The Opus-rejected column comes from the
+container dry run, whose copy of cands.parquet was stale. On the Mac only 13
+of the 125 lead with an ALA field photo and 27 get nothing new: most of those
+APII photos had been candidates already, and the gap never re-offers a photo
+Opus has seen.) The first-pass facet counts in the thread (22
 Tasmanian species with field photos) were inflated by the record-licence
 issue and by synonym lumps (Hibbertia mathinnicola → H. calycina,
 Acacia centrinervia → A. lineata), which `same_taxon` now refuses.
@@ -77,3 +79,21 @@ uv run … build_refphotos_v2.py build
 python3 pipeline/build_packs.py refphotos --verify refphotos
 pipeline/upload_packs.sh refphotos   # Leo approves; every device re-downloads ~0.4 GB
 ```
+
+## Result (Leo's Mac, 2026-11-07)
+
+7,622 candidates over 2,247 species, all judged by Opus in 2 batches
+(0 errors, $6.56). Pack: 18,373 → **20,605 photos** (+2,232), 0.44 GB
+(was 0.41), `--verify`'d. 1,769 of them are captioned fallbacks: 1,656
+herbarium specimens, 92 hand-held sprigs, 19 collected specimens and 1
+labelled specimen. 42 species got no acceptable photo. In Tasmania, 56 of the
+71 gaps now have a photo, 15 of them field photos. Spot check:
+
+- good field photos: Brachyscome tasmanica, Oreobolus acutifolius, Hierochloe fraseri,
+  Gaimardia fitzgeraldii, Isoetes humilior, Tetrarrhena oreophila and Hovea magnibractea;
+- clean sheets: Poa hookeri, Cardamine gunnii and Ozothamnus gunnii;
+- caption a little off: Agrostis australiensis is labelled "Hand-held sprig", but the photo shows a hand
+  beside the grass.
+
+Fixes made during the run: twin marks now come from v2-labels.json (au-labels.json
+lacks them), and NaN text fields from parquet are written as null.
