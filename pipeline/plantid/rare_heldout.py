@@ -43,8 +43,11 @@ def moved_uuids():
 
 
 def moved_photo_ids():
-    """Photo ids of EVERY photo of a moved observation (eval sets may hold any of them)."""
+    """Photo ids of EVERY photo of a moved observation (eval sets may hold any of them).
+    Empty with V2_NO_MOVE=1 (reproduces the numbers from before 2026-11-07)."""
     import pyarrow.parquet as pq
+    if os.environ.get("V2_NO_MOVE"):
+        return set()
     p = os.path.join(OUT, "moved_photos.parquet")
     return set(pq.read_table(p, columns=["photo_id"]).column(0).to_pylist()) if os.path.exists(p) else set()
 
@@ -104,15 +107,13 @@ def cmd_extras():
     pos = {}
     for f in sorted(glob.glob(os.path.join(OUT, "emb", "shard-*.npz"))):
         z = np.load(f)
-        for r, (p, ok) in enumerate(zip(z["photo_id"], z["ok"])):
-            if ok:
-                pos[int(p)] = (os.path.relpath(f, OUT), r)
+        for r, p in enumerate(z["photo_id"]):  # embed_extra writes only the photos it got
+            pos[int(p)] = (os.path.relpath(f, OUT), r)
     keep = [i for i, p in enumerate(T["photo_id"]) if int(p) in pos]
     rows = {c: [T[c][i] for i in keep] for c in ("u", "photo_id", "ext", "observation_uuid", "observer_id", "licence",
                                                   "lat", "lon", "observed_on")}
     rows["source"] = ["inat-heldout-rare"] * len(keep)
-    rows["shard"] = [pos[int(p)][0] for p in rows["photo_id"]]
-    rows["shard_row"] = [pos[int(p)][1] for p in rows["photo_id"]]
+    # (no `shard` column: train_v2.add_extra looks the embeddings up by photo id under --extra-emb OUT/emb)
     pq.write_table(pa.table(rows), os.path.join(OUT, "extras.parquet"))
     print(f"extras: {len(keep)} of {len(T['photo_id'])} photos embedded, {len(set(rows['u']))} classes")
 

@@ -477,8 +477,11 @@ def load_sets():
                         "n_split", "observed_on"])
     pr = E_.load_table(os.path.join(sets, "prior.parquet"))
 
+    import rare_heldout  # rare species' held-out observations moved into training (by construction)
+    moved = rare_heldout.moved_photo_ids()
+
     def gather(tab):
-        keep = [i for i, p in enumerate(tab["photo_id"]) if p in idx]
+        keep = [i for i, p in enumerate(tab["photo_id"]) if p in idx and p not in moved]
         X = E[[idx[tab["photo_id"][i]] for i in keep]]
         y = np.array([cls_of.get(tab["species_id"][i], -1) for i in keep], dtype=np.int64)
         return keep, X, y
