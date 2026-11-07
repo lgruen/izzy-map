@@ -208,8 +208,19 @@ def cmd_list_gbif():
             st["no_images"] += 1
         SP.wjson(p, {"u": c, "name": name, "gbif_key": key, "match": m.get("matchType"), "images": imgs})
     t0 = time.time()
-    with cf.ThreadPoolExecutor(3) as ex:
-        list(ex.map(one, todo))
+    err = []
+
+    def safe(a_):  # GBIF answered 429 at 3 workers (2026-11-08): 1 worker, pause, skip + retry later
+        try:
+            one(a_)
+        except Exception as e:  # noqa: BLE001
+            err.append((a_[0], str(e)[:80]))
+            time.sleep(30)
+        time.sleep(float(os.environ.get("HB_PAUSE", 0.5)))
+    with cf.ThreadPoolExecutor(int(os.environ.get("HB_WORKERS", 1))) as ex:
+        list(ex.map(safe, todo))
+    if err:
+        log(f"gbif list: {len(err)} classes failed (re-run to retry): {err[:5]}")
     have = [json.load(open(f)) for f in glob.glob(os.path.join(RECS, "*.json"))]
     got = {g: sum(1 for h in have if h["u"] in set(sel[g]) and h["images"]) for g in ("Z", "S", "F")}
     log(f"gbif list done in {time.time() - t0:.0f} s ({st}); classes with ≥ 1 sheet: {got}; "
