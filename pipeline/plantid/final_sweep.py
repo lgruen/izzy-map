@@ -44,7 +44,7 @@ import head_capacity as HC  # noqa: E402
 
 V2 = BA.V.V2
 FS = os.environ.get("FS_WORK") or os.path.join(V2, "final_sweep")
-HCR = os.path.join(V2, "head_capacity", "runs")
+HCR = os.environ.get("FS_HCR") or os.path.join(V2, "head_capacity", "runs")  # e.g. head_capacity2/runs (retrained heads)
 DEV = "mps"
 os.makedirs(FS, exist_ok=True)
 
