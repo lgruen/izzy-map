@@ -262,12 +262,12 @@ def cmd_eval():
         # combined: choose w on val (head seed 0), then train both seeds and test once
         vals = {}
         for wt in WEIGHTS:
-            X = np.concatenate([Cb, wt * Cd], 1) / np.sqrt(1 + wt * wt)
-            Ti = np.concatenate([Tc, wt * proto[v]], 1) / np.sqrt(1 + wt * wt)
+            X = (np.concatenate([Cb, wt * Cd], 1) / np.sqrt(1 + wt * wt)).astype(np.float32)
+            Ti = (np.concatenate([Tc, wt * proto[v]], 1) / np.sqrt(1 + wt * wt)).astype(np.float32)
             vals[wt] = train_eval(f"bioclip+{v}@{wt}", X, Ti, seeds=(0,), val_only=True)[0]["val_top1_sp"]
         wt = max(vals, key=vals.get)
-        X = np.concatenate([Cb, wt * Cd], 1) / np.sqrt(1 + wt * wt)
-        Ti = np.concatenate([Tc, wt * proto[v]], 1) / np.sqrt(1 + wt * wt)
+        X = (np.concatenate([Cb, wt * Cd], 1) / np.sqrt(1 + wt * wt)).astype(np.float32)
+        Ti = (np.concatenate([Tc, wt * proto[v]], 1) / np.sqrt(1 + wt * wt)).astype(np.float32)
         nm = f"bioclip+{v}"
         o, hh = train_eval(nm, X, Ti)
         o["w"], o["w_val"] = wt, vals
