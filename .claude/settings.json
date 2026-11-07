@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(pipeline/upload_packs.sh:*)",
+      "Bash(./pipeline/upload_packs.sh:*)",
+      "Bash(bash pipeline/upload_packs.sh:*)",
+      "Bash(xcrun altool:*)"
+    ]
+  }
+}

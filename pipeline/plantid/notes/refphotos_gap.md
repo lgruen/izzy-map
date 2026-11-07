@@ -77,7 +77,7 @@ uv run … --with scikit-learn --with anthropic python3 -I pipeline/plantid/buil
 uv run … build_refphotos_v2.py collect --wait
 uv run … build_refphotos_v2.py build
 python3 pipeline/build_packs.py refphotos --verify refphotos
-pipeline/upload_packs.sh refphotos   # Leo approves; every device re-downloads ~0.4 GB
+pipeline/upload_packs.sh refphotos@<sha256 prefix>   # Leo approves; every device re-downloads ~0.4 GB
 ```
 
 ## Result (Leo's Mac, 2026-11-07)

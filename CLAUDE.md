@@ -49,7 +49,7 @@ milestones, map-proof results); the design brief and language is
    "Retired hosting"): our data reaches devices only as Apple-hosted
    Background Assets packs, the licensed extras straight from their
    publishers. Uploads are LOCAL and deliberate (`upload_packs.sh`, Leo
-   approves), never from CI.
+   approves the pack + hash; Claude may run it on the Mac), never from CI.
 
 ## Key endpoints & data facts (verified 2026-08-29)
 
@@ -340,9 +340,12 @@ milestones, map-proof results); the design brief and language is
   is out of date" made `simctl`/`devicectl` hang) — open Xcode once or
   `sudo xcodebuild -runFirstLaunch`.
 - **Publishing data = the pack workflow:** rebuild the PMTiles in `data/`
-  → `python3 pipeline/build_packs.py <pack>` (→ `data/packs/<pack>.aar`;
-  `--verify <pack>` hashes it against `data/`) → `pipeline/upload_packs.sh
-  <pack>` (LOCAL, Leo approves). Each upload is a new pack version that
+  → `python3 pipeline/build_packs.py <pack> --verify <pack>` (→
+  `data/packs/<pack>.aar`; `--verify` hashes it against `data/` and only
+  then writes `<pack>.aar.sha256` — no sidecar, no upload) →
+  `pipeline/upload_packs.sh --show <pack>` (size, sha256, last upload) →
+  Leo approves that pack + hash → `pipeline/upload_packs.sh
+  <pack>@<sha256 ≥ 12 hex>` (LOCAL on the Mac). Each upload is a new pack version that
   EVERY device re-downloads in the background (no Update button), so
   upload only when the tiles actually changed. Pack ids ↔ files:
   `pipeline/asset_packs.json` (raster keys `aerial2020` … → `season-2020`
@@ -430,6 +433,20 @@ milestones, map-proof results); the design brief and language is
   sea in Bass Strait/off Maria Island, file 50 KB–1.5 MB, both ≤ 2 MB,
   byte round-trip through the reference parser. A grid change = bump
   `version` (the Swift reader must check it).
+- **Claude runs pack uploads (2026-11-07)** through Remote Control on
+  Leo's Mac, never from the cloud container or CI (altool is macOS-only and
+  the packs live in `data/`). Credentials: a dedicated App Store Connect
+  API key (revocable alone in Users and Access → Integrations), its
+  `AuthKey_<id>.p8` in `~/.appstoreconnect/private_keys/` (600), the ids
+  in `~/.config/izzy-map/asc.env` (600; `APP_APPLE_ID`, `ASC_KEY_ID`,
+  `ASC_ISSUER_ID`; the script parses only those three and refuses a
+  group/world-readable file). Never read or print either file. Flow: post
+  `upload_packs.sh --show <pack>` output in the thread, wait for Leo's OK
+  on that hash, then `upload_packs.sh <pack>@<hash>`. The script refuses a
+  hash mismatch, an archive changed after its `--verify`, bytes already in
+  `data/packs/uploaded.log` (`ALLOW_REUPLOAD=1` only after a failed
+  upstream upload) and a second concurrent upload (`.upload.lock`);
+  `.claude/settings.json` keeps the command on the "ask" list.
 - **Do not re-upload the topo pack unless its tiles changed:**
   `build_raster.py` writes extra metadata (`copyright_text`, `built`, …)
   into the archive, so a rebuild of identical tiles has different bytes →
