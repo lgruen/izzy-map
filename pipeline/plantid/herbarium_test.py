@@ -50,6 +50,11 @@ V2 = os.path.join(CACHE, "australia", "v2")
 OUT = os.path.join(CACHE, "herbarium")
 RUN = "final-cb50-s1"
 N_S, N_F, PER_ZS, PER_F = 300, 600, 16, 8
+# sheet source: "ala" (images.ala.org.au — its sheet thumbnails timed out with HTTP 504 on
+# 2026-11-07) or "gbif" (GBIF occurrence search + GBIF's image cache, incl. overseas herbaria)
+SRC = os.environ.get("HB_SRC", "gbif")
+RECS = os.path.join(OUT, "recs" if SRC == "ala" else "recs-gbif")
+PHOTO_DIR = "herbarium" if SRC == "ala" else "herbarium-gbif"
 TN = 0.5
 
 
@@ -134,24 +139,90 @@ def cmd_list():
         f"images {sum(len(h['images']) for h in have)}")
 
 
+def cmd_list_gbif():
+    """GBIF: strict name match (kingdom Plantae; synonyms → accepted key), then
+    occurrence search basisOfRecord PRESERVED_SPECIMEN + StillImage (300 per page,
+    one page), one CC/PD-licensed image per specimen, iNat datasets out, spread over
+    institutions (round-robin), ≤ k per class. Image key g<occurrence key>-<md5(url)>."""
+    import hashlib as H
+    import urllib.parse
+    import sources_pull as SP
+    sel = json.load(open(os.path.join(OUT, "classes.json")))
+    os.makedirs(RECS, exist_ok=True)
+    todo = [(c, PER_ZS) for c in sel["Z"] + sel["S"]] + [(c, PER_F) for c in sel["F"]]
+    st = {"no_match": 0, "no_images": 0}
+
+    def one(a):
+        c, k = a
+        p = os.path.join(RECS, f"{c:05d}.json")
+        if os.path.exists(p):
+            return
+        name = sel["names"][str(c)]
+        m = SP.getj("https://api.gbif.org/v1/species/match?" + urllib.parse.urlencode(
+            {"name": name, "kingdom": "Plantae", "strict": "true"}))
+        key = m.get("acceptedUsageKey") or m.get("usageKey")
+        imgs = []
+        if key and m.get("rank") in ("SPECIES", "SUBSPECIES", "VARIETY", "FORM"):
+            d = SP.getj("https://api.gbif.org/v1/occurrence/search?" + urllib.parse.urlencode(
+                {"taxonKey": key, "mediaType": "StillImage", "basisOfRecord": "PRESERVED_SPECIMEN", "limit": 300}))
+            by_inst = {}
+            for r in d.get("results", []):
+                if "inaturalist" in (r.get("datasetName") or "").lower():
+                    continue
+                for med in r.get("media") or []:
+                    url, lic = med.get("identifier") or "", (med.get("license") or r.get("license") or "")
+                    if med.get("type") not in (None, "StillImage") or not url:
+                        continue
+                    if not any(x in lic.lower() for x in ("creativecommons", "cc0", "cc_by", "cc-by", "publicdomain")):
+                        continue
+                    md5 = H.md5(url.encode()).hexdigest()
+                    by_inst.setdefault(r.get("institutionCode") or "?", []).append(
+                        {"image_id": f"g{r['key']}-{md5}", "occ": r["key"], "url": url, "md5": md5, "license": lic,
+                         "inst": r.get("institutionCode"), "dataset": r.get("datasetName"), "country": r.get("country")})
+                    break  # one sheet per specimen
+            # round-robin over institutions (deterministic order) → spread
+            queues = [sorted(v, key=lambda x: h01(x["image_id"])) for _, v in sorted(by_inst.items())]
+            while len(imgs) < k and any(queues):
+                for q in queues:
+                    if q and len(imgs) < k:
+                        imgs.append(q.pop(0))
+        else:
+            st["no_match"] += 1
+        if not imgs:
+            st["no_images"] += 1
+        SP.wjson(p, {"u": c, "name": name, "gbif_key": key, "match": m.get("matchType"), "images": imgs})
+    t0 = time.time()
+    with cf.ThreadPoolExecutor(3) as ex:
+        list(ex.map(one, todo))
+    have = [json.load(open(f)) for f in glob.glob(os.path.join(RECS, "*.json"))]
+    got = {g: sum(1 for h in have if h["u"] in set(sel[g]) and h["images"]) for g in ("Z", "S", "F")}
+    log(f"gbif list done in {time.time() - t0:.0f} s ({st}); classes with ≥ 1 sheet: {got}; "
+        f"images {sum(len(h['images']) for h in have)}")
+
+
 def cmd_fetch():
     import sources_pull as SP
-    ids = sorted({im["image_id"] for f in glob.glob(os.path.join(OUT, "recs", "*.json"))
-                  for im in json.load(open(f))["images"]})
-    items = [(i, f"https://images-assets.ala.org.au/store/{i[-1]}/{i[-2]}/{i[-3]}/{i[-4]}/{i}/thumbnail_large")
-             for i in ids]
-    SP.fetch_hash(items, "herbarium", "herbarium-hashes", workers=12)
+    recs = [im for f in glob.glob(os.path.join(RECS, "*.json")) for im in json.load(open(f))["images"]]
+    if SRC == "ala":
+        ids = sorted({im["image_id"] for im in recs})
+        items = [(i, f"https://images-assets.ala.org.au/store/{i[-1]}/{i[-2]}/{i[-3]}/{i[-4]}/{i}/thumbnail_large")
+                 for i in ids]
+        SP.fetch_hash(items, PHOTO_DIR, "herbarium-hashes", workers=12)
+    else:  # GBIF's image cache (resized copies; measured 2–5 s per uncached image)
+        items = sorted({(im["image_id"], f"https://api.gbif.org/v1/image/cache/fit-in/500x/occurrence/"
+                                         f"{im['occ']}/media/{im['md5']}") for im in recs})
+        SP.fetch_hash(items, PHOTO_DIR, "herbarium-gbif-hashes", workers=8)
 
 
 def cmd_embed():
     import coremltools as ct
     import build_ship as BS
     import sources_pull as SP
-    ids = sorted({im["image_id"] for f in glob.glob(os.path.join(OUT, "recs", "*.json"))
+    ids = sorted({im["image_id"] for f in glob.glob(os.path.join(RECS, "*.json"))
                   for im in json.load(open(f))["images"]})
-    paths = [(i, os.path.join(SP.PH, "herbarium", f"{i}.jpg")) for i in ids]
+    paths = [(i, os.path.join(SP.PH, PHOTO_DIR, f"{i}.jpg")) for i in ids]
     paths = [(i, p) for i, p in paths if os.path.exists(p)]
-    out = os.path.join(OUT, "emb.npz")
+    out = os.path.join(OUT, f"emb-{SRC}.npz")
     done = {}
     if os.path.exists(out):
         z = np.load(out)
@@ -190,10 +261,10 @@ def cmd_eval():
     Pt = np.load(os.path.join(V2, "bank_analysis", "prior-main-AU-test.npy"), mmap_mode="r")
     sets = {"val": (qv, z["AU-val/y"], Pv), "test": (qt, Zs["AU-test/y"], Pt)}
     # sheet prototypes (centred like photos)
-    E = np.load(os.path.join(OUT, "emb.npz"))
+    E = np.load(os.path.join(OUT, f"emb-{SRC}.npz"))
     emb = dict(zip(E["image_id"].tolist(), unit(unit(E["emb"]) - mu)))
     proto, nsh = np.zeros_like(T), np.zeros(C, int)
-    for f in glob.glob(os.path.join(OUT, "recs", "*.json")):
+    for f in glob.glob(os.path.join(RECS, "*.json")):
         d = json.load(open(f))
         v = [emb[im["image_id"]] for im in d["images"] if im["image_id"] in emb]
         if v:
@@ -316,10 +387,10 @@ def cmd_eval():
         res["report"].setdefault("trained (upper bound)", {})[f"Sr_{nm}_top1"] = sp(top, y, Sr)
         res["report"]["trained (upper bound)"][f"Sr_{nm}_top5"] = sp(top, y, Sr, 5)
     log("trained rows (upper bound):", res["report"]["trained (upper bound)"])
-    json.dump(res, open(os.path.join(OUT, "eval.json"), "w"), indent=1)
+    json.dump(res, open(os.path.join(OUT, f"eval-{SRC}.json"), "w"), indent=1)
 
 
 if __name__ == "__main__":
-    cmds = {"select": cmd_select, "list": cmd_list, "fetch": cmd_fetch, "embed": cmd_embed, "eval": cmd_eval}
+    cmds = {"select": cmd_select, "list": cmd_list_gbif if SRC == "gbif" else cmd_list, "fetch": cmd_fetch, "embed": cmd_embed, "eval": cmd_eval}
     for c in (list(cmds) if sys.argv[1] == "all" else sys.argv[1:]):
         cmds[c]()

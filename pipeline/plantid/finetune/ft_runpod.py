@@ -132,7 +132,8 @@ def cmd_launch(a):
                                  "rb").read()).decode()
     body = {"name": f"izzy-ft-{a.name or a.arm}", "image": RX.IMAGE, "cloud": a.cloud, "disk": 120,
             "ports": ["8000/http"], "gpu": {"id": a.gpu, "count": 1, "minVcpuCountPerGpu": a.vcpu},
-            "env": {"IZZY_TOKEN": token, "IZZY_BOOT": boot}, "entrypoint": ["bash", "-c"],
+            "env": {"IZZY_TOKEN": token, "IZZY_BOOT": boot, "IZZY_MAX_H": str(a.max_h),
+                    "IZZY_GRACE_MIN": str(a.grace_min)}, "entrypoint": ["bash", "-c"],
             "cmd": ["echo \"$IZZY_BOOT\" | base64 -d > /boot.py && exec python3 /boot.py"]}
     if a.dcs:
         body["dataCenterIds"] = a.dcs.split(",")
@@ -269,6 +270,8 @@ def main():
     p.add_argument("--vcpu", type=int, default=16)
     p.add_argument("--dcs", default="")
     p.add_argument("--kind", default="ft", choices=("ft", "dino"))
+    p.add_argument("--max-h", type=float, default=3.0, help="the pod removes ITSELF after this many hours")
+    p.add_argument("--grace-min", type=float, default=45, help="… and this long after its job ended")
     p = sub.add_parser("status")
     p.add_argument("--lines", type=int, default=3)
     p = sub.add_parser("pull")

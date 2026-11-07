@@ -27,6 +27,9 @@ import time
 
 import numpy as np
 
+# RunPod images export HF_HUB_ENABLE_HF_TRANSFER=1 without the hf_transfer package
+# (open_clip's hub download then fails) — plain downloads
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ft_train as FTT  # noqa: E402  (fetch, path_of, write paths — same photos as the fine-tune pilot)
