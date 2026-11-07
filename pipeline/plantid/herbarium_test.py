@@ -139,6 +139,22 @@ def cmd_list():
         f"images {sum(len(h['images']) for h in have)}")
 
 
+def cmd_select_ship():
+    """Every class still WITHOUT a training photo after the rare-heldout move (and not
+    merged) → classes-ship.json (as group "Z"); `HB_CLASSES=classes-ship.json` makes
+    list/fetch/embed work on it (recs and photos shared with the test)."""
+    import pyarrow.parquet as pq
+    n = np.load(os.path.join(V2, "runs", RUN + ".npz"))["n_c"].copy()
+    merged = np.load(os.path.join(V2, "head_capacity", "vm", "val.npz"))["cm"] < -1
+    ex = pq.read_table(os.path.join(CACHE, "rare_heldout", "extras.parquet"), columns=["u"]).column(0).to_numpy()
+    n += np.bincount(ex, minlength=len(n))
+    names = pq.read_table(os.path.join(CACHE, "australia", "labels.parquet"), columns=["name"]).column(0).to_pylist()
+    Z = np.where((n == 0) & ~merged)[0]
+    json.dump({"Z": [int(c) for c in Z], "S": [], "F": [], "names": {int(c): names[c] for c in Z}},
+              open(os.path.join(OUT, "classes-ship.json"), "w"), indent=1)
+    log(f"ship: {len(Z)} classes without a training photo after the move")
+
+
 def cmd_list_gbif():
     """GBIF: strict name match (kingdom Plantae; synonyms → accepted key), then
     occurrence search basisOfRecord PRESERVED_SPECIMEN + StillImage (300 per page,
@@ -147,7 +163,7 @@ def cmd_list_gbif():
     import hashlib as H
     import urllib.parse
     import sources_pull as SP
-    sel = json.load(open(os.path.join(OUT, "classes.json")))
+    sel = json.load(open(os.path.join(OUT, os.environ.get("HB_CLASSES", "classes.json"))))
     os.makedirs(RECS, exist_ok=True)
     todo = [(c, PER_ZS) for c in sel["Z"] + sel["S"]] + [(c, PER_F) for c in sel["F"]]
     st = {"no_match": 0, "no_images": 0}
@@ -391,6 +407,6 @@ def cmd_eval():
 
 
 if __name__ == "__main__":
-    cmds = {"select": cmd_select, "list": cmd_list_gbif if SRC == "gbif" else cmd_list, "fetch": cmd_fetch, "embed": cmd_embed, "eval": cmd_eval}
+    cmds = {"select-ship": cmd_select_ship, "select": cmd_select, "list": cmd_list_gbif if SRC == "gbif" else cmd_list, "fetch": cmd_fetch, "embed": cmd_embed, "eval": cmd_eval}
     for c in (list(cmds) if sys.argv[1] == "all" else sys.argv[1:]):
         cmds[c]()
