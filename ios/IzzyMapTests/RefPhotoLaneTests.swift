@@ -9,7 +9,11 @@ import UIKit
 /// whole session — every photo a name plate until relaunch).
 struct RefPhotoLaneTests {
     nonisolated final class Gate: @unchecked Sendable {
-        let open = DispatchSemaphore(value: 0)
+        private let sem = DispatchSemaphore(value: 0)
+        func block() { sem.wait() }
+        func signal() { sem.signal() }
+        /// Whether it was signalled within `seconds` (a semaphore wait isn't allowed in async code).
+        func signalled(within seconds: Double) -> Bool { sem.wait(timeout: .now() + seconds) == .success }
     }
 
     @Test func stuckDecodesRecover() async throws {
@@ -17,17 +21,17 @@ struct RefPhotoLaneTests {
         let gate = Gate()
         let image = UIImage()
         for n in 1...RefPhotoDecoder.Lane.maxStuck {
-            let got = await lane.run(file: "stuck\(n)") { gate.open.wait(); return image }
+            let got = await lane.run(file: "stuck\(n)") { gate.block(); return image }
             #expect(got == nil)
             #expect(lane.stuckNow == n)
         }
         // full: answers at once, the work never runs
         let ran = Gate()
-        let refused = await lane.run(file: "refused") { ran.open.signal(); return image }
+        let refused = await lane.run(file: "refused") { ran.signal(); return image }
         #expect(refused == nil)
-        #expect(ran.open.wait(timeout: .now() + 0.3) == .timedOut)
+        #expect(!ran.signalled(within: 0.3))
         // the stuck decodes return: the lane works again
-        for _ in 1...RefPhotoDecoder.Lane.maxStuck { gate.open.signal() }
+        for _ in 1...RefPhotoDecoder.Lane.maxStuck { gate.signal() }
         let deadline = Date.now.addingTimeInterval(3)
         while lane.stuckNow > 0, Date.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         #expect(lane.stuckNow == 0)
