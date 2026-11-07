@@ -73,11 +73,34 @@ def call(pod, method, path, data=None, timeout=120):
         return r.read()
 
 
-def code_tgz():
+DINO_W = os.path.join(FT, "dino", "weights")   # <key>/model.safetensors (fp16) + config.json, see dino_eval.py weights
+
+
+def code_tgz(kind="ft"):
     b = io.BytesIO()
     with tarfile.open(fileobj=b, mode="w:gz") as t:
         t.add(os.path.join(HERE, "ft_train.py"), arcname="ft_train.py")
+        if kind == "dino":
+            t.add(os.path.join(HERE, "dino_embed.py"), arcname="dino_embed.py")
     return b.getvalue()
+
+
+def dino_files(job):
+    """(name, path, offset, length) of the weight parts and configs the dino pod needs."""
+    keys = sorted({v["model"] for v in job.get("variants", [{"model": "vitl"}, {"model": "vith"}])})
+    out = []
+    for k in keys:
+        p = os.path.join(DINO_W, k, "model.safetensors")
+        size, part = os.path.getsize(p), 95 * 2 ** 20
+        out += [(f"w-{k}-{i:03d}", p, off, min(part, size - off)) for i, off in enumerate(range(0, size, part))]
+        out.append((f"cfg-{k}.json", os.path.join(DINO_W, k, "config.json"), 0, None))
+    return out
+
+
+def read_part(path, off, n):
+    with open(path, "rb") as f:
+        f.seek(off)
+        return f.read() if n is None else f.read(n)
 
 
 def wait_up(pod, limit=1200):
@@ -103,9 +126,10 @@ def put(pod, name, data):
 
 
 def cmd_launch(a):
-    job = dict(json.loads(a.job), arm=a.arm, revision=RX.REVISION)
+    job = dict(json.loads(a.job), arm=a.arm, revision=RX.REVISION, kind=a.kind)
     token = secrets.token_urlsafe(32)
-    boot = base64.b64encode(open(os.path.join(HERE, "ft_pod.py"), "rb").read()).decode()
+    boot = base64.b64encode(open(os.path.join(HERE, "dino_pod.py" if a.kind == "dino" else "ft_pod.py"),
+                                 "rb").read()).decode()
     body = {"name": f"izzy-ft-{a.name or a.arm}", "image": RX.IMAGE, "cloud": a.cloud, "disk": 120,
             "ports": ["8000/http"], "gpu": {"id": a.gpu, "count": 1, "minVcpuCountPerGpu": a.vcpu},
             "env": {"IZZY_TOKEN": token, "IZZY_BOOT": boot}, "entrypoint": ["bash", "-c"],
@@ -130,9 +154,14 @@ def start(pod):
     job = pod["job"]
     wait_up(pod)
     t0 = time.time()
-    files = [("code.tgz", code_tgz()), ("job.json", json.dumps(job).encode())]
+    kind = job.get("kind", "ft")
+    files = [("code.tgz", code_tgz(kind)), ("job.json", json.dumps(job).encode())]
     for n in ("todo.parquet", "classes.json", "mu.npy", "tmean.npy", "text_sub.npy"):
         files.append((n, open(os.path.join(PLAN, n), "rb").read()))
+    if kind == "dino":  # weight parts are read one at a time (≤ 95 MB each in memory per thread)
+        with cf.ThreadPoolExecutor(6) as ex:
+            list(ex.map(lambda f: put(pod, f[0], read_part(*f[1:])), dino_files(job)))
+        print(f"  weights uploaded in {time.time() - t0:.0f} s", flush=True)
     tars = sorted(f for f in os.listdir(PLAN) if f.startswith("photos-") and f.endswith(".tar"))
     if job.get("no_tars"):
         tars = []
@@ -239,6 +268,7 @@ def main():
     p.add_argument("--cloud", default="SECURE")
     p.add_argument("--vcpu", type=int, default=16)
     p.add_argument("--dcs", default="")
+    p.add_argument("--kind", default="ft", choices=("ft", "dino"))
     p = sub.add_parser("status")
     p.add_argument("--lines", type=int, default=3)
     p = sub.add_parser("pull")
