@@ -369,6 +369,8 @@ extension PlantPhoto {
 /// Credit lines shown with the plant lists and sheets (inventory §4).
 public enum PlantCredits {
     public static let plants = "Plant profiles & photos: Understorey Network Tasmania (photos © their photographers)"
+    /// A profile with no photo of its own (a reference photo may stand in, credited beside it).
+    public static let profiles = "Plant profile: Understorey Network Tasmania"
     public static let records = "Occurrence records: Atlas of Living Australia (incl. TNVA, iNaturalist Australia, AVH)"
     public static let named = "“Named” lists from From Forest to Fjaeldmark."
 }

@@ -626,12 +626,33 @@ struct ThresholdMark: View {
     }
 }
 
-/// A plant the guide has no photo of: its name set as a plate — the genus
-/// initial on a small tile, the full name (and family) on a large one.
-/// Typographic and quiet, never a broken image.
+/// A plant with no photo to show: its name set as a plate — the genus
+/// initial on a small tile, the full name (and family) on a large one,
+/// with why there is no photo. Typographic and quiet, never a broken image.
 struct NamePlate: View {
     let label: PlantIDLabel?
     let side: CGFloat
+    /// Why there is no photo; nil = read from the reference photos' state.
+    var reason: Reason? = nil
+
+    enum Reason {
+        /// The reference photos have none for this species.
+        case none
+        /// The reference photos aren't on the device (yet).
+        case notYet
+        /// There is one, but it couldn't be shown.
+        case failed
+
+        var text: String {
+            switch self {
+            case .none: "No reference photo"
+            case .notYet: "Reference photos not on this \(DeviceNoun.current) yet"
+            case .failed: "Couldn’t show the photo"
+            }
+        }
+    }
+
+    private var shownReason: Reason { reason ?? (PlantIDRefPhotos.shared.available ? .none : .notYet) }
 
     private var initial: String { String((label?.genusName ?? "?").prefix(1)) }
 
@@ -654,10 +675,12 @@ struct NamePlate: View {
                             .font(.caption)
                             .foregroundStyle(DesignColor.secondaryInk)
                     }
-                    Text("No photo in the guide")
+                    Text(shownReason.text)
                         .font(.caption2)
                         .foregroundStyle(DesignColor.secondaryInk)
+                        .multilineTextAlignment(.center)
                         .padding(.top, 2)
+                        .accessibilityIdentifier("plant-id-plate-reason")
                 }
                 .padding(12)
             } else {
