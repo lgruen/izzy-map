@@ -489,9 +489,26 @@ def usage_cost(u, price):
             + (u.get("cache_read_input_tokens") or 0) * price["read"]) / 1e6
 
 
+GAP_CANDS = os.path.join(V2, "gap", "cands.parquet")
+
+
+def gap_species():
+    """Species whose candidates come from refphotos_gap.py (gap/cands.parquet)."""
+    if not os.path.exists(GAP_CANDS):
+        return set()
+    return {int(u) for u in pq.read_table(GAP_CANDS, columns=["u"]).column(0).to_pylist()}
+
+
 def cand_table():
-    """cands.parquet minus candidates without a thumbnail, grouped by species (candidate order)."""
+    """cands.parquet minus candidates without a thumbnail, grouped by species (candidate order);
+    for a species in gap/cands.parquet (refphotos_gap.py) its gap candidates replace the old set."""
+    import pandas as pd
     C = pq.read_table(os.path.join(V2, "cands.parquet")).to_pandas()
+    if os.path.exists(GAP_CANDS):
+        Gp = pq.read_table(GAP_CANDS).to_pandas()
+        if len(Gp):
+            C = pd.concat([C[~C["u"].isin(set(Gp["u"]))], Gp[[c for c in C.columns if c in Gp.columns]]],
+                          ignore_index=True)
     C = C[[os.path.exists(thumb_path(p)) for p in C["pid"]]]
     return {int(u): g.sort_values("cand").to_dict("records") for u, g in C.groupby("u")}
 
@@ -547,7 +564,10 @@ def cmd_submit(a):
     os.makedirs(os.path.join(V2, "vision"), exist_ok=True)
     bfile = os.path.join(V2, "vision", "batches.json")
     batches = json.load(open(bfile)) if os.path.exists(bfile) else []
-    done = {r["u"] for r in load_results().values() if r.get("usable")}
+    # a usable result is final — unless it was judged on other candidates than the
+    # species has now (the gap fill replaced them, or a later gap run dropped them again)
+    gap = gap_species()
+    done = {r["u"] for r in load_results().values() if r.get("usable") and current(r, G, gap)}
     inflight = {u for b in batches if not b.get("collected") for u in b["us"]}
     if a.pilot:
         us = [u for u in pilot_set(G) if u not in done and u not in inflight]
@@ -585,6 +605,15 @@ def cmd_submit(a):
         chunk.append((u, p))
         size += sz
     flush()
+
+
+def current(r, G, gap):
+    """Was result r judged on the species' current candidates? A gap species: exactly
+    them; any other: at least one shown photo is still a candidate (a species the gap
+    fill dropped again carries a result on gap photos that are gone)."""
+    pids = [int(x["pid"]) for x in G.get(r["u"], [])]
+    shown = [int(x) for x in r.get("shown") or []]
+    return shown == pids if r["u"] in gap else bool(set(shown) & set(pids))
 
 
 def load_results():
@@ -683,7 +712,7 @@ def cmd_stats(a):
 # ------------------------------------------------------------------ build the pack folder
 
 def source_of(r):
-    return {0: "inat", 1: "inat", 2: "ala", 3: "commons"}[int(r["kind"])]
+    return {0: "inat", 1: "inat", 2: "ala", 3: "commons", 4: "inat"}[int(r["kind"])]   # 4: refphotos_gap.py
 
 
 # Fallback for a species where Opus found no acceptable photo (Leo, 2026-11-06):
@@ -771,10 +800,11 @@ def cmd_build(a):
     G = cand_table()
     res = load_results()
     picks, none, unresolved, fallback = {}, [], [], {}
+    gap = gap_species()
     for u in sorted(G):
         r = res.get(f"u{u}")
-        if not r or not r.get("usable"):
-            unresolved.append(u)
+        if not r or not r.get("usable") or not current(r, G, gap):
+            unresolved.append(u)   # (or judged on other candidates than the current ones)
             continue
         ch = r["out"]["chosen"]
         if ch is None:
@@ -785,14 +815,18 @@ def cmd_build(a):
             ch, caption = fb
             fallback[u] = caption
         pid = r["shown"][ch - 1]
-        row = next(x for x in G[u] if int(x["pid"]) == pid)
+        row = next((x for x in G[u] if int(x["pid"]) == pid), None)
+        if row is None:   # the chosen photo is no longer a candidate (thumbnail gone): ask again
+            unresolved.append(u)
+            fallback.pop(u, None)
+            continue
         picks[u] = (row, {**r["out"], "chosen": ch})
     say(f"{len(picks):,} picks ({len(fallback):,} fallback: {dict(collections.Counter(fallback.values()))}), "
         f"{len(none):,} none acceptable, {len(unresolved):,} unresolved")
     if unresolved and not a.allow_unresolved:
         sys.exit("unresolved species (run submit/collect again, or --allow-unresolved)")
     ev = BR.eval_photo_ids()
-    assert not (ev & {int(r["photo_id"]) for r, _ in picks.values() if r["kind"] <= 1}), "evaluation photo picked"
+    assert not (ev & {int(r["photo_id"]) for r, _ in picks.values() if r["kind"] in (0, 1, 4)}), "evaluation photo picked"
     os.makedirs(PACK, exist_ok=True)
     slugs = {}
     for u, (row, _) in picks.items():
@@ -863,6 +897,8 @@ def cmd_build(a):
             "photo": int(row["photo_id"]) if src == "inat" else row["image_id"],
             "obs": row["obs"] if src in ("inat", "ala") else "", "page_url": row["page_url"],
             "original_bytes": u in orig, "score": score}
+        if (L[u].get("un") or {}).get("ids"):   # the guide shows it for profiles without a photo
+            photos[L[u]["name"]]["un"] = list(L[u]["un"]["ids"])
         if u in fallback:
             photos[L[u]["name"]]["fallback"] = True
             if fallback[u]:
@@ -882,7 +918,11 @@ def cmd_build(a):
                  "licence given. Show 'attribution' next to the photo. NC licences: non-commercial use only. "
                  "Photos with original_bytes are CC BY-ND / BY-NC-ND and are the unmodified iNaturalist JPEG. "
                  "`fallback`: no candidate was acceptable as a field photo, so the best herbarium sheet or "
-                 "hand-held photo stands in; `caption` says what it shows (show it with the photo).",
+                 "hand-held photo stands in; `caption` says what it shows (show it with the photo). "
+                 "`un`: plants.json ids of the Understorey Network profiles the species is. Species without "
+                 "a usable training photo get candidates from refphotos_gap.py instead: iNaturalist research "
+                 "grade and needs-ID observations and ALA field photos and herbarium specimen images (the "
+                 "image's own licence), in source order rather than by embedding.",
         "labels": "au-labels.json", "count": len(photos), "edge": a.edge, "format": f"avif q{a.quality}",
         "bytes": total, "licences": {k: {"label": LIC_LABEL[k], "url": LIC_URL[k]} for k in sorted(lic_tot)},
         "photos": photos}

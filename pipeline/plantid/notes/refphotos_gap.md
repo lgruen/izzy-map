@@ -1,0 +1,73 @@
+# Reference-photo gap fill (2026-11-07)
+
+Leo, using the app: "many species didn't have reference photos". The
+refphotos pack v2 (notes/refphotos_v2.md) has 18,373 photos for 22,103
+unmerged labels. 3,730 have none:
+
+- 3,517 have no training photos, so `select` had no candidate (candidates
+  come only from the training rows in data-final.npz);
+- 213 have training photos, and Opus rejected all 5 candidates for 125 of
+  them (the rest had no candidate passing the size gate).
+
+In Tasmania the gap is small: 71 of the 3,003 species with ALA records in
+the Tasmania box (0.4 % of the records). Most of what Leo saw was the app
+hiding photos it had (fixed in the app, same day): the guide never showed a
+reference photo (1,030 of the 1,160 UN profiles without a photo have one), and
+the decode lane gave up for the whole session after 3 stuck decodes.
+
+## Sources measured (ALA facets + iNat API, 2026-11-07)
+
+ALA's occurrence-level `license` is the RECORD's licence, not the photo's:
+ALA's iNaturalist copy (dr1411) reports CC BY-NC records whose photos are
+all-rights-reserved. Only the image service's own licence
+(`getImageInfoForIdList`) counts, as in sources_pull.py. With that rule, the
+71 Tasmanian gaps (dry run with `--only-tas`) come out as:
+
+| first candidate            | species |
+|----------------------------|--------:|
+| herbarium specimen only    | 43 |
+| iNat "needs ID" photo      | 12 |
+| iNat research grade        | 2 |
+| ALA field photo            | 2 |
+| nothing licensed           | 12 |
+
+(58 species got 1–5 candidates, 211 photos: 182 ALA, 29 iNat.) The
+first-pass facet counts in the thread (22 with field photos) were inflated by
+the record-licence issue.
+
+Specimen images: BRI, MEL, Te Papa (WELT), QVM, and those NSW AVH images that
+carry their own CC licence. The NSW feed's UNSPECIFIED images stay out.
+
+## The script
+
+`refphotos_gap.py find → fetch → report` (resumable; v2/gap/). See its
+docstring for the rules. Here's how it joins the v2 pipeline:
+
+- `build_refphotos_v2.cand_table()` reads gap/cands.parquet. For a species
+  listed there, the gap candidates REPLACE the old set, because Opus already
+  judged the old one.
+- `submit` re-asks Opus for a gap species whose candidates differ from those
+  its stored result was judged on. Every other species keeps its result.
+- `build` treats such a stale result as unresolved, never as a pick.
+- Kind 4 = iNat outside the training set (source "inat"; the eval-photo
+  assert covers it). ALA gap photos are kind 2 with pid 2^62 + hash.
+- The build's fallback rule (herbarium sheet or hand-held sprig, captioned)
+  is what turns an all-specimen candidate set into a photo. Each species keeps
+  up to one specimen slot when field photos exist (≤ 4 field + specimens).
+- index.json now carries `un` (plants.json ids) per photo, so the guide
+  finds the photo by profile id. Without it the app falls back to name, then
+  species. That costs 3 plants (spelling variants), so there's no need to
+  re-upload a pack only for this field.
+
+## Running it (Leo's Mac)
+
+```bash
+uv run --with duckdb --with pyarrow --with pandas --with numpy --with 'pillow>=11.3' \
+    python3 -I pipeline/plantid/refphotos_gap.py find      # ~1.3 iNat req/species at 1/s
+uv run … refphotos_gap.py fetch && uv run … refphotos_gap.py report
+uv run … --with scikit-learn --with anthropic python3 -I pipeline/plantid/build_refphotos_v2.py submit --approve-spend
+uv run … build_refphotos_v2.py collect --wait
+uv run … build_refphotos_v2.py build
+python3 pipeline/build_packs.py refphotos --verify refphotos
+pipeline/upload_packs.sh refphotos   # Leo approves; every device re-downloads ~0.4 GB
+```
