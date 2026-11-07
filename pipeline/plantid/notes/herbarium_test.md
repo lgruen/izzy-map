@@ -30,3 +30,18 @@ F = 593 to fit a sheet→row map. Head final-cb50-s1, main prior λ 1, τ-norm 0
   as the leak (the other rows were trained with S's photos as negatives), not
   as "sheets beat photos". The clean Z numbers carry the claim: 13.6 → 36.5
   top-1, 46 → 67 top-5 (92 photos / 70 species, ±~10 pt).
+
+## In the shipped configuration (sheet_rows.py, 2026-11-08)
+
+`sheet_rows.py` writes the blend into the multi-prototype heads (photo-less
+classes have one prototype, still exactly the text init — asserted), rule as
+above with the head's own genus shift. End-to-end check with the SHIPPED v3
+configuration (mpA01 | adaptive prior | Tasmania box bank; T/ladder re-chosen
+on val, unchanged), old heads + old evaluation sets, 75 classes with sheets:
+
+| | before | with sheet rows |
+|---|---|---|
+| AU-test, photo-less classes with sheets (70 classes, 92 photos) | 22.9 | **39.0** |
+| AU-test, every other class | 86.17 | 86.14 |
+| A-test / C-report photo-less (5 / 6 classes) | 26.7 / 33.3 | 33.3 / 50.0 |
+| AU-test overall / A-test overall | 85.7 / 89.2 | 85.8 / 89.3 |
