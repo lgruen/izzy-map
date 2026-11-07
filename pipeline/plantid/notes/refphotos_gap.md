@@ -20,20 +20,26 @@ the decode lane gave up for the whole session after 3 stuck decodes.
 ALA's occurrence-level `license` is the RECORD's licence, not the photo's:
 ALA's iNaturalist copy (dr1411) reports CC BY-NC records whose photos are
 all-rights-reserved. Only the image service's own licence
-(`getImageInfoForIdList`) counts, as in sources_pull.py. With that rule, the
-71 Tasmanian gaps (dry run with `--only-tas`) come out as:
+(`getImageInfoForIdList`) counts, as in sources_pull.py. With that rule,
+all 3,730 (looked up 2026-11-07, 61 min at ~1 iNat request/s) come out as
+follows, by the first candidate each species would get:
 
-| first candidate            | species |
-|----------------------------|--------:|
-| herbarium specimen only    | 43 |
-| iNat "needs ID" photo      | 12 |
-| iNat research grade        | 2 |
-| ALA field photo            | 2 |
-| nothing licensed           | 12 |
+| first candidate            | all 3,730 | Opus-rejected 125 | Tasmania 71 |
+|----------------------------|----------:|------------------:|------------:|
+| iNat research grade        | 66        | 22                | 2  |
+| ALA field photo            | 177       | 93                | 0  |
+| iNat "needs ID" photo      | 536       | 3                 | 12 |
+| herbarium specimen only    | 1,494     | 5                 | 42 |
+| nothing licensed           | 1,457     | 2                 | 15 |
 
-(58 species got 1–5 candidates, 211 photos: 182 ALA, 29 iNat.) The
-first-pass facet counts in the thread (22 with field photos) were inflated by
-the record-licence issue.
+So 2,273 species get candidates: 779 with a field photo first and 1,494
+with specimens only, which Opus is expected to reject so that the
+captioned fallback applies. The Opus-rejected 125 mostly get ALA field
+photos (APII) that were never candidates before: these are the 77 APII
+species from the thread. The first-pass facet counts in the thread (22
+Tasmanian species with field photos) were inflated by the record-licence
+issue and by synonym lumps (Hibbertia mathinnicola → H. calycina,
+Acacia centrinervia → A. lineata), which `same_taxon` now refuses.
 
 Specimen images: BRI, MEL, Te Papa (WELT), QVM, and those NSW AVH images that
 carry their own CC licence. The NSW feed's UNSPECIFIED images stay out.
