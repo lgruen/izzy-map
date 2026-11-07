@@ -16,7 +16,7 @@ Variants (job.json "variants", default below): model key + square input
 size. Preprocessing = the production geometry (short side → size, bicubic,
 centre crop), ImageNet mean/std (DINOv3's). Per photo two vectors from the
 final (layer-normed) tokens: CLS, and the mean of the patch tokens (register
-tokens excluded). Out: /work/out/<name>-NNNN.npz {row, photo_id, cls, pmean
+tokens excluded); Perception Encoder: its projected image embedding (cls). Out: /work/out/<name>-NNNN.npz {row, photo_id, cls, pmean
 (fp16), ok}, log.json (rates).
 """
 import argparse
@@ -33,8 +33,12 @@ import ft_train as FTT  # noqa: E402  (fetch, path_of, write paths — same phot
 
 VARIANTS = [{"name": "dinol", "model": "vitl", "size": 224},
             {"name": "dinolhr", "model": "vitl", "size": 336},
-            {"name": "dinoh", "model": "vith", "size": 224}]
-MEAN, STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+            {"name": "dinoh", "model": "vith", "size": 224},
+            {"name": "pel", "model": "pecore", "size": 336}]
+MEAN, STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)   # DINOv3 (ImageNet)
+PE_HUB = "hf-hub:timm/PE-Core-L-14-336"   # Perception Encoder core L/14 @ 336 (open_clip; not gated)
+PE_REV = None                              # pinned by the pod log (open_clip prints the resolved file)
+NORM = {"vitl": (MEAN, STD), "vith": (MEAN, STD), "pecore": ((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))}
 
 
 def log(*a):
@@ -42,11 +46,12 @@ def log(*a):
 
 
 class DS:
-    def __init__(self, paths, sizes):
+    def __init__(self, paths, variants):
         import torchvision.transforms as TT
         self.paths = paths
-        self.tf = {s: TT.Compose([TT.Resize(s, interpolation=TT.InterpolationMode.BICUBIC), TT.CenterCrop(s),
-                                  TT.ToTensor(), TT.Normalize(MEAN, STD)]) for s in sizes}
+        self.tf = {v["name"]: TT.Compose([TT.Resize(v["size"], interpolation=TT.InterpolationMode.BICUBIC),
+                                          TT.CenterCrop(v["size"]), TT.ToTensor(), TT.Normalize(*NORM[v["model"]])])
+                   for v in variants}
 
     def __len__(self):
         return len(self.paths)
@@ -55,7 +60,7 @@ class DS:
         from PIL import Image
         with Image.open(self.paths[i]) as im:
             im = im.convert("RGB")
-            return {s: tf(im) for s, tf in self.tf.items()}, i
+            return {k: tf(im) for k, tf in self.tf.items()}, i
 
 
 def run(a):
@@ -83,19 +88,25 @@ def run(a):
     json.dump(info, open(os.path.join(od, "log.json"), "w"), indent=1)
     log(f"{len(rows):,} photos to embed ({info['missing']} missing)")
     dt = torch.bfloat16 if dev == "cuda" else torch.float16
-    models = {}
+    models, dims = {}, {}
     for k in sorted({v["model"] for v in variants}):
-        m = AutoModel.from_pretrained(os.path.join(a.models, k), torch_dtype=dt).to(dev).eval()
+        if k == "pecore":  # image tower only; output = the projected (CLIP) embedding
+            import open_clip
+            m_, _, _ = open_clip.create_model_and_transforms(PE_HUB)
+            m = m_.visual.to(dev, dt).eval()
+            del m_
+            dims[k] = int(m(torch.zeros(1, 3, 336, 336, device=dev, dtype=dt)).shape[-1])
+        else:
+            m = AutoModel.from_pretrained(os.path.join(a.models, k), torch_dtype=dt).to(dev).eval()
+            dims[k] = m.config.hidden_size
         models[k] = m
-        log(f"model {k}: hidden {m.config.hidden_size}, registers {m.config.num_register_tokens}, "
-            f"{sum(p.numel() for p in m.parameters()) / 1e6:.0f} M params")
-    out = {v["name"]: (np.zeros((len(paths), models[v["model"]].config.hidden_size), np.float16),
-                       np.zeros((len(paths), models[v["model"]].config.hidden_size), np.float16)) for v in variants}
-    sizes = sorted({v["size"] for v in variants})
+        log(f"model {k}: dim {dims[k]}, {sum(p.numel() for p in m.parameters()) / 1e6:.0f} M params")
+    out = {v["name"]: (np.zeros((len(paths), dims[v["model"]]), np.float16),
+                       np.zeros((len(paths), dims[v["model"]]), np.float16)) for v in variants}
     bs = job.get("bs", 128)
     batches = [rows[i:i + bs].tolist() for i in range(0, len(rows), bs)]
     sub = [paths[i] for i in range(len(paths))]
-    dl = torch.utils.data.DataLoader(DS(sub, sizes), batch_sampler=batches, num_workers=workers, pin_memory=True,
+    dl = torch.utils.data.DataLoader(DS(sub, variants), batch_sampler=batches, num_workers=workers, pin_memory=True,
                                      prefetch_factor=4 if workers else None)
     t0, done, gpu_s = time.time(), 0, {v["name"]: 0.0 for v in variants}
     with torch.no_grad():
@@ -104,10 +115,14 @@ def run(a):
             for v in variants:
                 m = models[v["model"]]
                 t1 = time.time()
-                h = m(pixel_values=xs[v["size"]].to(dev, dt, non_blocking=True)).last_hidden_state.float()
-                r = 1 + m.config.num_register_tokens
-                out[v["name"]][0][idx] = h[:, 0].cpu().numpy().astype(np.float16)
-                out[v["name"]][1][idx] = h[:, r:].mean(1).cpu().numpy().astype(np.float16)
+                x = xs[v["name"]].to(dev, dt, non_blocking=True)
+                if v["model"] == "pecore":  # one vector; pmean stays 0 (dino_eval uses cls only then)
+                    out[v["name"]][0][idx] = m(x).float().cpu().numpy().astype(np.float16)
+                else:
+                    h = m(pixel_values=x).last_hidden_state.float()
+                    r = 1 + m.config.num_register_tokens
+                    out[v["name"]][0][idx] = h[:, 0].cpu().numpy().astype(np.float16)
+                    out[v["name"]][1][idx] = h[:, r:].mean(1).cpu().numpy().astype(np.float16)
                 if dev == "cuda":
                     torch.cuda.synchronize()
                 gpu_s[v["name"]] += time.time() - t1

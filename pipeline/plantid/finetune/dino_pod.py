@@ -53,8 +53,8 @@ for k in vitl vith; do
   ls -la models/$k
 done
 E="uv run --python 3.12 --with torch==2.7.* --with torchvision==0.22.* --with transformers==4.57.*
-   --with safetensors --with pyarrow --with pillow --with numpy<2.3 python3 -u"
-export HF_HUB_OFFLINE=1
+   --with safetensors --with open_clip_torch --with pyarrow --with pillow --with numpy<2.3 python3 -u"
+# (no HF_HUB_OFFLINE: the Perception Encoder comes from the public hub; DINOv3 is local)
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 nproc; free -g | head -2; df -h /work | tail -1
 $E code/dino_embed.py --job in/job.json --inp in --out out --photos /work/photos --models /work/models

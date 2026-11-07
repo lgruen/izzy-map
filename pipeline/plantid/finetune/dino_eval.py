@@ -45,7 +45,7 @@ DINO = os.path.join(FT, "dino")
 BA = os.path.join(V.V2, "bank_analysis")
 DEV = "mps"
 REPOS = {"vitl": "facebook/dinov3-vitl16-pretrain-lvd1689m", "vith": "facebook/dinov3-vith16plus-pretrain-lvd1689m"}
-VARIANTS = ("dinol", "dinolhr", "dinoh")
+VARIANTS = ("dinol", "dinolhr", "dinoh", "pel")
 WEIGHTS = (0.5, 0.75, 1.0)
 
 
@@ -86,7 +86,9 @@ def load_dino(name, row_of, n):
     for f in sorted(glob.glob(os.path.join(d, f"{name}-*.npz"))):
         z = np.load(f)
         r = row_of(z["photo_id"])
-        x = np.concatenate([unit(z["cls"].astype(np.float32)), unit(z["pmean"].astype(np.float32))], 1)
+        c_ = z["cls"].astype(np.float32)
+        pm = z["pmean"].astype(np.float32)
+        x = unit(c_) if not np.abs(pm).any() else np.concatenate([unit(c_), unit(pm)], 1)
         if E is None:
             E = np.zeros((n, x.shape[1]), np.float32)
         E[r] = x
