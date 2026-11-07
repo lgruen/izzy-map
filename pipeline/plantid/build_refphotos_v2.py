@@ -47,6 +47,7 @@ AU = BR.AU
 V2 = os.path.join(BR.OUT, "v2")
 THUMB = os.path.join(V2, "thumb")
 PACK = os.path.join(BR.OUT, "pack-v2", "refphotos")
+TEXT_COLS = ("by", "login", "obs", "page_url", "obs_url", "image_id", "attribution", "basis", "name")
 DATA = os.path.join(AU, "v2", "data-final.npz")
 SOURCES = os.path.join(CACHE, "sources", "extra_photos_sources.parquet")
 SRC_IDS = os.path.join(AU, "v2", "extra_sources_ids.parquet")
@@ -881,6 +882,9 @@ def cmd_build(a):
     photos, per, lic_tot, src_tot = {}, {}, collections.Counter(), collections.Counter()
     for u in sorted(picks):
         row, out = picks[u]
+        # a missing text value arrives from parquet as NaN (truthy, and not JSON):
+        # gap APII photos without a photographer have no `by`
+        row = {k: (None if k in TEXT_COLS and isinstance(v, float) and v != v else v) for k, v in dict(row).items()}
         fn = files[u]
         if u in orig:
             _, (w, h), nb = orig[u]
