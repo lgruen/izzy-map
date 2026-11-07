@@ -438,7 +438,7 @@ milestones, map-proof results); the design brief and language is
   the packs live in `data/`). Credentials: a dedicated App Store Connect
   API key (revocable alone in Users and Access → Integrations), its
   `AuthKey_<id>.p8` in `~/.appstoreconnect/private_keys/` (600), the ids
-  in `~/.config/izzy-map/asc.env` (600; `APP_APPLE_ID`, `ASC_KEY_ID`,
+  in `~/.config/izzymap/asc.env` (600; `APP_APPLE_ID`, `ASC_KEY_ID`,
   `ASC_ISSUER_ID`; the script parses only those three and refuses a
   group/world-readable file). Never read or print either file. Flow: post
   `upload_packs.sh --show <pack>` output in the thread, wait for Leo's OK

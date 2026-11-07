@@ -33,7 +33,7 @@
 # asset packs; revocable on its own in Users and Access → Integrations).
 # altool looks for AuthKey_<KEY_ID>.p8 in ./private_keys, ~/private_keys,
 # ~/.private_keys or ~/.appstoreconnect/private_keys (keep it mode 600).
-# The ids come from ~/.config/izzy-map/asc.env (mode 600, refused if group-
+# The ids come from ~/.config/izzymap/asc.env (mode 600, refused if group-
 # or world-readable), which may set APP_APPLE_ID, ASC_KEY_ID, ASC_ISSUER_ID;
 # variables already in the environment win. APP_APPLE_ID is App Store
 # Connect → IzzyMap → App Information → "Apple ID".
@@ -43,7 +43,7 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 PACKS=data/packs
 LOG="$PACKS/uploaded.log"
-ENV_FILE="${IZZY_ASC_ENV:-$HOME/.config/izzy-map/asc.env}"
+ENV_FILE="${IZZY_ASC_ENV:-$HOME/.config/izzymap/asc.env}"
 
 die() { echo "upload_packs: $*" >&2; exit 1; }
 sha_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
