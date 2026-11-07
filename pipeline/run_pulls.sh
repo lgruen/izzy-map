@@ -7,7 +7,7 @@
 # device would re-download ~2 GB; CLAUDE.md). Re-running after an
 # interruption is free — the tile cache makes build_raster.py resume.
 # Nothing is uploaded: uploads stay a deliberate local step, printed at the
-# end (pipeline/upload_packs.sh <ids> — only for packs whose tiles changed).
+# end (pipeline/upload_packs.sh <id>@<hash> — only for packs whose tiles changed).
 # Usage: nohup pipeline/run_pulls.sh > pipeline/work/pulls.log 2>&1 &
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -26,7 +26,7 @@ for key in "${PACKS[@]}"; do
   fi
   tail -3 "pipeline/work/build_$key.log"
   echo "===== $(date '+%F %T') package $file → data/packs/$id.aar ====="
-  if ! python3 pipeline/build_packs.py "$id" > "pipeline/work/pack_$id.log" 2>&1; then
+  if ! python3 pipeline/build_packs.py "$id" --verify "$id" > "pipeline/work/pack_$id.log" 2>&1; then
     echo "!!! packaging $id FAILED (see pipeline/work/pack_$id.log); archive stays in data/ — rerun build_packs.py $id"
     tail -5 "pipeline/work/pack_$id.log"
   else
@@ -39,5 +39,5 @@ echo "===== $(date '+%F %T') all done ====="
 if [[ ${#BUILT[@]} -gt 0 ]]; then
   echo "Newly packaged: ${BUILT[*]}. Upload (LOCAL, ask Leo; each upload = a new version"
   echo "every device re-downloads — only packs whose tiles changed):"
-  echo "  APP_APPLE_ID=… ASC_KEY_ID=… ASC_ISSUER_ID=… pipeline/upload_packs.sh ${BUILT[*]}"
+  echo "  pipeline/upload_packs.sh --show ${BUILT[*]}   # then <id>@<hash> as it prints, once approved"
 fi

@@ -36,6 +36,10 @@ A `files` entry ending in "/" is a directory (packed recursively); a file
 listed inside it is packed with it (listed so the app can check for it).
 
 Upload is a separate, LOCAL, approved step: pipeline/upload_packs.sh.
+A pack can only be uploaded after `--verify` passed for it: that writes
+<out>/<id>.aar.sha256 (the archive's own SHA-256, `shasum -c` format), and
+the upload script needs that hash (or a ≥ 12-character prefix of it) named
+in its arguments. A rebuild deletes the old .sha256 first.
 """
 from __future__ import annotations
 
@@ -259,6 +263,11 @@ def check_sizes(pack: dict, aar: Path, data: Path) -> None:
         sys.exit(f"{pack['id']}: archive has no Manifest.json")
 
 
+def sidecar(aar: Path) -> Path:
+    """<id>.aar.sha256: written only after --verify passed; upload_packs.sh requires it."""
+    return aar.with_name(aar.name + ".sha256")
+
+
 def verify_hashes(pack: dict, aar: Path, data: Path) -> float:
     t = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"pack-{pack['id']}-", dir=aar.parent) as tmp:
@@ -338,6 +347,7 @@ def main() -> None:
         if fresh and not args.force:
             note = "up to date"
         else:
+            sidecar(aar).unlink(missing_ok=True)  # an unverified rebuild must not look uploadable
             manifest_path.write_text(manifest)
             subprocess.run(["xcrun", "ba-package", "evaluate", str(manifest_path)], env=ENV, check=True,
                            capture_output=True)
@@ -353,6 +363,11 @@ def main() -> None:
               f" ({size_out - size_in:+,} B), {note}")
         if pid in verify:
             print(f"    verified byte-for-byte in {verify_hashes(pack, aar, root):.1f} s")
+            digest = sha256(aar)
+            sidecar(aar).write_text(f"{digest}  {aar.name}\n")
+            print(f"    {aar.name} sha256 {digest} → {sidecar(aar).name} (upload: {pid}@{digest[:12]})")
+        elif sidecar(aar).is_file():
+            print(f"    {sidecar(aar).name} from an earlier --verify kept (archive unchanged since)")
 
     print(f"total {total_in / 1e9:.2f} GB in → {total_out / 1e9:.2f} GB in {time.monotonic() - started:.0f} s; "
           f"output {out}")
