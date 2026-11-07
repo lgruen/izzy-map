@@ -1950,7 +1950,7 @@ def v2_labels(run_photos, merge):
     return out, changed
 
 
-def v2_credits(pid, src, observers):
+def v2_credits(pid, src, observers, sheets=False):
     """credits.json (old shape + `sources`) and credits-photos.tsv.gz for EVERY
     training photo of the run's data (data-final.npz pid/src): the iNat
     open-data photos (plan train ∪ the Tasmanian run's; logins from the
@@ -1971,7 +1971,13 @@ def v2_credits(pid, src, observers):
                 seen.add(p)
                 obs[p] = (int(o), lic)
     assert len(obs) == len(base), f"credits: {len(base) - len(obs)} base photos without an observer"
-    want = {o for o, _ in obs.values()}
+    # r2: the rare species' held-out photos (rare_heldout.py; iNat open data, observer ids → logins)
+    rare = {}
+    rp = os.path.join(CACHE, "rare_heldout", "extras.parquet")
+    if os.path.exists(rp):
+        t = pq.read_table(rp, columns=["photo_id", "observer_id", "licence"]).to_pydict()
+        rare = {int(p): (int(o), lic) for p, o, lic in zip(t["photo_id"], t["observer_id"], t["licence"])}
+    want = {o for o, _ in obs.values()} | {o for o, _ in rare.values()}
     logins = {}
     with gzip.open(observers, "rt") as f:
         next(f)
@@ -1989,6 +1995,11 @@ def v2_credits(pid, src, observers):
         if int(p) in extra:
             extra.discard(int(p))
             rows.append(("inat", str(p), lg or "?", nm or "", lic, ""))
+    for p, (o, lic) in rare.items():
+        if p in extra:
+            extra.discard(p)
+            lg, nm = logins.get(o, ("?", ""))
+            rows.append(("inat", str(p), lg, nm, lic, ""))
     s = pq.read_table(os.path.join(CACHE, "extra", "extra_photos_src.parquet"),
                       columns=["photo_id", "image_id", "source", "login", "licence", "attribution", "dr_name"]).to_pydict()
     for p, iid, so, lg, lic, att, dr in zip(s["photo_id"], s["image_id"], s["source"], s["login"], s["licence"],
@@ -2000,6 +2011,19 @@ def v2_credits(pid, src, observers):
                          " ".join(tags.sub("", att or "").split())))
     assert not extra, f"credits: {len(extra)} extra photos without a source row"
     assert len(rows) == len(pid), (len(rows), len(pid))
+    n_photos = len(rows)
+    if sheets:  # herbarium sheets behind the photo-less classes' rows (sheet_rows.py; not training photos)
+        hb = os.path.join(CACHE, "herbarium")
+        emb_ids = set(np.load(os.path.join(hb, "emb-gbif.npz"))["image_id"].tolist())
+        for f in sorted(glob.glob(os.path.join(hb, "recs-gbif", "*.json"))):
+            d_ = json.load(open(f))
+            if not isinstance(sheets, bool) and d_["u"] not in sheets:
+                continue  # only the classes whose rows the sheets actually set
+            for im in d_["images"]:
+                if im["image_id"] in emb_ids:
+                    inst = im.get("inst") or "?"
+                    rows.append(("herbarium", f"gbif:{im['occ']}", inst, im.get("dataset") or inst,
+                                 im["license"], f"GBIF occurrence {im['occ']} ({im.get('dataset') or inst})"))
     with gzip.open(os.path.join(SHIP, "credits-photos.tsv.gz"), "wt") as f:
         f.write("photo_id\tobserver_login\tlicense\tsource\tattribution\n")
         for so, i, lg, _, lic, att in sorted(rows, key=lambda r: (r[0], r[1])):
@@ -2026,8 +2050,10 @@ def v2_credits(pid, src, observers):
                         "Commons. Each photo © its creator, under the licence listed. CC BY-NC binds IzzyMap to "
                         "non-commercial use. Per-photo list: credits-photos.tsv.gz (iNat photo page "
                         "https://www.inaturalist.org/photos/<id>; ALA image https://images.ala.org.au/image/<id>; "
-                        "Commons page id).",
-               "photos": len(rows), "licences": lic_tot, "sources": by_src,
+                        "Commons page id)." + (" Rows of species without training photos also use herbarium "
+                        "specimen images via GBIF (source \"herbarium\"; CC/PD media, one per specimen; "
+                        "https://www.gbif.org/occurrence/<id>)." if sheets else ""),
+               "photos": n_photos, "licences": lic_tot, "sources": by_src,
                "observers": [{"login": r[0], **({"name": r[1]} if r[1] else {}), "photos": r[2], "licences": r[3],
                               **({"source": r[4]} if r[4] != "inat" else {})} for r in obs_rows]},
               open(os.path.join(SHIP, "credits.json"), "w"), ensure_ascii=False, separators=(",", ":"))
@@ -2236,14 +2262,19 @@ def v2_check(W_fp32, b):
 # merges and training photos as v2 (asserted) → v2-labels.json and the credits stay.
 
 V3_CFG = "mpA01|adaptive|box"
-V3_ID = "final-mpA01-adaptive"
+V3_ID = os.environ.get("V3_ID", "final-mpA01-adaptive")
+# Release r2 (2026-11-07/08): heads retrained on data-final2.npz (+ the rare species' held-out
+# photos, rare_heldout.py) with herbarium-sheet rows for photo-less classes (sheet_rows.py).
+# V3_R2=1 → data-final2.npz, counts/labels/credits rebuilt from it, sweep caches from
+# BA_WORK / FS_WORK / FS_HCR (bank_analysis2, final_sweep3, hc_sheets_r2).
+V3_R2 = bool(os.environ.get("V3_R2"))
 V3_FILES = ("v3-head.bin", "v3-prior.bin", "v2-labels.json")
 # THE no-location switch: "australia" = no bank, prior K = 0 (the country-wide
 # frequency; as v2); "tasmania" = a photo without a location is scored as inside
 # the Tasmania box (bank term on, prior still K = 0). Read by the app from
 # scoring.no_location — flip here and rebuild the pack.
 V3_NO_LOCATION = "australia"
-V3_HEADS_GCS = "gs://leo-superresolution-izzy-plantid/au/hc/runs/"
+V3_HEADS_GCS = os.environ.get("V3_HEADS_GCS", "gs://leo-superresolution-izzy-plantid/au/hc/runs/")
 
 
 def v3_sweep():
@@ -2473,8 +2504,9 @@ def cmd_v3(a):
     test.json. Env: the eval env (V2DATA=…/data-final.npz)."""
     sys.path.insert(0, HERE)
     import train_v2 as V
-    assert os.path.abspath(V.DATA) == os.path.abspath(os.path.join(V2DIR, "data-final.npz")), \
-        f"V2DATA must be data-final.npz (is {V.DATA})"
+    want_data = "data-final2.npz" if V3_R2 else "data-final.npz"
+    assert os.path.abspath(V.DATA) == os.path.abspath(os.path.join(V2DIR, want_data)), \
+        f"V2DATA must be {want_data} (is {V.DATA})"
     assert not os.environ.get("HC_T"), "HC_T would rescale the reference heads"
     FSW, cfg, cal, te = v3_sweep()
     prm = v3_params()
@@ -2483,7 +2515,10 @@ def cmd_v3(a):
         return v3_check(a.check_n)
     D = np.load(V.DATA, mmap_mode="r")
     mf, mt = D["merge_from"].astype(np.int64), D["merge_to"].astype(np.int64)
-    n_v2 = np.load(os.path.join(V2DIR, "runs", V2_RUN + ".npz"))["n_c"].astype(np.int64)
+    if V3_R2:  # training counts of the data in use (= every head's n_c, asserted below)
+        n_v2 = np.bincount(np.asarray(D["ytr"]).astype(np.int64), minlength=len(D["T"])).astype(np.int64)
+    else:
+        n_v2 = np.load(os.path.join(V2DIR, "runs", V2_RUN + ".npz"))["n_c"].astype(np.int64)
     C = len(n_v2)
     W8, S8, B, KC, R0, hh = [], [], [], [], [], []
     r = 0
@@ -2502,7 +2537,8 @@ def cmd_v3(a):
         r += len(W)
     D_ = W8[0].shape[1]
     mu = np.asarray(D["mu"], np.float32)
-    Z_mu = np.load(os.path.join(V2DIR, "bank_analysis", "sets.npz"))["mu"]
+    import bank_analysis as BA_
+    Z_mu = np.load(os.path.join(BA_.WORK, "sets.npz"))["mu"]
     assert np.allclose(Z_mu, mu, atol=1e-6), "the sweep's query centre ≠ data-final mu"
     ship_h, ship_a = read_blob(os.path.join(SHIP, "head.bin"))
     s2u = v3_tas_classes(C, mf, mt)
@@ -2512,6 +2548,16 @@ def cmd_v3(a):
     for f_, t_ in zip(mf, mt):
         n_m[t_] += n_m[f_]
         n_m[f_] = 0
+    if V3_R2:  # same 22,122 labels, new photo counts (the ladder buckets) → rewrite v2-labels.json
+        merge = dict(zip(mf.tolist(), mt.tolist()))
+        new_rows, _ = v2_labels(n_m, merge)
+        assert [(r["name"], r.get("merged_into")) for r in new_rows] == \
+            [(l["name"], l.get("merged_into")) for l in lab["labels"]], "r2: label list changed"
+        lab["labels"] = new_rows
+        json.dump(lab, open(os.path.join(SHIP, "v2-labels.json"), "w"), ensure_ascii=False, separators=(",", ":"))
+        cred = v2_credits(np.asarray(D["pid"]), np.asarray(D["src"]), a.observers,
+                          sheets={int(c) for c in np.nonzero(n_m == 0)[0]})
+        print(f"r2 credits: {cred}")
     assert lab["count"] == C and [l["photos"] for l in lab["labels"]] == n_m.tolist(), "v2-labels.json photos ≠ merged n_c"
     hdr = {"kind": "plantid-head-v3", "version": 1, "labels": C, "id": V3_ID, "sweep": V3_CFG,
            "variant": "int8 per prototype row (float32 scale = max|w|/127)", "heads": hh, "scoring": prm,
@@ -2587,7 +2633,7 @@ def cmd_v3(a):
                           "build_ship.V3Ship is the reference scorer"}
     keep = set(V3_FILES) | {"bank-int8.bin", "credits.json", "credits-photos.tsv.gz"}
     pipe["files"] = {f: v for f, v in pipe["files"].items() if f in keep}
-    for f in V3_FILES:
+    for f in V3_FILES + (("credits.json", "credits-photos.tsv.gz") if V3_R2 else ()):
         p = os.path.join(SHIP, f)
         pipe["files"][f] = {"bytes": size_of(p), "sha256": sha256(p)}
     assert set(pipe["files"]) == keep, sorted(keep - set(pipe["files"]))
@@ -2751,6 +2797,7 @@ def main():
     p.add_argument("--no-check", action="store_true", help="skip the check against the evaluation (~2 min)")
     p.add_argument("--check-only", action="store_true", help="only the check, on the files already in ship/")
     p = sub.add_parser("v3")
+    p.add_argument("--observers", default=os.path.join(CACHE, "meta", "observers.csv.gz"))
     p.add_argument("--no-check", action="store_true", help="skip the check against the sweep (~minutes)")
     p.add_argument("--check-only", action="store_true", help="only the check, on the files already in ship/")
     p.add_argument("--check-n", type=int, help="check on the first N photos per set only (a quick look; no assert)")
