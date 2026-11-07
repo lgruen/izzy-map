@@ -19,6 +19,9 @@ nonisolated struct PlantIDRefIndex: Decodable, Sendable {
         var license: String?
         var licence: String?
         var caption: String?
+        /// plants.json ids of the Understorey Network profiles this class
+        /// is (from v2-labels `un.ids`; packs built before 2026-11-07 lack it).
+        var un: [Int]?
     }
 
     var built: String?
@@ -32,6 +35,8 @@ nonisolated struct PlantIDRefPhoto: Sendable, Equatable {
     let url: URL
     let attribution: String
     var caption: String?
+    /// The species whose photo stands in for a subspecies/variety profile.
+    var matchedSpecies: String? = nil
 }
 
 /// Reference photos for Identify, read from the `refphotos` pack once it
@@ -48,6 +53,7 @@ final class PlantIDRefPhotos {
     private(set) var built: String?
     @ObservationIgnored private var byClass: [Int: PlantIDRefIndex.Photo] = [:]
     @ObservationIgnored private var byName: [String: PlantIDRefIndex.Photo] = [:]
+    @ObservationIgnored private var byPlant: [Int: PlantIDRefIndex.Photo] = [:]
     @ObservationIgnored private var loading: URL?
     @ObservationIgnored private var recheck: Task<Void, Never>?
     /// Bumped whenever an index is read: photo views ask again then.
@@ -57,7 +63,7 @@ final class PlantIDRefPhotos {
     nonisolated private final class Cache: @unchecked Sendable {
         let images: NSCache<NSString, UIImage> = {
             let c = NSCache<NSString, UIImage>()
-            c.countLimit = 40
+            c.countLimit = 80   // Identify and a Plants list may both show them
             return c
         }()
     }
@@ -141,20 +147,29 @@ final class PlantIDRefPhotos {
         guard dir != folder, dir != loading else { return }
         loading = dir
         Task {
-            let decoded: PlantIDRefIndex? = await Task.detached(priority: .utility) {
-                do {
-                    return try JSONDecoder().decode(PlantIDRefIndex.self, from: Data(contentsOf: dir.appending(path: RefPhotoFiles.index)))
-                } catch {
-                    Self.logger.error("refphotos index unreadable: \(String(describing: error), privacy: .public)")
-                    return nil
-                }
-            }.value
+            // decoded and keyed off the main thread (~18k photos; read at launch now)
+            let read: (PlantIDRefIndex, [Int: PlantIDRefIndex.Photo], [Int: PlantIDRefIndex.Photo])? =
+                await Task.detached(priority: .utility) {
+                    do {
+                        let d = try JSONDecoder().decode(PlantIDRefIndex.self, from: Data(contentsOf: dir.appending(path: RefPhotoFiles.index)))
+                        var c: [Int: PlantIDRefIndex.Photo] = [:]
+                        var g: [Int: PlantIDRefIndex.Photo] = [:]
+                        for p in d.photos.values {
+                            if let u = p.u { c[u] = p }
+                            for id in p.un ?? [] { g[id] = p }
+                        }
+                        return (d, c, g)
+                    } catch {
+                        Self.logger.error("refphotos index unreadable: \(String(describing: error), privacy: .public)")
+                        return nil
+                    }
+                }.value
             guard loading == dir else { return }   // forgotten (or another folder) meanwhile
             loading = nil
-            guard let decoded else { return }
-            var c: [Int: PlantIDRefIndex.Photo] = [:]
-            for p in decoded.photos.values { if let u = p.u { c[u] = p } }
+            guard let read else { return }
+            let (decoded, c, g) = read
             byClass = c
+            byPlant = g
             byName = decoded.photos
             count = decoded.photos.count
             built = decoded.built
@@ -170,6 +185,7 @@ final class PlantIDRefPhotos {
         folder = nil
         byClass = [:]
         byName = [:]
+        byPlant = [:]
         count = 0
         built = nil
         Self.cache.images.removeAllObjects()
@@ -189,6 +205,27 @@ final class PlantIDRefPhotos {
         return PlantIDRefPhoto(url: folder.appending(path: p.file), attribution: p.attribution,
                                caption: p.caption.flatMap { $0.isEmpty ? nil : $0 })
     }
+
+    /// The reference photo standing in for a guide plant without a photo of
+    /// its own on the device: by the profile id the index names (the
+    /// identifier's own UN match), else by the plant's name, else by its
+    /// species (a subspecies profile shows its species' photo, as Identify
+    /// does).
+    func photo(forPlant plant: Plant) -> PlantIDRefPhoto? {
+        guard let folder else { return nil }
+        var bySpecies: String?
+        var found = byPlant[plant.id] ?? byName[plant.name]
+        if found == nil, let species = plant.species, species != plant.name, let p = byName[species] {
+            found = p
+            bySpecies = species
+        }
+        guard let p = found else { return nil }
+        return PlantIDRefPhoto(url: folder.appending(path: p.file), attribution: p.attribution,
+                               caption: p.caption.flatMap { $0.isEmpty ? nil : $0 }, matchedSpecies: bySpecies)
+    }
+
+    /// The index is read (the pack is on the device).
+    var available: Bool { folder != nil }
 
     /// The photo decoded at `pixels` on its long edge (ImageIO thumbnail:
     /// AVIF or JPEG), off the main thread, cached; nil when it can't be
@@ -335,9 +372,12 @@ nonisolated enum RefPhotoDecoder {
     /// on Swift's cooperative pool — a screenful of decodes parked there
     /// stalled in the simulator (none returned within 20 s, CPU idle;
     /// 2026-11-06). A decode that doesn't answer within `timeout` gives
-    /// nil (the plate) and the lane moves to a fresh queue, so one stuck
-    /// decode can't keep every later photo blank; after three stuck
-    /// decodes the lane gives up (logged) rather than leak more threads.
+    /// nil (the view tries again later) and the lane moves to a fresh
+    /// queue, so one stuck decode can't keep every later photo blank.
+    /// While three decodes are stuck the lane answers nil at once rather
+    /// than strand more threads; each stuck decode that finally returns
+    /// frees its place again (2026-11-07: the lane used to give up for the
+    /// rest of the session, leaving every photo a name plate until relaunch).
     static let lane = Lane()
 
     final class Lane: @unchecked Sendable {
@@ -345,35 +385,79 @@ nonisolated enum RefPhotoDecoder {
         private var queue = DispatchQueue(label: "org.gruenschloss.izzymap.refphotos", qos: .userInitiated)
         private var generation = 0
         private var stuck = 0
-        let timeout: TimeInterval = 5
+        let timeout: TimeInterval
+        static let maxStuck = 3
+
+        init(timeout: TimeInterval = 5) { self.timeout = timeout }
 
         private func snapshot() -> (DispatchQueue, Int, Bool) {
             lock.lock()
             defer { lock.unlock() }
-            return (queue, generation, stuck >= 3)
+            return (queue, generation, stuck >= Self.maxStuck)
+        }
+
+        /// Decodes stuck right now (Diagnostics, tests).
+        var stuckNow: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return stuck
         }
 
         func run(file: String, _ work: @escaping @Sendable () -> UIImage?) async -> UIImage? {
-            let (q, gen, givenUp) = snapshot()
-            if givenUp { return nil }
+            let (q, gen, full) = snapshot()
+            if full { return nil }
             return await withCheckedContinuation { (k: CheckedContinuation<UIImage?, Never>) in
                 let once = Once(k)
-                q.async { once.resume(work()) }
+                let call = Call()
+                q.async {
+                    // its caller already got nil (a timeout while this waited
+                    // behind a stuck decode): a backlog decode nobody awaits
+                    self.lock.lock()
+                    let wanted = !once.answered
+                    call.started = wanted
+                    self.lock.unlock()
+                    guard wanted else { return }
+                    let img = work()
+                    once.resume(img)
+                    self.lock.lock()
+                    call.done = true
+                    let freed = call.stuck
+                    if freed { self.stuck -= 1 }
+                    let n = self.stuck
+                    self.lock.unlock()
+                    if freed { RefPhotoDecoder.log.notice("refphoto \(file, privacy: .public): stuck decode returned (\(n) still stuck)") }
+                }
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + self.timeout) {
-                    guard once.resume(nil) else { return }
+                    // claimed before the bookkeeping, answered after it: a
+                    // caller that sees nil sees the lane's new state too
+                    guard let k = once.take() else { return }
                     self.lock.lock()
                     var replaced = false
-                    if self.generation == gen {   // first timeout on this queue: replace it
-                        self.generation += 1
+                    // stuck = running and not returned (a decode that only
+                    // waited in the queue isn't); its queue, if still the
+                    // lane's, is replaced
+                    if call.started, !call.done {
                         self.stuck += 1
-                        self.queue = DispatchQueue(label: "org.gruenschloss.izzymap.refphotos.\(self.generation)", qos: .userInitiated)
-                        replaced = true
+                        call.stuck = true
+                        if self.generation == gen {
+                            self.generation += 1
+                            self.queue = DispatchQueue(label: "org.gruenschloss.izzymap.refphotos.\(self.generation)", qos: .userInitiated)
+                            replaced = true
+                        }
                     }
                     let n = self.stuck
                     self.lock.unlock()
+                    k.resume(returning: nil)
                     RefPhotoDecoder.log.error("refphoto \(file, privacy: .public): no answer within \(Int(self.timeout)) s\(replaced ? " — decode queue replaced (\(n) stuck)" : "", privacy: .public)")
                 }
             }
+        }
+
+        /// One decode's state, read and written under the lane's lock.
+        private final class Call: @unchecked Sendable {
+            var started = false
+            var done = false
+            var stuck = false
         }
     }
 
@@ -383,12 +467,25 @@ nonisolated enum RefPhotoDecoder {
         private var k: CheckedContinuation<UIImage?, Never>?
         init(_ k: CheckedContinuation<UIImage?, Never>) { self.k = k }
         @discardableResult func resume(_ v: UIImage?) -> Bool {
-            lock.lock()
-            let k = self.k
-            self.k = nil
-            lock.unlock()
+            let k = take()
             k?.resume(returning: v)
             return k != nil
+        }
+
+        /// Whether it was resumed (or taken) already.
+        var answered: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return k == nil
+        }
+
+        /// The continuation, for the one caller that gets it (who must resume it).
+        func take() -> CheckedContinuation<UIImage?, Never>? {
+            lock.lock()
+            defer { lock.unlock() }
+            let k = self.k
+            self.k = nil
+            return k
         }
     }
 }
@@ -410,11 +507,13 @@ struct RefPhotoImage: View {
     @Environment(\.displayScale) private var scale
     @State private var image: UIImage?
     @State private var failed = false
+    /// The request `image` belongs to (a re-appear doesn't fade it in again).
+    @State private var loaded: PhotoRequest?
 
     var body: some View {
         ZStack {
             if failed {
-                NamePlate(label: label, side: side)
+                NamePlate(label: label, side: side, reason: .failed)
             } else {
                 Rectangle().fill(Color(uiColor: .tertiarySystemFill))
             }
@@ -434,23 +533,47 @@ struct RefPhotoImage: View {
                 PhotoTag(text: caption, compact: side < 140)
             }
         }
-        // again for a new index (a pack update), and a failed decode twice
-        // more (one that timed out behind a busy moment) before the plate
+        // again for a new index (a pack update); a failed decode is retried
+        // (RefPhotoLoad) and the photo replaces the plate when it comes
         .task(id: PhotoRequest(url: photo.url, revision: PlantIDRefPhotos.shared.revision)) {
-            var img: UIImage?
-            for pause in [0, 1, 3] {
-                if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
-                guard !Task.isCancelled else { return }
-                img = await PlantIDRefPhotos.image(photo, pixels: Int(side * scale))
-                if img != nil { break }
-            }
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
-                image = img
-                failed = img == nil
+            let key = PhotoRequest(url: photo.url, revision: PlantIDRefPhotos.shared.revision)
+            if image != nil, loaded == key { return }
+            image = nil
+            failed = false
+            await RefPhotoLoad.run(photo, pixels: Int(side * scale)) { img in
+                if img != nil { loaded = key }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    image = img
+                    failed = img == nil
+                }
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// Loading one reference photo for a view: a failed decode is tried twice
+/// more within seconds (one that timed out behind a busy moment), then
+/// `settle(nil)` lets the view show what stands in, and later tries go on
+/// while the view lives (a decode lane full of stuck decodes frees up) —
+/// the photo replaces the stand-in when it comes.
+enum RefPhotoLoad {
+    static func run(_ photo: PlantIDRefPhoto, pixels: Int, settle: (UIImage?) -> Void) async {
+        var settled = false
+        for pause in [0, 1, 3, 10, 30, 60, 120] {
+            if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
+            guard !Task.isCancelled else { return }
+            if let img = await PlantIDRefPhotos.image(photo, pixels: pixels) {
+                guard !Task.isCancelled else { return }
+                settle(img)
+                return
+            }
+            guard !Task.isCancelled else { return }
+            if !settled, pause == 3 {
+                settled = true
+                settle(nil)
+            }
+        }
     }
 }
 
