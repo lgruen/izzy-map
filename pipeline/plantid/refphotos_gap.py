@@ -60,6 +60,7 @@ PACK_INDEX = os.path.join(BR.OUT, "pack-v2", "refphotos", "index.json")
 NO_PHOTO = os.path.join(BR.OUT, "v2", "no_photo.json")
 ALA_COUNTS = os.path.join(BR.CACHE, "sources", "ala_counts", "ala_counts.parquet")
 CANDS = os.path.join(GAP, "cands.parquet")
+V2_LABELS = os.path.join(BR.CACHE, "ship", "v2-labels.json")
 INAT = "https://api.inaturalist.org/v1/"
 INAT_LIC = "cc0,cc-by,cc-by-nc,cc-by-sa,cc-by-nc-sa"
 INAT_CODE = {"cc0": "CC0", "cc-by": "CC-BY", "cc-by-nc": "CC-BY-NC", "cc-by-sa": "CC-BY-SA",
@@ -100,6 +101,19 @@ INAT_PACE = Pace(1.0)
 def inat(path, **q):
     INAT_PACE.wait()
     return SP.getj(INAT + path + "?" + urllib.parse.urlencode(q))
+
+
+def labels():
+    """au-labels.json (what the pack index is keyed by) with `merged_into` from the shipped
+    v2-labels.json (same indices): au-labels has no twin marks, and a twin merged at
+    training is never shown, so it needs no photo."""
+    L = BR.labels()
+    V = json.load(open(V2_LABELS))["labels"]
+    assert len(V) == len(L), (len(V), len(L))
+    for l, v in zip(L, V):
+        if v.get("merged_into") is not None:
+            l["merged_into"] = v["merged_into"]
+    return L
 
 
 def targets(L, index, no_photo):
@@ -155,8 +169,9 @@ def same_taxon(name, target, labels):
 def inat_taxon(l, labels):
     """(taxon id, how) — the label's id, else an exact name match, else a synonym match
     that is the same species under another genus (same_taxon)."""
-    if l.get("inat"):
-        return int(l["inat"]), "id"
+    if l.get("inat"):   # au-labels: a list of ids (first = the main one); older files: one int
+        ids = l["inat"] if isinstance(l["inat"], list) else [l["inat"]]
+        return int(ids[0]), "id"
     d = inat("taxa", q=l["name"], rank="species,subspecies,variety", per_page=10, all_names="true")
     for t in d.get("results", []):
         if t.get("iconic_taxon_name") not in (None, "Plantae"):
@@ -291,7 +306,7 @@ def set_labels(L):
 
 
 def cmd_find(a):
-    L = BR.labels()
+    L = labels()
     set_labels(L)
     index = json.load(open(a.index))["photos"]
     no_photo = json.load(open(NO_PHOTO)) if os.path.exists(NO_PHOTO) else {}
@@ -412,7 +427,7 @@ def cmd_fetch(a):
     import pyarrow as pa
     import pyarrow.parquet as pq
     import build_refphotos_v2 as V
-    L = BR.labels()
+    L = labels()
     set_labels(L)
     ev = eval_ids(a)
     seen = shown_before()
@@ -509,7 +524,7 @@ def _fetch_threadsafe(job):
 # ------------------------------------------------------------------ report
 
 def cmd_report(a):
-    L = BR.labels()
+    L = labels()
     set_labels(L)
     index = json.load(open(a.index))["photos"]
     no_photo = json.load(open(NO_PHOTO)) if os.path.exists(NO_PHOTO) else {}
