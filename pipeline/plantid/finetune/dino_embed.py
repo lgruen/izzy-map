@@ -87,7 +87,8 @@ def run(a):
     info["missing"] = int((~ok).sum())
     json.dump(info, open(os.path.join(od, "log.json"), "w"), indent=1)
     log(f"{len(rows):,} photos to embed ({info['missing']} missing)")
-    dt = torch.bfloat16 if dev == "cuda" else torch.float16
+    # bf16, never fp16: DINOv3's activations overflow fp16 (NaN embeddings, seen on MPS)
+    dt = {"bf16": torch.bfloat16, "fp32": torch.float32}[job.get("dtype", "bf16")]
     models, dims = {}, {}
     for k in sorted({v["model"] for v in variants}):
         if k == "pecore":  # image tower only; output = the projected (CLIP) embedding
