@@ -158,6 +158,9 @@ struct RootView: View {
         .modifier(ModalHost(model: model, layout: .card))
         .modifier(ReaderHost(model: model, layout: .card))
         .onChange(of: layout, initial: true) { _, new in model.layoutChanged(to: new) }
+        // reference photos stand in for guide plants without one of their
+        // own (plant sheets, Plants lists), not only inside Identify
+        .onChange(of: model.shared.packs.state(.refphotos), initial: true) { PlantIDRefPhotos.shared.use(packs: model.shared.packs) }
         .onGeometryChange(for: ScreenMetrics.self) { proxy in
             ScreenMetrics(
                 size: proxy.size,

@@ -69,6 +69,8 @@ struct PlantSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             if !plant.photos.isEmpty, width > 0 {
                 photos(plant)
+            } else if width > 0, let ref = PlantIDRefPhotos.shared.photo(forPlant: plant) {
+                refPhoto(ref, plant: plant)
             }
             titleBlock(plant)
             if !plant.flowering.isEmpty {
@@ -95,7 +97,7 @@ struct PlantSheet: View {
                 .accessibilityIdentifier("un-link")
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(PlantCredits.plants)
+                Text(plant.photos.isEmpty ? PlantCredits.profiles : PlantCredits.plants)
                 Text(PlantCredits.records)
             }
             .font(.caption)
@@ -123,6 +125,24 @@ struct PlantSheet: View {
                     .frame(maxWidth: .infinity)
             }
             Text(plant.photos[min(page, plant.photos.count - 1)].caption)
+                .font(.caption2)
+                .foregroundStyle(DesignColor.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("photo-credit")
+        }
+    }
+
+    /// No photo in the guide: the plant-ID reference photo stands in, with
+    /// its own credit (author, licence, source) and what it shows.
+    private func refPhoto(_ ref: PlantIDRefPhoto, plant: Plant) -> some View {
+        let plateWidth = width - 32
+        return VStack(alignment: .leading, spacing: 6) {
+            RefPhotoPlate(photo: ref, shape: plant.silhouette, width: plateWidth)
+                .accessibilityLabel("Reference photo, \(plant.name). \(ref.attribution)")
+            // what it is: the plant-ID reference photo (of the species, for a
+            // subspecies profile), not one of the guide's own
+            Text((["Reference photo" + (ref.matchedSpecies.map { " of \($0)" } ?? ""), ref.caption, ref.attribution] as [String?])
+                .compactMap { $0 }.joined(separator: " · "))
                 .font(.caption2)
                 .foregroundStyle(DesignColor.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
