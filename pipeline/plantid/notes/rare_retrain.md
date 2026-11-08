@@ -48,3 +48,24 @@ By construction the 1–9-photo bucket of AU-test is empty now (every such class
 with held-out photos had them moved), so the beneficiaries are mostly not
 testable; the evidence for them is the per-count curve (0 photos ≈ 0–14 %,
 1–9 ≈ 60–70 %).
+
+## Release r2 pack (2026-11-08, r2_ship.sh)
+
+Sheet rows (sheet_rows.py) on the retrained heads: 2,636 of 3,485 photo-less
+classes (median 6 sheets; 19,566 GBIF sheets, credited as source "herbarium").
+final_sweep3 (calib on val: T 1.910, species thresholds 0.85 / 0.75 / 0.50 /
+0.55 by bucket 0 / 1–9 / 10–49 / 50+, genus 0.50) → build_ship v3 (V3_R2,
+id final-mpA01-adaptive-r2) → plantid.aar 798 MB, sha256 04548a8cd13f…;
+the v3 check of the written files matches the sweep within 0.01 pp.
+
+Paired per-species top-1 on identical sets (class-cluster bootstrap, 95 %):
+
+| | old → r2 | retrained → r2 (the sheet rows alone) |
+|---|---|---|
+| AU-test | 86.59 → 86.30 (−0.29 [−0.52, −0.03]) | 86.47 → 86.30 (−0.17 [−0.25, −0.11]) |
+| A-test | 89.76 → 90.05 (+0.29 [−0.37, +1.01]) | 90.09 → 90.05 (−0.04) |
+| C-report | 82.82 → 81.97 (−0.85 [−1.85, +0.11]) | 82.22 → 81.97 (−0.25 [−0.50, −0.06]) |
+
+The sheet rows cost ~0.2 pt on photographed species (more classes can win);
+their gain on photo-less classes is not testable on the moved sets (≈ 1 class
+left) — the evidence is the old-set check (23 → 39 % on 70 classes).
