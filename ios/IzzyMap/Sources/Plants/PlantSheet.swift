@@ -15,8 +15,11 @@ struct PlantSheet: View {
     var onClose: (() -> Void)?
     @Environment(\.cardNamespace) private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
     @State private var width: CGFloat = 0
     @State private var page = 0
+    /// This sheet, as the full-screen photo viewer's opener.
+    @State private var viewerID = UUID()
     @State private var distribution: [RecordCell]?
     @State private var squares: [GridSquare]?
 
@@ -52,6 +55,12 @@ struct PlantSheet: View {
         .containerBackground(.clear, for: .navigation)
         .toolbar { SheetCloseItem(model: model, action: onClose) }
         .modifier(ZoomDestination(id: source, namespace: reduceMotion ? nil : namespace))
+        .fullScreenCover(isPresented: Binding(
+            get: { model.photoViewer == viewerID },
+            set: { if !$0, model.photoViewer == viewerID { model.photoViewer = nil } }
+        )) {
+            if let plant { PhotoViewer(model: model, title: BotanicalNames.species(plant.name), photos: viewerPhotos(plant), page: $page) }
+        }
         .accessibilityIdentifier("plant-sheet")
         .task(id: plantID) {
             guard let catalog = await library.load() else { return }
@@ -114,6 +123,7 @@ struct PlantSheet: View {
             TabView(selection: $page) {
                 ForEach(Array(plant.photos.enumerated()), id: \.offset) { i, photo in
                     PlantPhotoPlate(photo: photo, shape: plant.silhouette, width: plateWidth)
+                        .modifier(OpensViewer(open: openViewer))
                         .tag(i)
                         .accessibilityLabel("Photo \(i + 1) of \(plant.photos.count), \(plant.name). \(photo.caption)")
                 }
@@ -138,16 +148,53 @@ struct PlantSheet: View {
         let plateWidth = width - 32
         return VStack(alignment: .leading, spacing: 6) {
             RefPhotoPlate(photo: ref, shape: plant.silhouette, width: plateWidth)
+                .modifier(OpensViewer(open: openViewer))
                 .accessibilityLabel("Reference photo, \(plant.name). \(ref.attribution)")
             // what it is: the plant-ID reference photo (of the species, for a
             // subspecies profile), not one of the guide's own
-            Text((["Reference photo" + (ref.matchedSpecies.map { " of \($0)" } ?? ""), ref.caption, ref.attribution] as [String?])
-                .compactMap { $0 }.joined(separator: " · "))
+            Text(refCaption(ref))
                 .font(.caption2)
                 .foregroundStyle(DesignColor.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("photo-credit")
         }
+    }
+
+    private func refCaption(_ ref: PlantIDRefPhoto) -> String {
+        (["Reference photo" + (ref.matchedSpecies.map { " of \($0)" } ?? ""), ref.caption, ref.attribution] as [String?])
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private func openViewer() {
+        if model.photoViewer == nil { model.photoViewer = viewerID }
+    }
+
+    /// What the full-screen viewer pages through: the guide's photos, else
+    /// the reference photo standing in — each with the credit it has here.
+    private func viewerPhotos(_ plant: Plant) -> [ViewerPhoto] {
+        let plateWidth = width - 32
+        let platePixels = Int(plateWidth * displayScale)
+        if !plant.photos.isEmpty {
+            return plant.photos.map { photo in
+                ViewerPhoto(
+                    id: photo.storedName,
+                    caption: photo.caption,
+                    quick: { PlantPhotoStore.shared.cached(photo, size: .large, pixels: platePixels) },
+                    load: { await PlantPhotoStore.shared.image(photo, size: .large, pixels: $0) }
+                )
+            }
+        }
+        guard let ref = PlantIDRefPhotos.shared.photo(forPlant: plant) else { return [] }
+        return [ViewerPhoto(
+            id: ref.url.absoluteString,
+            caption: refCaption(ref),
+            quick: { nil },
+            // the plate's decode (cached) if the big one doesn't come
+            load: { pixels in
+                if let big = await PlantIDRefPhotos.image(ref, pixels: pixels) { return big }
+                return await PlantIDRefPhotos.image(ref, pixels: platePixels)
+            }
+        )]
     }
 
     // MARK: Names
@@ -457,6 +504,21 @@ struct SheetCloseItem: ToolbarContent {
             Button(role: .close) { if let action { action() } else { model.clearSelection() } }
                 .accessibilityIdentifier("sheet-close")
         }
+    }
+}
+
+/// A photo plate opens the full-screen viewer on a tap, or as soon as a
+/// pinch on it starts to spread (the zooming itself happens there).
+private struct OpensViewer: ViewModifier {
+    let open: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onTapGesture(perform: open)
+            .simultaneousGesture(MagnifyGesture().onChanged { if $0.magnification > 1.08 { open() } })
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens the photo full screen")
     }
 }
 

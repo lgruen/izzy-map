@@ -166,6 +166,8 @@ nonisolated enum Presentation: String, Identifiable, Sendable {
 nonisolated enum EscapeStep: Equatable, Sendable {
     /// The full-screen document reader (over everything, so first).
     case closeDocument
+    /// A plant sheet's photos full screen (over everything else).
+    case closePhoto
     case dismiss(Presentation)
     /// One level back inside the modal (Storage → Layers, Key → Layers,
     /// plant sheet → suggestions).
@@ -184,6 +186,7 @@ nonisolated enum EscapeStep: Equatable, Sendable {
     var title: String {
         switch self {
         case .closeDocument: "Close Document"
+        case .closePhoto: "Close Photo"
         case let .dismiss(presentation): "Close \(presentation.title)"
         case .modalBack: "Back"
         case .cancelFraming: "Cancel Framing"
@@ -282,7 +285,10 @@ final class AppModel {
         didSet { if selection?.id != oldValue?.id { cardPath = [] } }
     }
     /// Views pushed over the card (group list, plant sheet), oldest first.
-    var cardPath: [CardRoute] = []
+    var cardPath: [CardRoute] = [] {
+        // the plant sheet that showed the photo viewer is gone
+        didSet { if cardPath != oldValue { photoViewer = nil } }
+    }
 
     /// Pushes a view over the card — never the same one twice in a row (a
     /// double tap lands on the row again before the push shows).
@@ -299,8 +305,11 @@ final class AppModel {
     let search = SearchModel()
     /// The modal on screen (at most one).
     var modal: ModalRequest? {
-        didSet { if modal != oldValue { modalDepth = 0 } }
+        didSet { if modal != oldValue { modalDepth = 0; photoViewer = nil } }
     }
+    /// A plant sheet's photos full screen: the sheet that opened it
+    /// (`PhotoViewer`; each plant sheet presents only its own).
+    var photoViewer: UUID?
     /// Levels pushed inside the open modal's own navigation (Layers ▸ Key /
     /// Storage, Identify ▸ plant sheet, Credits ▸ Acknowledgements): the
     /// modal reports it (`ModalEscape`), so Escape pops one level before it
@@ -309,7 +318,9 @@ final class AppModel {
     /// Bumped by Escape while `modalDepth > 0`: the modal pops one level.
     private(set) var modalPopRequest = 0
     /// Set by RootView from the size classes.
-    private(set) var panelLayout: PanelLayout = .sheet
+    private(set) var panelLayout: PanelLayout = .sheet {
+        didSet { if panelLayout != oldValue { photoViewer = nil } }
+    }
 
     // MARK: First launch
 
@@ -424,6 +435,7 @@ final class AppModel {
     /// The next thing Escape closes, nil when there is nothing to close.
     var escapeStep: EscapeStep? {
         if documents.isReading { return .closeDocument }
+        if photoViewer != nil { return .closePhoto }
         if let modal { return modalDepth > 0 ? .modalBack : .dismiss(modal.presentation) }
         if isFraming { return .cancelFraming }
         if search.fieldFocused { return .leaveSearchField }
@@ -439,6 +451,7 @@ final class AppModel {
     func escape() {
         switch escapeStep {
         case .closeDocument: documents.closeReader()
+        case .closePhoto: photoViewer = nil
         case .modalBack: modalPopRequest += 1
         case .dismiss: modal = nil
         case .cancelFraming: cancelFraming()
