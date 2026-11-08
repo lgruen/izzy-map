@@ -222,7 +222,13 @@ public enum PackIntegrity {
     // MARK: Reference photos
 
     /// `index.json` parses, and a sample of the photos it lists (evenly
-    /// spread, `sample` of them) is there at the recorded `bytes`.
+    /// spread, `sample` of them) is at the recorded `bytes` where present.
+    /// A photo NOT found beside the index is no verdict: on iOS 27
+    /// `url(for:)` stages a pack's files into the shared
+    /// `Staging/Unlocalized/` folder one requested path at a time, so the
+    /// folder holding index.json lists only what was staged so far — a
+    /// "missing" photo there removed a complete refphotos pack (device,
+    /// 2026-11-08). Only a photo shorter than recorded is evidence.
     public static func refPhotos(_ dir: URL, prefix: String = "refphotos/", sample: Int = 64) -> Report {
         let indexURL = dir.appending(path: "index.json")
         var out: [FileCheck] = []
@@ -255,6 +261,8 @@ public enum PackIntegrity {
             case let .success(s):
                 let verdict: FileCheck.Verdict = need.map { s == $0 ? .ok : s < $0 ? .truncated : .malformed("larger than recorded") } ?? (s > 0 ? .ok : .truncated)
                 out.append(FileCheck(path: prefix + file, have: s, need: need, verdict: verdict))
+            case .failure(.missing):
+                out.append(FileCheck(path: prefix + file, have: nil, need: need, verdict: .unreadable("not staged beside index.json")))
             case let .failure(f):
                 out.append(FileCheck(path: prefix + file, have: nil, need: need, verdict: f))
             }

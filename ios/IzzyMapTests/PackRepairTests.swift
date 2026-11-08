@@ -190,7 +190,9 @@ struct PackRepairTests {
 
     // MARK: Reference photos
 
-    @Test func refPhotosWithMissingFilesAreRepairedOnce() async throws {
+    /// 40 photos in `<dir>/refphotos/` with their index; "Species 9" sorts
+    /// last, so p9.avif (59 bytes recorded) is always sampled.
+    private func refPhotosFolder() throws -> (dir: URL, last: URL) {
         let dir = try tempDir()
         let folder = dir.appending(path: RefPhotoFiles.folder, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -200,15 +202,35 @@ struct PackRepairTests {
             photos["Species \(i)"] = ["file": "p\(i).avif", "bytes": 50 + i, "attribution": "a"]
         }
         try JSONSerialization.data(withJSONObject: ["version": 2, "photos": photos]).write(to: folder.appending(path: RefPhotoFiles.index))
-        let last = folder.appending(path: "p9.avif")   // "Species 9" sorts last: always sampled
-        try FileManager.default.removeItem(at: last)
+        return (dir, folder.appending(path: "p9.avif"))
+    }
+
+    @Test func refPhotosWithTruncatedFilesAreRepairedOnce() async throws {
+        let (dir, last) = try refPhotosFolder()
+        try Data(repeating: 9, count: 20).write(to: last)
         let system = FakePackSystem(installed: [.refphotos], seconds: 0.05, directory: dir, returnDelay: 0.05)
         system.onInstall { id in if id == "refphotos" { try? Data(repeating: 9, count: 59).write(to: last) } }
         let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
         defer { store.shutdown() }
-        #expect(store.errorLog[.refphotos]?.first?.text.contains("refphotos/p9.avif MISSING") == true)
+        #expect(store.errorLog[.refphotos]?.first?.text.contains("refphotos/p9.avif TRUNCATED") == true)
         #expect(await eventually { store.state(.refphotos).isInstalled })
         #expect(system.calls == ["-refphotos", "refphotos"])
+    }
+
+    /// A photo not beside index.json is no evidence: iOS 27 stages a pack's
+    /// files one requested path at a time (device, 2026-11-08: a "missing"
+    /// photo removed a complete pack). Installed, never removed.
+    @Test func refPhotoNotBesideTheIndexIsNoDamage() async throws {
+        let (dir, last) = try refPhotosFolder()
+        try FileManager.default.removeItem(at: last)
+        let system = FakePackSystem(installed: [.refphotos], seconds: 0.05, directory: dir, returnDelay: 0.05)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        defer { store.shutdown() }
+        #expect(store.state(.refphotos).isInstalled)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(store.state(.refphotos).isInstalled)
+        #expect(system.calls.isEmpty)
+        #expect(store.errorLog[.refphotos] == nil)
     }
 
     // MARK: Guards: confirmation, space, the cap across launches

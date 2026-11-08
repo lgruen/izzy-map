@@ -126,6 +126,7 @@ enum PackDiagnostics {
         let summary = PackSystemStatus(downloading: status.contains(.downloading), downloaded: status.contains(.downloaded), raw: UInt(status.rawValue))
         var paths = pack.archives.map(\.fileName)
         paths += pack.otherFiles
+        var deniedProbed = false
         for path in paths {
             let isDir = path.hasSuffix("/")
             let name = isDir ? String(path.dropLast()) : path
@@ -134,6 +135,10 @@ enum PackDiagnostics {
                 url = try manager.url(for: FilePath(name))
             } catch {
                 out.append("  \(path): url(for:) threw \(error)")
+                if !deniedProbed, !isDir {
+                    deniedProbed = true
+                    out += deniedLines(error, file: name, pack: pack, manager: manager)
+                }
                 continue
             }
             out.append("  \(path) → \(url.path(percentEncoded: false))")
@@ -148,6 +153,73 @@ enum PackDiagnostics {
             }
         }
         return (summary, out)
+    }
+
+    /// When `url(for:)` throws (2026-11-08, iPhone: "no permission to save
+    /// Staged Subpaths.plist" for every downloaded pack, surviving a
+    /// reboot): what the folder it wanted to write looks like from the app
+    /// — owner, mode, flags, ACL, listable, writable — and whether the
+    /// other access path, `descriptor(for:)`, still opens the file.
+    nonisolated private static func deniedLines(_ error: any Error, file: String, pack: Pack, manager: AssetPackManager) -> [String] {
+        var out: [String] = []
+        do {
+            let fd = try manager.descriptor(for: FilePath(file), searchingInAssetPackWithID: pack.rawValue)
+            var st = stat()
+            let r = fstat(fd.rawValue, &st)
+            var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            let p = fcntl(fd.rawValue, F_GETPATH, &buf) == 0 ? String(cString: buf) : "?"
+            out.append("    descriptor(for:): ok · \(r == 0 ? "\(st.st_size) bytes" : "fstat errno \(errno)") · \(p)")
+            try? fd.close()
+        } catch {
+            out.append("    descriptor(for:) threw \(error)")
+        }
+        let ns = error as NSError
+        guard let plist = (ns.userInfo[NSURLErrorKey] as? URL) ?? (ns.userInfo["NSURL"] as? URL) else { return out }
+        let folder = plist.deletingLastPathComponent()
+        for (label, url) in [("pack folder", folder), ("Staged Subpaths.plist", plist), ("Asset Packs", folder.deletingLastPathComponent()),
+                             ("app folder", folder.deletingLastPathComponent().deletingLastPathComponent())] {
+            out.append("    \(label): \(fileFacts(url))")
+        }
+        let fm = FileManager.default
+        do {
+            let names = try fm.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).sorted()
+            out.append("    pack folder lists \(names.count): \(names.prefix(12).joined(separator: ", "))")
+            for name in names.prefix(12) {
+                out.append("      \(name): \(fileFacts(folder.appending(path: name)))")
+            }
+        } catch {
+            out.append("    pack folder list failed: \(error.localizedDescription)")
+        }
+        // a direct read of the pack's own copy (no staging): readable at all?
+        let direct = folder.appending(path: file)
+        if let h = try? FileHandle(forReadingFrom: direct) {
+            let head = (try? h.read(upToCount: 7)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
+            out.append("    direct read \(file): ok, starts \"\(head.filter { $0.isASCII && !$0.isNewline })\"")
+            try? h.close()
+        } else {
+            out.append("    direct read \(file): can't open")
+        }
+        return out
+    }
+
+    /// "uid 501 gid 501 drwxr-xr-x flags 0x0 · access r w x · acl …".
+    nonisolated private static func fileFacts(_ url: URL) -> String {
+        let path = url.path(percentEncoded: false)
+        var st = stat()
+        guard lstat(path, &st) == 0 else { return "lstat errno \(errno) (\(String(cString: strerror(errno))))" }
+        let kind = switch st.st_mode & S_IFMT { case S_IFDIR: "d"; case S_IFLNK: "l"; case S_IFREG: "-"; default: "?" }
+        let mode = String(st.st_mode & 0o7777, radix: 8)
+        let can = [(R_OK, "r"), (W_OK, "w"), (X_OK, "x")].map { access(path, $0.0) == 0 ? $0.1 : "-" }.joined()
+        var line = "\(kind) uid \(st.st_uid) gid \(st.st_gid) mode \(mode) flags 0x\(String(st.st_flags, radix: 16)) size \(st.st_size) · access \(can)"
+        if let acl = acl_get_link_np(path, ACL_TYPE_EXTENDED) {
+            if let text = acl_to_text(acl, nil) {
+                line += " · acl " + String(cString: text).split(separator: "\n").dropFirst().joined(separator: "; ")
+                acl_free(UnsafeMutableRawPointer(text))
+            }
+            acl_free(UnsafeMutableRawPointer(acl))
+        }
+        line += " · me uid \(getuid())"
+        return line
     }
 
     nonisolated private static func probe(_ url: URL) -> String {

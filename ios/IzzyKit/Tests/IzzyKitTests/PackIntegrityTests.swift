@@ -142,9 +142,15 @@ struct PackIntegrityTests {
         }
         try JSONSerialization.data(withJSONObject: ["version": 2, "photos": photos]).write(to: dir.appending(path: "index.json"))
         #expect(!PackIntegrity.refPhotos(dir, sample: 32).isDamaged)
-        // the last photo (always sampled) missing
+        // the last photo (always sampled) not beside the index: no verdict
+        // (iOS 27 stages a pack's files one requested path at a time)
         try FileManager.default.removeItem(at: dir.appending(path: "p99.avif"))
-        #expect(PackIntegrity.refPhotos(dir, sample: 32).damaged.map(\.verdict) == [.missing])
+        let absent = PackIntegrity.refPhotos(dir, sample: 32)
+        #expect(!absent.isDamaged)
+        #expect(!absent.isConclusive)
+        // present but shorter than recorded: damaged
+        try Data(repeating: 3, count: 50).write(to: dir.appending(path: "p99.avif"))
+        #expect(PackIntegrity.refPhotos(dir, sample: 32).damaged.map(\.verdict) == [.truncated])
         // a cut-off index
         let json = try Data(contentsOf: dir.appending(path: "index.json"))
         try json.prefix(json.count - 10).write(to: dir.appending(path: "index.json"))
