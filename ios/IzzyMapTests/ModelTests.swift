@@ -342,6 +342,21 @@ struct WindowModelTests {
         #expect(model.escapeStep == nil)
     }
 
+    @Test func escapeClosesThePhotoViewerFirst() {
+        let model = AppModel(data: .none, tables: StyleBuilderTests.tables)
+        model.selectCommunity(code: "DOB", sourceName: nil)
+        model.photoViewer = UUID()
+        #expect(model.escapeStep == .closePhoto)
+        #expect(model.escapeStep?.title == "Close Photo")
+        model.escape()
+        #expect(model.photoViewer == nil)
+        #expect(model.selection != nil)
+        // the sheet that opened it going away closes it too
+        model.photoViewer = UUID()
+        model.present(.layers)
+        #expect(model.photoViewer == nil)
+    }
+
     @Test func aLayoutSwitchResetsTheModal() {
         let model = AppModel(data: .none, tables: .empty)
         model.layoutChanged(to: .sheet)
