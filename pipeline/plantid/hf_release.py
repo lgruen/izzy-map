@@ -53,14 +53,15 @@ sys.path.insert(0, HERE)
 CACHE = os.path.join(ROOT, "pipeline", "cache", "plantid")
 SHIP = os.path.join(CACHE, "ship")
 V2DIR = os.path.join(CACHE, "australia", "v2")
-FSDIR = os.path.join(V2DIR, "final_sweep")
+FSDIR = os.environ.get("HF_FSDIR") or os.path.join(V2DIR, "final_sweep")   # r2: final_sweep3
 OUT = os.path.join(CACHE, "hf-release")
 WORK = os.path.join(CACHE, "hf-release-work")
 APC_CSV = os.path.join(CACHE, "australia", "apc", "taxon.csv")
 ACK = os.path.join(ROOT, "ios", "IzzyMap", "Resources", "Data", "acknowledgements.json")
 PREDICT_SRC = os.path.join(HERE, "hf_predict.py")
 V3_CFG = "mpA01|adaptive|box"
-HEAD_RUNS = [os.path.join(V2DIR, "head_capacity", "runs", f"hc-mpAc-s{s}.npz") for s in (0, 1)]
+HEAD_RUNS = [os.path.join(os.environ.get("HF_HEADS_DIR") or os.path.join(V2DIR, "head_capacity", "runs"),
+                          f"hc-mpAc-s{s}.npz") for s in (0, 1)]   # r2: HF_HEADS_DIR=…/hc_sheets_r2
 BIOCLIP_REPO = "imageomics/bioclip-2.5-vith14"
 BIOCLIP_REV = "6e3d04e3d6522012c88181085c5ae666e14c45cd"
 CODE_REPO = "https://github.com/lgruen/izzy-map"
@@ -341,7 +342,8 @@ def build_credits():
     with gzip.open(os.path.join(d, "creators.json.gz"), "wt", encoding="utf-8") as f:
         json.dump({"about": "every creator of a training photo: display name (if any), account / attribution name, "
                             "photo count and licences; source inat = iNaturalist, ala = Atlas of Living Australia "
-                            "(incl. APII), commons = Wikimedia Commons", "creators": creators}, f, ensure_ascii=False)
+                            "(incl. APII), commons = Wikimedia Commons, herbarium = herbarium specimen images via GBIF behind the "
+                            "rows of labels without training photos (not training photos)", "creators": creators}, f, ensure_ascii=False)
     # APII share of the ALA photos (attribution string names it)
     apii = 0
     with gzip.open(os.path.join(SHIP, "credits-photos.tsv.gz"), "rt", encoding="utf-8") as f:
@@ -356,11 +358,22 @@ def fmt(x, nd=1):
     return "–" if x is None else f"{100 * x:.{nd}f}"
 
 
+def sheet_classes():
+    """How many labels got herbarium-specimen weights (sheet_rows.py's note in the head run's meta)."""
+    z = np.load(HEAD_RUNS[0])
+    return int(json.loads(str(z["meta"])).get("sheet_rows", {}).get("classes", 0))
+
+
 def card(ev, te_bank, cfgj, lab, n_apc, credits, apii, pj, check, commit):
     m, lt, ec = ev["metrics"], ev["ladder_test"], ev["ece"]
     nl = ev["metrics_no_location"]
     S = credits["sources"]
-    L = credits["licences"]
+    L = dict(credits["licences"])   # training photos only: the herbarium sheets are counted separately
+    for k_, v_ in S.get("herbarium", {}).get("licences", {}).items():
+        L[k_] -= v_
+        if not L[k_]:
+            del L[k_]
+    H = S.get("herbarium")
     lic_tot = sum(L.values())
 
     def row(name, k, note=""):
@@ -469,13 +482,27 @@ Non-commercial identification of plants photographed in **Australia** — a fiel
 land managers that suggests names to check against a flora or an expert. **Not** for decisions where a mistake can
 hurt: edibility, medicinal use, poisoning, allergy, weed-control or legal/biosecurity determinations.
 
+## Changes
+
+- **r2 (2026-11-08)**: rare species no longer lose their only photos to the evaluation split — a species with < 10
+  training photos takes its held-out observers' observations into training until it has 10 (2,237 observations,
+  5,255 photos, 1,226 species, 257 of them previously photo-less); heads retrained (same recipe and seeds);
+  photo-less labels get herbarium-specimen weights (above). Per-species top-1 on identical test sets with the app's
+  configuration: Australia 86.6 → 86.3, Tasmania 89.8 → 90.1 (the specimen weights cost ≈ 0.2 pt on photographed
+  species in exchange for naming photo-less ones). The test sets lost the moved observations, so numbers are not
+  comparable with r1's card.
+- r1 (2026-11-06): first release.
+
 ## Labels
 
 The Australian Plant Census (APC, NSL export 2026-11-04): accepted species native in at least one state/territory
 (21,204) ∪ a Tasmanian list of 2,675 labels (incl. naturalised weeds, mosses and a few algae), merged → 22,122 labels;
 19 duplicate classes (twins sharing an iNaturalist taxon, or merged APC/iNat names) are kept as columns but never
 predicted (`merged_into`). {n_apc:,} labels carry APC identifiers. **{lab['count'] - lab['classes_with_photos']:,} labels have no
-training photo**: they are only reachable through BioCLIP's text-initialised weights (plus the location prior).
+training photo**: their weights are BioCLIP's text embedding of the name""" + (f""", moved by the mean shift their genus's
+trained classes made and, for {sheet_classes():,} of them, blended 3 : 1 with the mean embedding of up to 16
+herbarium specimen images of the species ({H['photos']:,} images via GBIF, CC/PD only; `sheet_rows` in the code) — on a
+held-out check these labels went from 23 % to 39 % top-1""" if H else "") + f""" (plus the location prior).
 
 ## Training data
 
@@ -601,7 +628,8 @@ and per creator in `credits/creators.json.gz`. By source:
 """ + "\n".join(
         f"| {nm} | {S[k]['photos']:,} | {S[k]['credited']:,} | " + ", ".join(f"{a} {b:,}" for a, b in sorted(S[k]['licences'].items(), key=lambda kv: -kv[1])) + " |"
         for k, nm in (("inat", "iNaturalist (open-data snapshot 2026-10)"), ("ala", f"Atlas of Living Australia (incl. {apii:,} APII photos, © the photographers · Australian National Botanic Gardens)"),
-                      ("commons", "Wikimedia Commons"))) + f"""
+                      ("commons", "Wikimedia Commons"), ("herbarium", "Herbarium specimen images via GBIF (weights of photo-less labels, not training photos; `https://www.gbif.org/occurrence/<id>`)"))
+        if k in S) + f"""
 
 Occurrence data (aggregated into the prior): iNaturalist (records CC0 / CC BY / CC BY-NC), the Atlas of Living Australia
 and its data providers (records CC BY 3.0 AU / 4.0, CC BY-NC and others), including ALA's generalised records of
