@@ -329,7 +329,8 @@ struct PlantIDModelStatus: View {
                     ProgressView().tint(DesignColor.ink)
                 }
             case .notInstalled, .failed:
-                if packs.canFetch {
+                // an unusable pack: no request can help (the detail says the fix)
+                if packs.canFetch, unusable == nil {
                     Button {
                         packs.fetch(.plantid)
                     } label: {
@@ -382,11 +383,15 @@ struct PlantIDModelStatus: View {
     /// An older model on the device (v1), its replacement on its way.
     private var updating: Bool { packs.outdated.contains(.plantid) }
 
-    /// Its files were found cut short: removed, downloading again.
-    private var repairing: Bool { packs.repairing.contains(.plantid) }
+    /// Here, but unusable (cut short, or iOS won't open it).
+    private var unusable: PackStore.Unusable? { packs.unusable[.plantid] }
 
     private func headline(_ s: PackState) -> String {
-        if repairing { return PlantIDFailure.repairing }
+        switch unusable {
+        case .incomplete?: return "The identification model is incomplete on this \(DeviceNoun.current)"
+        case .blocked?: return "iOS won't open the identification model"
+        case nil: break
+        }
         if updating {
             if case let .downloading(f?) = s { return "Model update on its way · \(StorageText.percent(f))" }
             return "Model update on its way"
@@ -403,9 +408,8 @@ struct PlantIDModelStatus: View {
     }
 
     private func detail(_ s: PackState) -> String {
-        if repairing, s != .paused {
-            let progress = if case let .downloading(f?) = s { " (\(StorageText.percent(f)))" } else { "" }
-            return "Its files on this \(DeviceNoun.current) were incomplete\(progress). You can take or choose the photo now — Identify works once it’s in."
+        if unusable != nil {
+            return "To fix it, delete IzzyMap and install it again from TestFlight — the model then downloads again."
         }
         if updating, s != .paused {
             return "This \(DeviceNoun.current) has an older identification model; the new one downloads by itself. You can take or choose the photo now — Identify works once it’s in."

@@ -55,7 +55,11 @@ enum PackDiagnostics {
             if let u = store.updates[pack] { head += " · updating \(Int(u * 100)) %" }
             if let v = store.manifestVersions[pack] { head += " · server v\(v)" }
             if let size = store.downloadSizes[pack] { head += " · download \(StorageText.size(size))" }
-            if store.repairing.contains(pack) { head += " · REPAIRING (damaged files removed, downloading again)" }
+            switch store.unusable[pack] {
+            case let .incomplete(why)?: head += " · UNUSABLE: incomplete (\(why)); never removed by the app"
+            case .blocked?: head += " · UNUSABLE: iOS refuses its file lookups (url(for:) throws)"
+            case nil: break
+            }
             lines.append(head)
             var report = store.integrity[pack]
             if report == nil, store.lastFound?.installed.contains(pack) == true { report = await store.checkIntegrityNow(pack) }

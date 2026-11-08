@@ -68,6 +68,12 @@ nonisolated struct PackResolution: Sendable {
     /// The folder holding each installed pack's other files (plant ID,
     /// reference photos) — what the integrity check reads.
     var folders: [Pack: URL] = [:]
+    /// Local, but the system refused to hand out its files: `url(for:)`
+    /// THREW (it returns a URL even for a missing file). Seen 2026-11-08
+    /// on an iPhone after a repair removed a pack: "no permission to save
+    /// Staged Subpaths.plist" for every pack, surviving reboots, while
+    /// `descriptor(for:)` still opened every file at its full size.
+    var blocked: Set<Pack> = []
 }
 
 // MARK: - The real manager
@@ -149,23 +155,36 @@ nonisolated final class ApplePackSystem: PackSystem {
         var outdated: Set<Pack> = []
         var plantID: URL?
         var folders: [Pack: URL] = [:]
+        var blocked: Set<Pack> = []
         for pack in Pack.allCases {
             guard manager.assetPackIsAvailableLocally(withID: pack.rawValue) else { continue }
             systemLocal.insert(pack)
             var found: [Archive: URL] = [:]
+            var refused = false
             for archive in pack.archives {
-                let url = try? manager.url(for: FilePath(archive.fileName))
+                let url: URL?
+                do { url = try manager.url(for: FilePath(archive.fileName)) } catch {
+                    url = nil
+                    refused = true
+                    Self.logger.error("\(pack.rawValue, privacy: .public)/\(archive.fileName, privacy: .public): url(for:) threw \(String(describing: error), privacy: .public)")
+                }
                 let readable = url.map { fileManager.isReadableFile(atPath: $0.path(percentEncoded: false)) } ?? false
                 Self.logger.debug("\(pack.rawValue, privacy: .public)/\(archive.fileName, privacy: .public): \(url?.path(percentEncoded: false) ?? "no URL", privacy: .public) readable=\(readable)")
                 if let url, readable { found[archive] = url }
             }
-            guard found.count == pack.archives.count else { continue }
-            let folder = Self.otherFilesFolder(pack, manager: manager, fileManager: fileManager)
+            guard found.count == pack.archives.count else {
+                if refused { blocked.insert(pack) }
+                continue
+            }
+            let folder = Self.otherFilesFolder(pack, manager: manager, fileManager: fileManager, refused: &refused)
             guard pack.otherFiles.isEmpty || folder != nil else {
-                if pack == .plantid, !Self.readable(PlantIDFiles.currentMarker, manager: manager, fileManager: fileManager) {
+                // an older version lacks the marker file; a refused lookup says nothing
+                if pack == .plantid, !refused,
+                   !Self.readable(PlantIDFiles.currentMarker, manager: manager, fileManager: fileManager, refused: &refused), !refused {
                     Self.logger.notice("plantid: local without \(PlantIDFiles.currentMarker, privacy: .public) — an older version")
                     outdated.insert(pack)
                 }
+                if refused { blocked.insert(pack) }
                 continue
             }
             archives.merge(found) { a, _ in a }
@@ -174,11 +193,19 @@ nonisolated final class ApplePackSystem: PackSystem {
             if let folder { folders[pack] = folder }
         }
         return PackResolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: installed,
-                              systemLocal: systemLocal, plantID: plantID, outdated: outdated, folders: folders)
+                              systemLocal: systemLocal, plantID: plantID, outdated: outdated, folders: folders, blocked: blocked)
     }
 
-    private static func readable(_ path: String, manager: AssetPackManager, fileManager: FileManager) -> Bool {
-        guard let url = try? manager.url(for: FilePath(path)) else { return false }
+    /// `url(for:)`, noting in `refused` when it throws.
+    private static func lookUp(_ path: String, manager: AssetPackManager, refused: inout Bool) -> URL? {
+        do { return try manager.url(for: FilePath(path)) } catch {
+            refused = true
+            return nil
+        }
+    }
+
+    private static func readable(_ path: String, manager: AssetPackManager, fileManager: FileManager, refused: inout Bool) -> Bool {
+        guard let url = lookUp(path, manager: manager, refused: &refused) else { return false }
         return fileManager.isReadableFile(atPath: url.path(percentEncoded: false))
     }
 
@@ -186,11 +213,11 @@ nonisolated final class ApplePackSystem: PackSystem {
     /// is there (files readable, directories present). `url(for:)` may not
     /// resolve a directory, so a directory is also looked for beside the
     /// pack's files.
-    private static func otherFilesFolder(_ pack: Pack, manager: AssetPackManager, fileManager: FileManager) -> URL? {
+    private static func otherFilesFolder(_ pack: Pack, manager: AssetPackManager, fileManager: FileManager, refused: inout Bool) -> URL? {
         guard !pack.otherFiles.isEmpty else { return nil }
         var folder: URL?
         for path in pack.otherFiles where !path.hasSuffix("/") {
-            guard let url = try? manager.url(for: FilePath(path)),
+            guard let url = lookUp(path, manager: manager, refused: &refused),
                   fileManager.isReadableFile(atPath: url.path(percentEncoded: false))
             else {
                 logger.debug("\(pack.rawValue, privacy: .public)/\(path, privacy: .public): not readable")
@@ -208,7 +235,9 @@ nonisolated final class ApplePackSystem: PackSystem {
             && !pack.otherFiles.contains(where: { !$0.hasSuffix("/") && $0.hasPrefix(path) }) {
             let name = String(path.dropLast())
             let leaf = String(name.split(separator: "/").last ?? Substring(name))
-            let candidates = [(try? manager.url(for: FilePath(name))), folder?.appending(path: leaf, directoryHint: .isDirectory)]
+            // a directory may not resolve at all: its lookup failing is no refusal
+            var ignored = false
+            let candidates = [lookUp(name, manager: manager, refused: &ignored), folder?.appending(path: leaf, directoryHint: .isDirectory)]
             let found = candidates.compactMap { $0 }.first { url in
                 var isDir: ObjCBool = false
                 return fileManager.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDir) && isDir.boolValue
@@ -255,6 +284,8 @@ nonisolated final class FakePackSystem: PackSystem {
         var downloading: [String: Double] = [:]
         /// Local per the system, yet its files don't resolve.
         var unreadable: Set<String> = []
+        /// Local per the system, its file lookups refused (`PackResolution.blocked`).
+        var refused: Set<String> = []
         /// Local per the system, an older version (`PackResolution.outdated`).
         var outdated: Set<String> = []
         var unpublished: Set<String> = []
@@ -316,6 +347,11 @@ nonisolated final class FakePackSystem: PackSystem {
 
     func setUnreadable(_ pack: Pack, _ on: Bool) {
         inner.withLock { if on { $0.unreadable.insert(pack.rawValue) } else { $0.unreadable.remove(pack.rawValue) } }
+    }
+
+    /// The system refuses this local pack's file lookups (`url(for:)` throws).
+    func setRefused(_ pack: Pack, _ on: Bool) {
+        inner.withLock { if on { $0.refused.insert(pack.rawValue) } else { $0.refused.remove(pack.rawValue) } }
     }
 
     /// The system finishes the download by itself (a hung request returns).
@@ -480,15 +516,17 @@ nonisolated final class FakePackSystem: PackSystem {
     }
 
     func resolve() -> PackResolution {
-        let (installed, unreadable, old) = inner.withLock { ($0.installed, $0.unreadable, $0.outdated) }
+        let (installed, unreadable, old, refused) = inner.withLock { ($0.installed, $0.unreadable, $0.outdated, $0.refused) }
         let scanned = directory.map { DataLocator.scan(directory: $0) }
         var archives: [Archive: URL] = [:]
         var have: Set<Pack> = []
         var local: Set<Pack> = []
         var outdated: Set<Pack> = []
         var folders: [Pack: URL] = [:]
+        var blocked: Set<Pack> = []
         for pack in Pack.allCases where installed.contains(pack.rawValue) {
             local.insert(pack)
+            if refused.contains(pack.rawValue) { blocked.insert(pack); continue }
             if old.contains(pack.rawValue) { outdated.insert(pack); continue }
             guard !unreadable.contains(pack.rawValue) else { continue }
             have.insert(pack)
@@ -505,7 +543,7 @@ nonisolated final class FakePackSystem: PackSystem {
             }
         }
         return PackResolution(location: DataLocation(origin: .assetPacks, archives: archives), installed: have,
-                              systemLocal: local, plantID: nil, outdated: outdated, folders: folders)
+                              systemLocal: local, plantID: nil, outdated: outdated, folders: folders, blocked: blocked)
     }
 }
 #endif

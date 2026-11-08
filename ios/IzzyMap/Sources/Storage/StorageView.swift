@@ -97,6 +97,19 @@ struct StorageView: View {
             DetailedAreasSection(model: model)
                 .panelRows()
 
+            if let note = storage.unusableNote {
+                Section {
+                    Label {
+                        Text(note).foregroundStyle(DesignColor.ink)
+                    } icon: {
+                        Image(systemName: StateSymbol.failed).foregroundStyle(DesignColor.secondaryInk)
+                    }
+                    .font(.subheadline)
+                    .accessibilityIdentifier("packs-unusable-note")
+                }
+                .panelRows()
+            }
+
             coreSection
                 .panelRows()
 
@@ -614,7 +627,7 @@ private struct PackControl: View {
             GetButton(title: "Get", action: get)
                 .accessibilityLabel("Get \(pack.storageTitle)")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-get")
-        case .failed, .noSpace:
+        case .failed:
             GetButton(title: "Retry", action: get)
                 .accessibilityLabel("Try \(pack.storageTitle) again")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-get")
@@ -631,7 +644,9 @@ private struct PackControl: View {
             GetButton(title: "Resume", action: resume)
                 .accessibilityLabel("Resume \(pack.storageTitle)")
                 .accessibilityIdentifier("pack-\(pack.rawValue)-resume")
-        case .onDevice where pack.isRemovable && canRemove:
+        // an incomplete on-demand map: removed by her tap, then got again
+        // (refused lookups: reinstalling is the fix, the note says so)
+        case .onDevice where pack.isRemovable && canRemove, .unusable(.incomplete) where pack.isRemovable && canRemove:
             Button(action: remove) {
                 Image(systemName: "trash")
                     .font(.body)
@@ -643,7 +658,7 @@ private struct PackControl: View {
             .hoverEffect(.highlight)
             .accessibilityLabel("Remove \(pack.storageTitle)")
             .accessibilityIdentifier("pack-\(pack.rawValue)-remove")
-        case .checking, .downloading, .queued, .updating, .onDevice, .unavailable, .unpublished, .repairing:
+        case .checking, .downloading, .queued, .updating, .onDevice, .unavailable, .unpublished, .unusable:
             EmptyView()
         }
     }

@@ -37,6 +37,17 @@ struct FirstLaunchTests {
         #expect(arrival.text == "Plant ID arriving · 50\u{00A0}%")
     }
 
+    /// A core pack here but unusable: no Retry (none helps), "Fix" — the
+    /// tap opens Storage, which names it.
+    @Test func unusableCorePackSaysFixNotRetry() throws {
+        let s = states([.vector: .failed(PackStore.blocked), .topo: .installed, .relief: .installed, .plantid: .installed])
+        let a = try #require(CoreArrival.of(states: s, sizes: sizes, resolved: true, canFetch: true, online: true, unusable: [.vector]))
+        #expect(a.phase == .unusable)
+        #expect(a.text == "Maps can’t be opened · Fix")
+        let plain = try #require(CoreArrival.of(states: s, sizes: sizes, resolved: true, canFetch: true, online: true))
+        #expect(plain.phase == .failed)
+    }
+
     @Test func nothingToSayBeforeThePacksAreKnownOrWithoutAFetcher() {
         let none = states([:])
         #expect(CoreArrival.of(states: none, sizes: sizes, resolved: false, canFetch: true, online: true) == nil)

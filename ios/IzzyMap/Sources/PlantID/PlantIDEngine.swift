@@ -23,19 +23,19 @@ nonisolated enum PlantIDSource: Sendable, Equatable {
 
 nonisolated enum PlantIDFailure: LocalizedError, Equatable {
     case missingFiles
-    /// The pack's files are cut short (`PackVerification`): the store
-    /// repairs the pack, the model downloads again.
+    /// The pack's files are cut short (`PackVerification`): the store marks
+    /// the pack unusable (reinstalling IzzyMap downloads it again).
     case damaged(String)
     case model(String)
     case prediction(String)
 
-    /// What Identify says while a damaged model is being replaced.
-    static let repairing = "Plant ID is being repaired — the model is downloading again."
+    /// What Identify says about a damaged model.
+    static let incomplete = "The identification model is incomplete on this device."
 
     var errorDescription: String? {
         switch self {
         case .missingFiles: "The identification model’s files aren’t complete on this device."
-        case .damaged: Self.repairing
+        case .damaged: Self.incomplete
         case let .model(why): "The identification model couldn’t be loaded (\(why))."
         case let .prediction(why): "The photo couldn’t be identified (\(why))."
         }
@@ -154,7 +154,7 @@ actor PlantIDEngine {
             // complete files only: a model cut short (storage ran out
             // mid-download, yet the system said "downloaded") fails deep in
             // the scorer or Core ML with a baffling error — the store
-            // repairs the pack instead (a few ms: sizes and blob headers)
+            // marks the pack unusable instead (a few ms: sizes and blob headers)
             let report = PackVerification.plantID(dir)
             if report.isDamaged {
                 Self.logger.error("plant ID files damaged: \(report.summary ?? "", privacy: .public)")

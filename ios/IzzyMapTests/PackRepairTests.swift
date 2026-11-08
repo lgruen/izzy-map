@@ -4,19 +4,23 @@ import Synchronization
 import Testing
 @testable import IzzyMap
 
-/// Packs the system calls "downloaded" whose files are cut short (the iPad
-/// ran out of space mid-download, 2026-11-06): never shown, removed and
-/// asked for again — once per failure — over `FakePackSystem` with real,
+/// Packs the system has that the app won't use: files cut short (the iPad
+/// ran out of space mid-download, 2026-11-06) or lookups iOS refuses (an
+/// iPhone after an automatic repair, 2026-11-08). Never handed to the map
+/// or Core ML, NEVER removed by the app, never re-requested; the row and
+/// the Storage note name the fix. Over `FakePackSystem` with real,
 /// truncated files in its directory.
 @MainActor
 @Suite(.serialized)
 struct PackRepairTests {
-    /// The queue's test timing, with a short confirmation delay.
     static var tuning: PackStore.Tuning {
         var t = PackQueueTests.tuning
-        t.repairConfirmAfter = .milliseconds(150)
+        t.blockedAfter = .milliseconds(250)
         return t
     }
+
+    /// No removal ("-id") in what the store asked of the system.
+    private func noRemovals(_ system: FakePackSystem) -> Bool { !system.calls.contains { $0.hasPrefix("-") } }
 
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "PackRepairTests-\(UUID().uuidString)")! }
 
@@ -85,63 +89,62 @@ struct PackRepairTests {
 
     // MARK: PMTiles
 
-    @Test func truncatedArchiveIsHiddenRemovedAndFetchedOnce() async throws {
-        let dir = try tempDir()
-        let url = dir.appending(path: Archive.topo.fileName)
-        let full = try Self.pmtiles(url)
-        Self.truncate(url, by: 500)
-        let system = FakePackSystem(installed: [.topo], seconds: 0.4, directory: dir, returnDelay: 0.05)
-        // the download writes the whole file this time
-        system.onInstall { id in if id == "topo" { try? full.write(to: url) } }
-        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
-        defer { store.shutdown() }
-        // never handed to the map while damaged; the row says what happens
-        #expect(store.location.url(for: .topo) == nil)
-        #expect(store.errorLog[.topo]?.first?.stage == "integrity")
-        #expect(store.errorLog[.topo]?.first?.text.contains("topo_tas.pmtiles TRUNCATED (have ") == true)
-        #expect(await eventually { if case .repairing = StorageModel(packs: store, trees: nil).status(.topo) { true } else { false } })
-        #expect(StorageModel(packs: store, trees: nil).status(.topo).text(bytes: 1000, device: "iPad").hasPrefix("Repairing — downloading again"))
-        #expect(await eventually { store.state(.topo).isInstalled })
-        #expect(store.location.url(for: .topo) == url)
-        #expect(store.repairing.isEmpty)
-        #expect(store.integrity[.topo]?.isDamaged == false)
-        // exactly one removal and one request; looking again adds none
-        await store.resync()
-        await store.resync()
-        #expect(system.calls == ["-topo", "topo"])
-    }
-
-    @Test func stillDamagedAfterTheRepairFailsWithoutLooping() async throws {
+    @Test func truncatedArchiveIsHiddenAndNeverRemoved() async throws {
         let dir = try tempDir()
         let url = dir.appending(path: Archive.topo.fileName)
         _ = try Self.pmtiles(url)
         Self.truncate(url, by: 500)
-        // the download leaves the same short file (space still full)
         let system = FakePackSystem(installed: [.topo], seconds: 0.05, directory: dir, returnDelay: 0.05)
         let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
         defer { store.shutdown() }
-        #expect(await eventually { store.state(.topo) == .failed(PackStore.damaged) })
-        await store.resync()
-        try? await Task.sleep(for: .milliseconds(200))
-        await store.resync()
-        #expect(system.calls == ["-topo", "topo"])
+        // never handed to the map; the row and the note say what's wrong
         #expect(store.location.url(for: .topo) == nil)
-        #expect(store.repairing.isEmpty)
-        // a Retry repairs again — once
+        #expect(store.errorLog[.topo]?.first?.stage == "integrity")
+        #expect(store.errorLog[.topo]?.first?.text.contains("topo_tas.pmtiles TRUNCATED (have ") == true)
+        #expect(store.state(.topo) == .failed(PackStore.damaged))
+        let storage = StorageModel(packs: store, trees: nil)
+        guard case .unusable(.incomplete) = storage.status(.topo) else { Issue.record("row: \(storage.status(.topo))"); return }
+        #expect(storage.status(.topo).text(bytes: 1000, device: "iPad").hasPrefix("Incomplete on this iPad"))
+        #expect(!storage.status(.topo).offersGet)
+        #expect(storage.unusableNote?.contains("install it again from TestFlight") == true)
+        // looking again, and even a fetch, ask nothing of the system
+        await store.resync()
+        try? await Task.sleep(for: .milliseconds(300))
+        await store.resync()
         store.fetch(.topo)
-        #expect(await eventually { system.calls.count == 4 })
-        #expect(await eventually { store.state(.topo) == .failed(PackStore.damaged) })
-        try? await Task.sleep(for: .milliseconds(200))
-        #expect(system.calls == ["-topo", "topo", "-topo", "topo"])
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(system.calls.isEmpty)
+        #expect(store.errorLog[.topo]?.count == 1)   // logged once per failure
+    }
+
+    /// The files come right (the system replaced them): installed, no note.
+    @Test func completeFilesClearTheState() async throws {
+        let dir = try tempDir()
+        let url = dir.appending(path: Archive.topo.fileName)
+        let full = try Self.pmtiles(url)
+        Self.truncate(url, by: 500)
+        let system = FakePackSystem(installed: [.topo], directory: dir, returnDelay: 0.05)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        defer { store.shutdown() }
+        #expect(store.unusable[.topo] != nil)
+        try full.write(to: url)
+        await store.resync()
+        #expect(await eventually { store.state(.topo).isInstalled })
+        #expect(store.location.url(for: .topo) == url)
+        #expect(store.unusable.isEmpty)
+        #expect(StorageModel(packs: store, trees: nil).unusableNote == nil)
+        #expect(system.calls.isEmpty)
     }
 
     @Test func aCompletePackIsCheckedOncePerVersion() async throws {
         let dir = try tempDir()
         _ = try Self.pmtiles(dir.appending(path: Archive.topo.fileName))
         let defaults = defaults()
+        defaults.set(["topo": [1, 2]], forKey: PackStore.retiredRepairsKey)
         let system = FakePackSystem(installed: [.topo], directory: dir)
         let store = await PackStore.testing(system: system, defaults: defaults, tuning: Self.tuning)
         #expect(store.state(.topo).isInstalled && store.integrity[.topo]?.isDamaged == false)
+        #expect(defaults.object(forKey: PackStore.retiredRepairsKey) == nil)   // old counters cleared
         store.shutdown()
         // the next launch: the same files passed — not read again
         let passed = defaults.dictionary(forKey: PackStore.integrityKey) as? [String: String]
@@ -152,26 +155,128 @@ struct PackRepairTests {
         #expect(system.calls.isEmpty)
     }
 
+    /// While the system downloads (updates) the pack, it isn't judged; once
+    /// that ends with the files still short, it's unusable — not removed.
+    @Test func notJudgedWhileTheSystemDownloadsThePack() async throws {
+        let dir = try tempDir()
+        let url = dir.appending(path: Archive.topo.fileName)
+        _ = try Self.pmtiles(url)
+        Self.truncate(url, by: 500)
+        let system = FakePackSystem(installed: [.topo], downloading: [.topo: 0.5], seconds: 0.05, directory: dir, returnDelay: 0.05)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        defer { store.shutdown() }
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(store.unusable[.topo] == nil)
+        if case .downloading = store.state(.topo) {} else { Issue.record("state: \(store.state(.topo))") }
+        system.drop(.topo)
+        await store.resync()
+        #expect(await eventually { store.state(.topo) == .failed(PackStore.damaged) })
+        #expect(noRemovals(system))
+    }
+
+    // MARK: Refused lookups
+
+    /// iOS refuses the lookups (`url(for:)` throws): "won't open", no
+    /// Retry, no request, and plant ID isn't mistaken for an older version.
+    @Test func refusedLookupsAreBlockedNotRetried() async throws {
+        let system = FakePackSystem(installed: [.vector, .plantid], seconds: 0.05, returnDelay: 0.05)
+        system.setRefused(.vector, true)
+        system.setRefused(.plantid, true)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        defer { store.shutdown() }
+        // at first only unreadable for now (a refusal may pass): no reinstall advice yet
+        #expect(store.state(.vector) == .failed(PackStore.unreadable))
+        #expect(store.unusable.isEmpty)
+        #expect(StorageModel(packs: store, trees: nil).unusableNote == nil)
+        // still refused after `blockedAfter`: iOS won't open it
+        #expect(await eventually { store.unusable == [.vector: .blocked, .plantid: .blocked] })
+        #expect(store.state(.vector) == .failed(PackStore.blocked))
+        #expect(!store.outdated.contains(.plantid))
+        let storage = StorageModel(packs: store, trees: nil)
+        #expect(storage.status(.vector) == .unusable(.blocked))
+        #expect(storage.status(.vector).text(bytes: 1000, device: "iPhone").hasPrefix("On this iPhone, but iOS won't open it"))
+        #expect(storage.unusableNote?.hasPrefix("iOS won't let IzzyMap open") == true)
+        store.fetch(.vector)
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(system.calls.isEmpty)
+        // iOS lets go again (after a reinstall, say): installed
+        system.setRefused(.vector, false)
+        await store.resync()
+        #expect(await eventually { store.state(.vector).isInstalled })
+        #expect(store.unusable[.vector] == nil)
+    }
+
+    /// Refused while the system downloads (updates) the pack: not judged.
+    @Test func refusedDuringAnUpdateIsNotJudged() async throws {
+        let system = FakePackSystem(installed: [.topo], downloading: [.topo: 0.4], seconds: 0.05, returnDelay: 0.05)
+        system.setRefused(.topo, true)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        defer { store.shutdown() }
+        try? await Task.sleep(for: .milliseconds(600))
+        await store.resync()
+        #expect(store.unusable.isEmpty)
+        if case .downloading = store.state(.topo) {} else { Issue.record("state: \(store.state(.topo))") }
+        #expect(noRemovals(system))
+    }
+
+    /// A refused pack that leaves the device: plain "not here" again.
+    @Test func refusedPackThatLeavesIsNotInstalled() async throws {
+        let system = FakePackSystem(installed: [.tasmap], seconds: 0.05, returnDelay: 0.05)
+        system.setRefused(.tasmap, true)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        defer { store.shutdown() }
+        #expect(await eventually { store.unusable[.tasmap] == .blocked })
+        // no trash for refused lookups: reinstalling is the fix
+        #expect(StorageModel(packs: store, trees: nil).status(.tasmap) == .unusable(.blocked))
+        try await system.remove("tasmap")   // iOS deletes it (offloading, say)
+        system.setRefused(.tasmap, false)
+        await store.resync()
+        #expect(await eventually { store.state(.tasmap) == .notInstalled })
+        #expect(store.unusable.isEmpty)
+    }
+
+    // MARK: On-demand
+
+    /// An incomplete on-demand map: the row offers Remove (her tap), the
+    /// note says remove and get again; after Remove it's a plain Get.
+    @Test func incompleteOnDemandMapCanBeRemovedByHand() async throws {
+        let dir = try tempDir()
+        let url = dir.appending(path: Archive.tasmap.fileName)
+        _ = try Self.pmtiles(url)
+        Self.truncate(url, by: 500)
+        let system = FakePackSystem(installed: [.tasmap], seconds: 0.05, directory: dir, returnDelay: 0.05)
+        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
+        defer { store.shutdown() }
+        let storage = StorageModel(packs: store, trees: nil)
+        guard case .unusable(.incomplete) = storage.status(.tasmap) else { Issue.record("row: \(storage.status(.tasmap))"); return }
+        #expect(storage.unusableNote == "An extra map on this \(DeviceNoun.current) is incomplete: remove it and get it again.")
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(system.calls.isEmpty)
+        await store.remove(.tasmap)
+        #expect(system.calls == ["-tasmap"])
+        #expect(await eventually { storage.status(.tasmap) == .get })
+        #expect(store.unusable.isEmpty)
+    }
+
     // MARK: Plant ID
 
-    @Test func truncatedPlantIDModelIsRepairedOnce() async throws {
+    @Test func truncatedPlantIDModelIsIncompleteNotRemoved() async throws {
         let dir = try tempDir()
-        let (folder, head) = try Self.plantID(in: dir)
-        let headURL = folder.appending(path: "v3-head.bin")
-        Self.truncate(headURL, by: 3000)
+        let (folder, _) = try Self.plantID(in: dir)
+        Self.truncate(folder.appending(path: "v3-head.bin"), by: 3000)
         let system = FakePackSystem(installed: [.plantid], seconds: 0.05, directory: dir, returnDelay: 0.05)
-        system.onInstall { id in if id == "plantid" { try? head.write(to: headURL) } }
         let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
         defer { store.shutdown() }
         #expect(store.errorLog[.plantid]?.first?.text.contains("plantid/v3-head.bin TRUNCATED (have 5,192, need 8,192)") == true)
-        #expect(await eventually { store.state(.plantid).isInstalled })
-        #expect(system.calls == ["-plantid", "plantid"])
-        #expect(store.integrity[.plantid]?.isDamaged == false)
+        #expect(store.state(.plantid) == .failed(PackStore.damaged))
+        guard case .incomplete? = store.unusable[.plantid] else { Issue.record("unusable: \(String(describing: store.unusable[.plantid]))"); return }
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(system.calls.isEmpty)
     }
 
-    /// The engine checks before Core ML sees the files: the repair message,
-    /// not "array weight out of bounds", and the store is told.
-    @Test func damagedModelFailsTheLoadWithTheRepairMessage() async throws {
+    /// The engine checks before Core ML sees the files: the incomplete
+    /// message, not "array weight out of bounds", and the store is told.
+    @Test func damagedModelFailsTheLoadWithTheIncompleteMessage() async throws {
         let dir = try tempDir()
         let (folder, _) = try Self.plantID(in: dir)
         Self.truncate(folder.appending(path: "\(PlantIDFiles.encoder)/weights/weight.bin"), by: 100)
@@ -184,7 +289,7 @@ struct PackRepairTests {
         let engine = PlantIDEngine(source: .files(folder))
         var message: String?
         do { _ = try await engine.prepare() } catch { message = error.localizedDescription }
-        #expect(message == PlantIDFailure.repairing)
+        #expect(message == PlantIDFailure.incomplete)
         #expect(told.withLock { $0 } == ["plantid"])
     }
 
@@ -205,16 +310,16 @@ struct PackRepairTests {
         return (dir, folder.appending(path: "p9.avif"))
     }
 
-    @Test func refPhotosWithTruncatedFilesAreRepairedOnce() async throws {
+    @Test func refPhotosWithTruncatedFilesAreIncomplete() async throws {
         let (dir, last) = try refPhotosFolder()
         try Data(repeating: 9, count: 20).write(to: last)
         let system = FakePackSystem(installed: [.refphotos], seconds: 0.05, directory: dir, returnDelay: 0.05)
-        system.onInstall { id in if id == "refphotos" { try? Data(repeating: 9, count: 59).write(to: last) } }
         let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
         defer { store.shutdown() }
         #expect(store.errorLog[.refphotos]?.first?.text.contains("refphotos/p9.avif TRUNCATED") == true)
-        #expect(await eventually { store.state(.refphotos).isInstalled })
-        #expect(system.calls == ["-refphotos", "refphotos"])
+        #expect(store.state(.refphotos) == .failed(PackStore.damaged))
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(system.calls.isEmpty)
     }
 
     /// A photo not beside index.json is no evidence: iOS 27 stages a pack's
@@ -231,89 +336,5 @@ struct PackRepairTests {
         #expect(store.state(.refphotos).isInstalled)
         #expect(system.calls.isEmpty)
         #expect(store.errorLog[.refphotos] == nil)
-    }
-
-    // MARK: Guards: confirmation, space, the cap across launches
-
-    /// One damaged look removes nothing: an in-place update may be
-    /// mid-swap. Complete by the second look = never removed.
-    @Test func aSecondLookBeforeAnythingIsRemoved() async throws {
-        let dir = try tempDir()
-        let url = dir.appending(path: Archive.topo.fileName)
-        let full = try Self.pmtiles(url)
-        Self.truncate(url, by: 500)
-        var tuning = Self.tuning
-        tuning.repairConfirmAfter = .milliseconds(500)
-        let system = FakePackSystem(installed: [.topo], directory: dir, returnDelay: 0.05)
-        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: tuning)
-        defer { store.shutdown() }
-        try? await Task.sleep(for: .milliseconds(150))
-        #expect(system.calls.isEmpty)
-        #expect(store.location.url(for: .topo) == nil)
-        // the swap finishes before the second look
-        try full.write(to: url)
-        #expect(await eventually { store.state(.topo).isInstalled })
-        #expect(store.location.url(for: .topo) == url)
-        #expect(system.calls.isEmpty)
-    }
-
-    /// While the system downloads (updates) the pack, it isn't judged.
-    @Test func noRemovalWhileTheSystemDownloadsThePack() async throws {
-        let dir = try tempDir()
-        let url = dir.appending(path: Archive.topo.fileName)
-        _ = try Self.pmtiles(url)
-        Self.truncate(url, by: 500)
-        let system = FakePackSystem(installed: [.topo], downloading: [.topo: 0.5], seconds: 0.05, directory: dir, returnDelay: 0.05)
-        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
-        defer { store.shutdown() }
-        try? await Task.sleep(for: .milliseconds(600))
-        #expect(system.calls.isEmpty)
-        system.drop(.topo)
-        #expect(await eventually { system.calls == ["-topo", "topo"] })
-    }
-
-    @Test func tooLittleSpaceRemovesNothingAndSaysHowMuchToFree() async throws {
-        let dir = try tempDir()
-        let url = dir.appending(path: Archive.topo.fileName)
-        _ = try Self.pmtiles(url)
-        Self.truncate(url, by: 500)
-        let system = FakePackSystem(installed: [.topo], seconds: 0.05, directory: dir, returnDelay: 0.05)
-        let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning, freeSpace: { 500_000_000 })
-        defer { store.shutdown() }
-        let blocked = { if case .failed(let m) = store.state(.topo) { m.hasPrefix("Not enough space to repair — free ") } else { false } }
-        #expect(await eventually { blocked() })
-        let status = StorageModel(packs: store, trees: nil).status(.topo)
-        #expect(status.offersGet)
-        if case let .noSpace(message) = status { #expect(message.hasSuffix("GB")) } else { Issue.record("row: \(status)") }
-        await store.resync()
-        try? await Task.sleep(for: .milliseconds(400))
-        await store.resync()
-        #expect(system.calls.isEmpty)
-        #expect(blocked())
-    }
-
-    /// At most `maxRepairs` automatic repairs per pack version — across
-    /// launches; a Retry starts over.
-    @Test func theRepairCapHoldsAcrossLaunches() async throws {
-        let dir = try tempDir()
-        let url = dir.appending(path: Archive.topo.fileName)
-        _ = try Self.pmtiles(url)
-        Self.truncate(url, by: 500)
-        let defaults = defaults()
-        for launch in 1 ... 3 {
-            let system = FakePackSystem(installed: [.topo], seconds: 0.05, directory: dir, returnDelay: 0.05)
-            let store = await PackStore.testing(system: system, defaults: defaults, tuning: Self.tuning)
-            if launch <= PackStore.maxRepairs {
-                #expect(await eventually { system.calls == ["-topo", "topo"] && store.state(.topo) == .failed(PackStore.damaged) }, "launch \(launch)")
-            } else {
-                try? await Task.sleep(for: .milliseconds(600))
-                #expect(system.calls.isEmpty, "launch \(launch)")
-                #expect(store.state(.topo) == .failed(PackStore.damaged))
-                store.fetch(.topo)
-                #expect(await eventually { system.calls == ["-topo", "topo"] })
-            }
-            try? await Task.sleep(for: .milliseconds(100))
-            store.shutdown()
-        }
     }
 }

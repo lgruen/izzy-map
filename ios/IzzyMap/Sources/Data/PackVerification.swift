@@ -6,7 +6,7 @@ import IzzyKit
 /// (2026-11-06) the system reported packs "downloaded" whose files were
 /// cut short — a truncated PMTiles must never reach MapLibre, nor a
 /// truncated model Core ML: `PackStore` treats a damaged pack as missing
-/// and repairs it (remove, download again).
+/// and marks it unusable (never removed by the app: `PackStore.unusable`).
 nonisolated enum PackVerification {
     /// The files to look at, nil when the resolution has none for the pack
     /// (nothing to say — a fake without a directory, a folder not found).

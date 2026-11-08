@@ -136,12 +136,13 @@ struct LayersSheet: View {
     /// (nil when they are, or when nothing can fetch them here).
     private func download(_ list: [Pack], title: String) -> TileDownload? {
         let store = model.shared.packs
-        // what the App Store doesn't offer yet can't be got from a tile
-        let missing = list.filter { !store.state($0).isInstalled && store.state($0) != .unpublished }
+        // what the App Store doesn't offer yet can't be got from a tile, nor
+        // what is here but unusable (Storage says what to do)
+        let missing = list.filter { !store.state($0).isInstalled && store.state($0) != .unpublished && store.unusable[$0] == nil }
         guard store.canFetch, store.isResolved, !missing.isEmpty else { return nil }
         let states = missing.map {
             PackRowStatus.of(store.state($0), pack: $0, canFetch: true, online: Connectivity.shared.online,
-                             queued: store.queuePosition($0), repairing: store.repairing.contains($0))
+                             queued: store.queuePosition($0), unusable: store.unusable[$0])
         }
         let busy = states.filter(\.isBusy)
         // waiting its turn in the queue is no progress either

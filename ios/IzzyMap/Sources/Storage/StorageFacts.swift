@@ -138,12 +138,10 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
     case updating(Double)
     /// On-demand and not here: one tap gets it.
     case get
-    /// Its files on the device were found incomplete (the system said
-    /// downloaded): removed, downloading again (nil until progress).
-    case repairing(Double?)
-    /// Damaged, and too little space to download it again (nothing was
-    /// removed): the message says how much to free; Retry tries again.
-    case noSpace(String)
+    /// On the device, but the app won't use it (`PackStore.unusable`): its
+    /// files are cut short, or iOS won't open them. Nothing to retry; the
+    /// fix is Remove and Get (on-demand) or reinstalling IzzyMap.
+    case unusable(PackStore.Unusable)
     /// Asked for, waiting its turn in the download queue (1 = next): the
     /// store asks the system for one pack at a time.
     case queued(Int)
@@ -161,12 +159,8 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
     case unpublished
 
     static func of(_ state: PackState, pack: Pack, canFetch: Bool, resolved: Bool = true,
-                   update: Double? = nil, online: Bool = true, queued: Int? = nil, repairing: Bool = false, blocked: String? = nil) -> PackRowStatus {
-        if let blocked, queued == nil, case .failed = state { return .noSpace(blocked) }
-        if repairing, !state.isInstalled {
-            if case let .downloading(f) = state { return .repairing(f) }
-            if state == .notInstalled || queued != nil { return .repairing(nil) }
-        }
+                   update: Double? = nil, online: Bool = true, queued: Int? = nil, unusable: PackStore.Unusable? = nil) -> PackRowStatus {
+        if let unusable, case .failed = state { return .unusable(unusable) }
         // waiting its turn — unless the system is already moving its bytes
         if let queued, !state.isInstalled, state != .unpublished {
             if case .downloading(_?) = state {} else { return .queued(queued) }
@@ -186,14 +180,13 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
 
     /// A tap on the row's control starts a fetch.
     var offersGet: Bool {
-        if case .noSpace = self { return true }
-        return self == .get || self == .failed || self == .arriving
+        self == .get || self == .failed || self == .arriving
     }
     /// A download of a pack that isn't on the device yet is under way
     /// (Stop removes what has arrived). An update is not: the pack is here.
     var isBusy: Bool {
         switch self {
-        case .downloading, .paused, .queued, .repairing: true
+        case .downloading, .paused, .queued: true
         default: false
         }
     }
@@ -208,7 +201,6 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
         switch self {
         case let .downloading(f): f
         case let .updating(f): f
-        case let .repairing(f): f
         default: nil
         }
     }
@@ -219,7 +211,7 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
     var symbol: String? {
         switch self {
         case .onDevice, .updating: StateSymbol.onDevice
-        case .failed, .noSpace: StateSymbol.failed
+        case .failed, .unusable: StateSymbol.failed
         case .paused(.offline): StateSymbol.offline
         default: nil
         }
@@ -231,9 +223,8 @@ nonisolated enum PackRowStatus: Equatable, Sendable {
         let size = StorageText.size(bytes)
         switch self {
         case .checking: return "Checking…"
-        case let .repairing(f?): return "Repairing — downloading again\u{00A0}\(StorageText.percent(f)) · \(StorageText.fraction(Int(Double(bytes) * f), of: bytes))"
-        case .repairing(nil): return "Repairing — downloading again · \(size)"
-        case let .noSpace(message): return message
+        case .unusable(.incomplete): return "Incomplete on this \(device) · \(size)"
+        case .unusable(.blocked): return "On this \(device), but iOS won't open it · \(size)"
         case .onDevice: return "On this \(device) · \(size)"
         case let .updating(f):
             return "On this \(device) · updating\u{00A0}\(StorageText.percent(f))"

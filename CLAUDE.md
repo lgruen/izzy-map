@@ -604,6 +604,24 @@ milestones, map-proof results); the design brief and language is
   first specialisation slower (35–45 s). The first load per model
   version still specialises for ~30 s (UI says so). Diagnostics has an
   on-demand "Benchmark identifier load" (location × compute units).
+- **Never remove a downloaded pack from code — only her tap does**
+  (2026-11-08, iPhone 16e, iOS 27.2, build 16): the automatic repair
+  (integrity damage → `remove(assetPackWithID:)` → request again) acted
+  on a FALSE "missing photo" and right after, `url(for:)` threw for EVERY
+  pack ("no permission to save Staged Subpaths.plist" in each pack's
+  folder, NSCocoaError 513 / EPERM), surviving reboots; `descriptor(for:)`
+  still opened every file at full size; only a reinstall fixed it. Why the
+  photo looked missing: iOS 27's `url(for:)` STAGES each requested path
+  into the shared `Library/Caches/<bundle>/Staging/Unlocalized/` and logs
+  it in the pack's `Staged Subpaths.plist`, so a folder from `url(for:)`
+  holds only what was asked for so far — never infer a file's absence from
+  its siblings. The app may only read the daemon's real pack folders by
+  traversal (`--x`): no listing, no direct open. Now: damage (positive
+  evidence only) or refused lookups = `PackStore.unusable` — hidden from
+  MapLibre/Core ML, never re-requested, Storage says "Incomplete" / "iOS
+  won't open it" and names the fix (reinstall; an on-demand map: Remove +
+  Get by hand). Diagnostics probes a refused folder (owner, mode, flags,
+  ACL, `descriptor(for:)`).
 - **MapLibre Native picks a raster tile level by ROUNDING**
   (`util::coveringZoomLevel`: round(zoom + log2(512/tileSize))), so with
   the tiles' real 256 px size the coarser level is shown magnified up to

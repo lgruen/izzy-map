@@ -67,6 +67,10 @@ final class PackStore {
         var watchInterval: Duration = .seconds(30)
         /// Re-reads after "local, but its files don't open" (a move in progress?).
         var unreadableRechecks: [Duration] = [.seconds(3), .seconds(15)]
+        /// Refused lookups (`PackResolution.blocked`) count as "iOS won't
+        /// open it" (reinstall) only after persisting this long in the
+        /// foreground; until then the pack is just unreadable for now.
+        var blockedAfter: Duration = .seconds(20)
         /// A request that failed while the system says it's still
         /// downloading is re-attached without using a retry, at most this often.
         var freeReattaches = 10
@@ -91,12 +95,6 @@ final class PackStore {
         var offlineRecheck: Duration = .seconds(1)
         /// Ticks the background task hears per pack while nothing moves.
         var maxTicksPerPack = 60
-        /// A pack found damaged is looked at again after this long (same
-        /// files, no system download or update running) before anything is
-        /// removed: an in-place update may be mid-swap.
-        var repairConfirmAfter: Duration = .seconds(20)
-        /// Free space a repair needs beyond the pack's size.
-        var repairMargin: Int64 = 1 << 30
     }
 
     /// One recorded error (Diagnostics).
@@ -191,6 +189,9 @@ final class PackStore {
     @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var recheckTask: Task<Void, Never>?
+    /// When each pack's lookups were first seen refused (foreground only).
+    @ObservationIgnored private var blockedSince: [Pack: ContinuousClock.Instant] = [:]
+    @ObservationIgnored private var blockedCheckTask: Task<Void, Never>?
     @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
     /// Resume tapped while the current pack waits (a retry, the app): go now.
     @ObservationIgnored private var cutWait = false
@@ -238,40 +239,27 @@ final class PackStore {
     /// run this launch (a pass cached from an earlier launch has none).
     /// A damaged pack counts as missing: its archives never reach the map.
     private(set) var integrity: [Pack: PackIntegrity.Report] = [:]
-    /// Damaged packs being replaced: removed from the system, then asked
-    /// for again through the queue (the row: "Repairing — downloading again").
-    private(set) var repairing: Set<Pack> = []
+    /// Packs the system has that the app won't use, and why. NEVER repaired
+    /// by the app itself: the automatic repair (remove, download again) was
+    /// followed on an iPhone (2026-11-08) by iOS refusing to hand out the
+    /// files of EVERY pack, across reboots, until a reinstall. Storage says
+    /// which, and the fix: Remove and Get for an on-demand pack, otherwise
+    /// delete and reinstall IzzyMap.
+    private(set) var unusable: [Pack: Unusable] = [:]
+    nonisolated enum Unusable: Equatable, Sendable {
+        /// The files are cut short (positive evidence: `PackIntegrity`).
+        case incomplete(String)
+        /// iOS refuses the lookups (`PackResolution.blocked`).
+        case blocked
+    }
+    /// The damage last logged per pack (one error line per failure).
+    @ObservationIgnored private var notedDamage: [Pack: String] = [:]
     /// Verdicts this launch, by input signature (path, size, date of each file).
     @ObservationIgnored private var verdicts: [String: PackIntegrity.Report] = [:]
-    /// The failure (signature) each repair was started for: one repair per failure.
-    @ObservationIgnored private var repairedFailures: [Pack: String] = [:]
-    /// A repair refused for lack of space: the row says how much to free
-    /// (until the files change or a Retry).
-    private(set) var repairBlocked: [Pack: String] = [:]
-    @ObservationIgnored private var blockedFailure: [Pack: String] = [:]
-    /// The damaged packs now, by failure signature (from the last refresh).
-    @ObservationIgnored private var damagedNow: [Pack: String] = [:]
-    /// First damaged look per pack; a repair waits for a second one.
-    @ObservationIgnored private var suspects: [Pack: Suspect] = [:]
-    @ObservationIgnored private var confirmTasks: [Pack: Task<Void, Never>] = [:]
-    /// Packs a tap asked to repair (past the automatic cap).
-    @ObservationIgnored private var userRepairs: Set<Pack> = []
-    /// Free space for a repair (tests inject it).
-    @ObservationIgnored private var freeSpace: @Sendable () -> Int64? = {
-        (try? URL.applicationSupportDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-            .volumeAvailableCapacityForImportantUsage
-    }
-    /// Found damaged before the checkpointed queue was read (boot).
-    @ObservationIgnored private var pendingRepairs: [Pack] = []
-    /// Queue turns (tokens) that already removed their damaged pack.
-    @ObservationIgnored private var repairRemoved: Set<UUID> = []
     /// The last resolution (Diagnostics re-checks its files).
     @ObservationIgnored private(set) var lastFound: PackResolution?
-    /// Automatic repairs per pack and server version, across launches,
-    /// before it shows as failed (a Retry, or a new version, resets it).
-    static let maxRepairs = 2
-    /// [pack ID: [server version (-1 unknown), repairs]] (UserDefaults).
-    nonisolated static let repairsKey = "packRepairAttempts"
+    /// The retired automatic repair's counters (cleared at launch).
+    nonisolated static let retiredRepairsKey = "packRepairAttempts"
     /// Signatures that passed, per pack ID (UserDefaults): a pack version is checked once.
     nonisolated static let integrityKey = "packIntegrityPassed"
     /// Catalogue refreshes this launch (Diagnostics).
@@ -382,13 +370,11 @@ final class PackStore {
     /// (states from the system, the checkpointed queue resumed).
     static func testing(system: FakePackSystem, defaults: UserDefaults, tuning: Tuning,
                         background: (any ContinuedWork)? = nil, autoFetchCore: Bool = false,
-                        keptAlive: @escaping @MainActor () -> Bool = { false }, online: Bool = true,
-                        freeSpace: @escaping @Sendable () -> Int64? = { 1 << 50 }) async -> PackStore {
+                        keptAlive: @escaping @MainActor () -> Bool = { false }, online: Bool = true) async -> PackStore {
         let store = PackStore(mode: .assetPacks, location: DataLocation(origin: .assetPacks, archives: [:]),
                               states: Dictionary(uniqueKeysWithValues: Pack.allCases.map { ($0, .notInstalled) }),
                               system: system, tuning: tuning, defaults: defaults, background: background)
         store.keptAlive = keptAlive
-        store.freeSpace = freeSpace
         store.online = online
         store.isResolved = false
         await store.boot(autoFetchCore: autoFetchCore, restoreQueue: true, hooks: false)
@@ -407,8 +393,7 @@ final class PackStore {
         watchTask?.cancel()
         heartbeatTask?.cancel()
         recheckTask?.cancel()
-        for task in confirmTasks.values { task.cancel() }
-        confirmTasks = [:]
+        blockedCheckTask?.cancel()
         for task in graceTasks { task.cancel() }
         runner?.cancel()
         queue = []
@@ -428,10 +413,7 @@ final class PackStore {
         if restoreQueue { self.restoreQueue() } else { queueRestored = true }
         isResolved = true
         resolved()
-        if !pendingRepairs.isEmpty {
-            enqueue(pendingRepairs, user: false)
-            pendingRepairs = []
-        }
+        defaults.removeObject(forKey: Self.retiredRepairsKey)
         // a reader found a pack damaged (the plant-ID load): look again now
         lifecycleTasks.append(Task { [weak self] in
             for await note in NotificationCenter.default.notifications(named: PackVerification.damagedNotification) {
@@ -538,8 +520,6 @@ final class PackStore {
     /// task — she may have ended the last one herself).
     private func enqueue(_ packs: [Pack], user: Bool) {
         guard managesPacks else { return }
-        // a tap on a damaged pack (Retry): repaired again, past the cap
-        if user { for pack in packs where damagedNow[pack] != nil { resetRepair(pack) } }
         let wanted = packs.filter { !state($0).isInstalled && $0 != current && !queue.contains($0) }
         if user { considerBackgroundTask(adding: wanted) }
         guard !wanted.isEmpty else { return }
@@ -693,52 +673,12 @@ final class PackStore {
             await refresh()
             guard owns(pack, token) else { return }
             if state(pack).isInstalled { return finish(pack, token) }
-            // damaged files the system calls downloaded: removed first (a
-            // request would return at once with the same files) — once per
-            // turn; still there after that, iOS kept them: say so
-            if let failure = damagedNow[pack], lastSystemLocal.contains(pack) {
-                guard !repairRemoved.contains(token) else {
-                    Self.logger.error("\(pack.rawValue, privacy: .public): damaged files still there after the removal")
-                    states[pack] = .failed(Self.damaged)
-                    return drop(pack, token)
-                }
-                // a second look first (the confirmation's refresh marks it)
-                guard suspects[pack]?.signature == failure, suspects[pack]?.confirmed == true else {
-                    await wait(tuning.repairConfirmAfter, pack, token)
-                    continue
-                }
-                if !userRepairs.contains(pack), repairsUsed(pack) >= Self.maxRepairs {
-                    states[pack] = .failed(Self.damaged)
-                    return drop(pack, token)
-                }
-                // a download or update of it under way: not now
-                if let system, await system.localStatus(pack.rawValue).downloading || updates[pack] != nil {
-                    await wait(tuning.repairConfirmAfter, pack, token)
-                    continue
-                }
-                guard owns(pack, token) else { return }
-                // the removal frees its space only once the new copy can't
-                // fit — never delete what can't be downloaded again
-                let need = Int64(size(pack)) + tuning.repairMargin
-                if let free = freeSpace(), free < need {
-                    let message = "Not enough space to repair — free \(StorageText.size(Int(need - free)))"
-                    Self.logger.error("\(pack.rawValue, privacy: .public): \(message, privacy: .public) (\(free) bytes free)")
-                    blockedFailure[pack] = failure
-                    repairBlocked[pack] = message
-                    states[pack] = .failed(message)
-                    return drop(pack, token)
-                }
-                repairRemoved.insert(token)
-                repairedFailures[pack] = failure
-                userRepairs.remove(pack)
-                noteRepair(pack)
-                if pack == .plantid {
-                    // Core ML lets go of the model's files first
-                    PlantIDRelease.releaseAll()
-                    try? await Task.sleep(for: .milliseconds(500))
-                }
-                await removeForRepair(pack)
-                continue
+            // files the system calls downloaded that the app won't use (cut
+            // short, or their lookups refused): a request returns at once
+            // with the same files, and the app never removes them itself
+            if unusable[pack] != nil, lastSystemLocal.contains(pack) {
+                showUnusable(pack)
+                return drop(pack, token)
             }
             switch states[pack] {
             case .downloading?, .paused?: break
@@ -751,11 +691,9 @@ final class PackStore {
                 guard owns(pack, token) else { return }
                 await refresh()
                 if state(pack).isInstalled { return finish(pack, token) }
-                // downloaded again, and again cut short (the space ran out
-                // again?): this turn ends; a new failure gets its own repair
-                if damagedNow[pack] != nil, lastSystemLocal.contains(pack) {
-                    Self.logger.error("\(pack.rawValue, privacy: .public): downloaded again, still damaged: \(self.integrity[pack]?.summary ?? "", privacy: .public)")
-                    states[pack] = .failed(Self.damaged)
+                // here but unusable (cut short, lookups refused): asking again can't help
+                if unusable[pack] != nil, lastSystemLocal.contains(pack) {
+                    showUnusable(pack)
                     return drop(pack, token)
                 }
                 // "available" (the call returns at once for a local pack) but
@@ -967,7 +905,8 @@ final class PackStore {
                 else if self.state(pack) == .paused { limit = tuning.pausedStallAfter }
                 else { limit = tuning.stallAfter }
                 guard self.quiet(pack, for: limit), attempt.started.duration(to: .now) >= limit else { continue }
-                let removable = pack.isRemovable && !status.downloading && !status.downloaded
+                // never a pack the system has (whatever its status says)
+                let removable = pack.isRemovable && !status.downloading && !status.downloaded && !self.lastSystemLocal.contains(pack)
                 Self.logger.notice("\(pack.rawValue, privacy: .public): request lost (system: downloading \(status.downloading), downloaded \(status.downloaded)); asking again")
                 if removable {
                     let id = pack.rawValue
@@ -1004,8 +943,6 @@ final class PackStore {
     private func finish(_ pack: Pack, _ token: UUID) {
         guard owns(pack, token) else { return }
         retries[pack] = nil
-        repairing.remove(pack)
-        repairRemoved.remove(token)
         run.done.insert(pack)
         current = nil
         currentToken = nil
@@ -1015,8 +952,6 @@ final class PackStore {
 
     private func drop(_ pack: Pack, _ token: UUID) {
         guard owns(pack, token) else { return }
-        repairing.remove(pack)
-        repairRemoved.remove(token)
         current = nil
         currentToken = nil
         checkpoint()
@@ -1206,7 +1141,7 @@ final class PackStore {
             Self.logger.info("\(pack.rawValue, privacy: .public): download finished")
             updates[pack] = nil
             await refresh()
-            if !state(pack).isInstalled, !owned(pack), !stopped.contains(pack), !outdated.contains(pack) {
+            if !state(pack).isInstalled, !owned(pack), !stopped.contains(pack), !outdated.contains(pack), unusable[pack] == nil {
                 // a system download (core pack, update) whose files can't be
                 // read: a Retry, never a row stuck "Waiting" — after a
                 // second look (the files may still be moving into place)
@@ -1220,7 +1155,7 @@ final class PackStore {
             // system first; a pack we stopped stays as Stop left it
             guard !owned(pack), !stopped.contains(pack) else { return }
             await refresh()
-            guard !state(pack).isInstalled, !owned(pack) else { return }
+            guard !state(pack).isInstalled, !owned(pack), unusable[pack] == nil else { return }
             if let system, await system.localStatus(pack.rawValue).downloading { return }
             set(pack, Self.isNotFound(error) ? .unpublished : .failed(Self.message(error)))
         }
@@ -1267,6 +1202,7 @@ final class PackStore {
         for (pack, v) in verified where v.report?.isDamaged == true {
             if await system.localStatus(pack.rawValue).downloading { busy.insert(pack) }
         }
+        for pack in found.blocked where await system.localStatus(pack.rawValue).downloading { busy.insert(pack) }
         guard mine > refreshApplied else { return }
         refreshApplied = mine
         lastFound = found
@@ -1284,52 +1220,36 @@ final class PackStore {
             }
         }
         // the integrity verdicts: a damaged pack is missing (its archives
-        // leave the location, MapLibre never opens them) until repaired
+        // leave the location, MapLibre and Core ML never open them)
         let damaged = applyIntegrity(verified, passed: passed, to: &found)
-        damagedNow = damaged
-        for pack in Pack.allCases where damaged[pack] == nil {
-            suspects[pack] = nil
-            if repairBlocked[pack] != nil { repairBlocked[pack] = nil }
-            blockedFailure[pack] = nil
-        }
+        for pack in Pack.allCases where damaged[pack] == nil { notedDamage[pack] = nil }
+        var nowUnusable: [Pack: Unusable] = [:]
         lastSystemLocal = found.systemLocal
         plantIDDirectory = found.plantID
         let older = found.outdated.subtracting(found.installed)
         if outdated != older { outdated = older }
         var unreadable = false
-        var toRepair: [Pack] = []
         for pack in Pack.allCases {
             if found.installed.contains(pack) {
-                if repairing.contains(pack) { repairing.remove(pack) }
                 if states[pack] != .installed { states[pack] = .installed }
                 if queue.contains(pack) {
                     queue.removeAll { $0 == pack }
                     checkpoint()
                 }
             } else if let failure = damaged[pack] {
-                let confirmed = confirm(pack, failure, busy: busy.contains(pack) || updates[pack] != nil)
-                updates[pack] = nil
-                func show(_ state: PackState) { if states[pack] != state { states[pack] = state } }
-                if owned(pack) {
+                if notedDamage[pack] != failure {
+                    notedDamage[pack] = failure
+                    Self.logger.error("\(pack.rawValue, privacy: .public): damaged: \(self.integrity[pack]?.summary ?? "", privacy: .public)")
+                    noteError(pack, PackStoreError.damaged(integrity[pack]?.summary ?? ""), stage: "integrity")
+                }
+                // the system is replacing it (an update mid-swap?): not judged yet
+                if busy.contains(pack) || updates[pack] != nil {
                     switch states[pack] {
                     case .downloading?, .paused?: break
                     default: states[pack] = .downloading(nil)
                     }
-                } else if blockedFailure[pack] == failure, let message = repairBlocked[pack] {
-                    show(.failed(message))
-                } else if repairedFailures[pack] == failure || repairsUsed(pack) >= Self.maxRepairs || !managesPacks {
-                    // repaired once already (this launch), or the cap across launches
-                    if repairing.contains(pack) { repairing.remove(pack) }
-                    show(.failed(Self.damaged))
                 } else {
-                    // hidden from the map now; removed only after a second
-                    // look (`confirm`), then downloaded again
-                    if !repairing.contains(pack) { repairing.insert(pack) }
-                    switch states[pack] {
-                    case .downloading?, .paused?: break
-                    default: states[pack] = .downloading(nil)
-                    }
-                    if confirmed { toRepair.append(pack) }
+                    nowUnusable[pack] = .incomplete(integrity[pack]?.summary ?? "")
                 }
             } else if older.contains(pack) {
                 // an older version (plant ID v1): the new one is on its way
@@ -1344,6 +1264,17 @@ final class PackStore {
                     Self.logger.notice("\(pack.rawValue, privacy: .public): an older version on the device; checking for updates")
                     Task { await self.refreshCatalogue(reason: "\(pack.rawValue): older version on the device") }
                 }
+            } else if found.blocked.contains(pack), isActive, !busy.contains(pack), updates[pack] == nil,
+                      let since = blockedSince[pack], since.duration(to: .now) >= tuning.blockedAfter {
+                // the system has it and has refused its lookups for a while
+                // (never judged in the background or mid-update): no request can help
+                nowUnusable[pack] = .blocked
+            } else if found.blocked.contains(pack), busy.contains(pack) || updates[pack] != nil {
+                // being replaced by the system: not judged yet
+                switch states[pack] {
+                case .downloading?, .paused?: break
+                default: states[pack] = .downloading(nil)
+                }
             } else if found.systemLocal.contains(pack) {
                 // the system has it, but its files don't resolve: say so (a
                 // Retry; Diagnostics shows each path), never "not here · Get"
@@ -1352,17 +1283,26 @@ final class PackStore {
                     unreadable = true
                 }
                 updates[pack] = nil
-            } else if states[pack] == .installed {
+            } else if states[pack] == .installed || states[pack] == .failed(Self.damaged) || states[pack] == .failed(Self.blocked) {
+                // gone from the device (removed, or iOS deleted it)
                 states[pack] = .notInstalled
                 updates[pack] = nil
             }
         }
+        // refused lookups: the clock runs only in the foreground; a pack no
+        // longer refused (or gone) starts over
+        for pack in blockedSince.keys where !found.blocked.contains(pack) { blockedSince[pack] = nil }
+        if isActive {
+            for pack in found.blocked where blockedSince[pack] == nil { blockedSince[pack] = .now }
+        } else {
+            blockedSince = [:]
+        }
+        if unusable != nowUnusable { unusable = nowUnusable }
+        for pack in nowUnusable.keys { showUnusable(pack) }
         publish(found.location)
         lastSync = .now
         if unreadable { scheduleRechecks() }
-        if !toRepair.isEmpty {
-            if queueRestored { enqueue(toRepair, user: false) } else { pendingRepairs += toRepair }
-        }
+        if found.blocked.contains(where: { nowUnusable[$0] == nil }), isActive { scheduleBlockedCheck() }
         // here, whatever our request says (it may return late, or never):
         // the queue moves on — the next CALL still waits for this one
         if let current, found.installed.contains(current) { attempt?.settle(.success(())) }
@@ -1403,82 +1343,29 @@ final class PackStore {
         return damaged
     }
 
-    /// One pack's first damaged look, and whether a second confirmed it.
-    struct Suspect {
-        let signature: String
-        let since: ContinuousClock.Instant
-        var confirmed = false
-    }
-
-    /// Whether the damage to `pack` is confirmed: the SAME files found
-    /// damaged again at least `repairConfirmAfter` after the first look,
-    /// re-read (not the cached verdict), with no download or update of the
-    /// pack running. Until then a recheck is scheduled.
-    private func confirm(_ pack: Pack, _ failure: String, busy: Bool) -> Bool {
-        guard var suspect = suspects[pack], suspect.signature == failure else {
-            suspects[pack] = Suspect(signature: failure, since: .now)
-            Self.logger.error("\(pack.rawValue, privacy: .public): damaged (\(self.integrity[pack]?.summary ?? "", privacy: .public)); looking again in \(self.tuning.repairConfirmAfter, privacy: .public)")
-            noteError(pack, PackStoreError.damaged(integrity[pack]?.summary ?? ""), stage: "integrity")
-            scheduleConfirm(pack)
-            return false
-        }
-        if suspect.confirmed { return true }
-        guard suspect.since.duration(to: .now) >= tuning.repairConfirmAfter, !busy else {
-            scheduleConfirm(pack)
-            return false
-        }
-        suspect.confirmed = true
-        suspects[pack] = suspect
-        Self.logger.error("\(pack.rawValue, privacy: .public): damage confirmed")
-        return true
-    }
-
-    private func scheduleConfirm(_ pack: Pack) {
-        guard confirmTasks[pack] == nil else { return }
-        confirmTasks[pack] = Task { [weak self, tuning] in
-            try? await Task.sleep(for: tuning.repairConfirmAfter)
-            guard !Task.isCancelled, let self else { return }
-            self.confirmTasks[pack] = nil
-            // read the files again, not the cached verdict
-            self.verdicts = self.verdicts.filter { !$0.key.hasPrefix(pack.rawValue + "|") }
-            await self.refresh()
+    /// A look once refused lookups have persisted `blockedAfter`.
+    private func scheduleBlockedCheck() {
+        guard blockedCheckTask == nil else { return }
+        blockedCheckTask = Task { [weak self, tuning] in
+            try? await Task.sleep(for: tuning.blockedAfter + .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            self?.blockedCheckTask = nil
+            await self?.refresh()
         }
     }
 
-    /// The server's version of the pack (-1 unknown).
-    private func serverVersion(_ pack: Pack) -> Int { manifest[pack]?.version ?? -1 }
-
-    /// Repairs of this pack's current version so far (persisted; a stored
-    /// or current unknown version counts as the same one).
-    private func repairsUsed(_ pack: Pack) -> Int {
-        guard let entry = (defaults.dictionary(forKey: Self.repairsKey) as? [String: [Int]])?[pack.rawValue], entry.count == 2 else { return 0 }
-        let now = serverVersion(pack)
-        return entry[0] == now || entry[0] == -1 || now == -1 ? entry[1] : 0
-    }
-
-    private func noteRepair(_ pack: Pack) {
-        var all = defaults.dictionary(forKey: Self.repairsKey) as? [String: [Int]] ?? [:]
-        let used = repairsUsed(pack)
-        let version = serverVersion(pack) == -1 ? (all[pack.rawValue]?.first ?? -1) : serverVersion(pack)
-        all[pack.rawValue] = [version, used + 1]
-        defaults.set(all, forKey: Self.repairsKey)
-    }
-
-    /// A tap: this pack's repair starts over (cap, the failure seen, space).
-    private func resetRepair(_ pack: Pack) {
-        var all = defaults.dictionary(forKey: Self.repairsKey) as? [String: [Int]] ?? [:]
-        all[pack.rawValue] = nil
-        defaults.set(all, forKey: Self.repairsKey)
-        repairedFailures[pack] = nil
-        blockedFailure[pack] = nil
-        repairBlocked[pack] = nil
-        userRepairs.insert(pack)
-        if !repairing.contains(pack) { repairing.insert(pack) }
+    /// A pack the app won't use: its row says so (`unusable` says why).
+    private func showUnusable(_ pack: Pack) {
+        let message = switch unusable[pack] {
+        case .blocked?: Self.blocked
+        default: Self.damaged
+        }
+        if states[pack] != .failed(message) { states[pack] = .failed(message) }
     }
 
     /// A reader found the pack's files damaged (the plant-ID load checks
     /// before Core ML sees them): its cached pass is forgotten and the
-    /// store looks again — the repair starts from there.
+    /// store looks again (the pack then shows as incomplete).
     func reportDamaged(_ pack: Pack) async {
         var passed = defaults.dictionary(forKey: Self.integrityKey) as? [String: String] ?? [:]
         passed[pack.rawValue] = nil
@@ -1492,38 +1379,6 @@ final class PackStore {
     func checkIntegrityNow(_ pack: Pack) async -> PackIntegrity.Report? {
         guard let found = lastFound else { return nil }
         return await Task.detached(priority: .utility) { PackVerification.check(pack, in: found) }.value
-    }
-
-    /// Removes a damaged pack from the system before it is asked for again
-    /// (bounded: a removal iOS doesn't answer never holds the queue).
-    private func removeForRepair(_ pack: Pack) async {
-        guard let system else { return }
-        Self.logger.notice("\(pack.rawValue, privacy: .public): removing the damaged files")
-        let removalID = UUID()
-        removals.insert(removalID)
-        let done = Attempt()
-        let id = pack.rawValue
-        let call = Task.detached { () -> Result<Void, any Error> in
-            do { try await system.remove(id); return .success(()) } catch { return .failure(error) }
-        }
-        Task { done.settle(await call.value) }
-        Task { [tuning] in
-            try? await Task.sleep(for: tuning.removalTimeout)
-            done.settle(.failure(PackStoreError.stalled))
-        }
-        do {
-            try await done.value()
-            Self.logger.info("\(pack.rawValue, privacy: .public): damaged files removed")
-        } catch {
-            Self.logger.error("\(pack.rawValue, privacy: .public): removing the damaged files failed: \(String(describing: error), privacy: .public)")
-            noteError(pack, error, stage: "repair remove")
-        }
-        removals.remove(removalID)
-        // what arrives next is read afresh (a folder's signature covers its
-        // index, not every photo)
-        verdicts = verdicts.filter { !$0.key.hasPrefix(pack.rawValue + "|") }
-        wake()
-        await refresh()
     }
 
     /// Downloads the system runs by itself (a prefetch pack after the
@@ -1651,7 +1506,8 @@ final class PackStore {
     }
 
     nonisolated static let unreadable = "The download finished, but its files couldn't be opened."
-    nonisolated static let damaged = "Its files on this device are incomplete, and downloading them again didn't help."
+    nonisolated static let damaged = "Its files on this device are incomplete."
+    nonisolated static let blocked = "iOS won't open its files on this device."
 
     /// "No such asset pack" from Background Assets (the Swift error, or the
     /// bridged `BAManagedErrorCodeAssetPackNotFound`, code 0).

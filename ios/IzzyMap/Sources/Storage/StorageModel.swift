@@ -114,8 +114,26 @@ final class StorageModel {
     func status(_ pack: Pack) -> PackRowStatus {
         PackRowStatus.of(packs.state(pack), pack: pack, canFetch: packs.canFetch, resolved: packs.isResolved,
                          update: packs.updates[pack], online: Connectivity.shared.online,
-                         queued: packs.queuePosition(pack), repairing: packs.repairing.contains(pack),
-                         blocked: packs.repairBlocked[pack])
+                         queued: packs.queuePosition(pack), unusable: packs.unusable[pack])
+    }
+
+    /// The fix for packs the app won't use, said once at the top of the
+    /// packs (nil when there are none). The app never removes a downloaded
+    /// pack itself (`PackStore.unusable`): reinstalling is the fix that
+    /// works for every pack; an incomplete on-demand map can also be
+    /// removed and got again from its row.
+    var unusableNote: String? {
+        let bad = packs.unusable
+        guard !bad.isEmpty else { return nil }
+        let device = DeviceNoun.current
+        let reinstall = "delete IzzyMap and install it again from TestFlight — its maps then download again (detailed areas and field-guide downloads too)."
+        if bad.values.contains(.blocked) {
+            return "iOS won't let IzzyMap open files it downloaded on this \(device). To fix it, " + reinstall
+        }
+        if bad.keys.contains(where: { $0.policy != .onDemand }) {
+            return "Some downloads on this \(device) are incomplete. To fix it, " + reinstall
+        }
+        return "An extra map on this \(device) is incomplete: remove it and get it again."
     }
 
     /// Every core pack (maps and plant ID) is on the device and nothing
@@ -139,6 +157,7 @@ final class StorageModel {
     /// The packs of a section that aren't on the device, in the screen's
     /// order (seasons newest first: "Get all" queues them so).
     func missing(_ section: Pack.StorageSection) -> [Pack] {
-        section.packs.filter { !packs.state($0).isInstalled }
+        // an unusable pack is here; getting it again is no tap away
+        section.packs.filter { !packs.state($0).isInstalled && packs.unusable[$0] == nil }
     }
 }

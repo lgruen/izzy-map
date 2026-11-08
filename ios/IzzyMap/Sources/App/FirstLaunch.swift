@@ -23,6 +23,9 @@ nonisolated struct CoreArrival: Equatable, Sendable {
         case waiting(offline: Bool)
         /// A core download failed; a tap retries.
         case failed
+        /// A core pack is here but unusable (`PackStore.unusable`): no
+        /// retry helps — a tap opens Storage, which names the fix.
+        case unusable
     }
 
     let phase: Phase
@@ -38,7 +41,7 @@ nonisolated struct CoreArrival: Equatable, Sendable {
     /// published yet — that can't arrive), the packs aren't known yet, or
     /// nothing can fetch them (a developer folder).
     static func of(states: [Pack: PackState], sizes: [Pack: Int] = PackSizes.nominal,
-                   resolved: Bool, canFetch: Bool, online: Bool) -> CoreArrival? {
+                   resolved: Bool, canFetch: Bool, online: Bool, unusable: Set<Pack> = []) -> CoreArrival? {
         guard resolved, canFetch else { return nil }
         let missing = core.filter {
             let state = states[$0] ?? .notInstalled
@@ -46,6 +49,7 @@ nonisolated struct CoreArrival: Equatable, Sendable {
         }
         guard !missing.isEmpty else { return nil }
         var done = 0.0, total = 0.0, moving = false, measured = false, failed = false
+        let broken = missing.contains { unusable.contains($0) }
         for pack in missing {
             let bytes = Double(max(1, sizes[pack] ?? 1))
             switch states[pack] ?? .notInstalled {
@@ -60,7 +64,9 @@ nonisolated struct CoreArrival: Equatable, Sendable {
             }
         }
         let phase: Phase
-        if moving {
+        if broken, !moving {
+            phase = .unusable
+        } else if moving {
             phase = .arriving(measured && total > 0 ? done / total : nil)
         } else if failed {
             phase = .failed
@@ -88,6 +94,7 @@ nonisolated struct CoreArrival: Equatable, Sendable {
         case .waiting(offline: true): "\(noun) arrive\(noun == "Maps" ? "" : "s") when online"
         case .waiting(offline: false): "\(noun) arriving · paused by iOS"
         case .failed: "\(noun) didn’t finish · Retry"
+        case .unusable: "\(noun) can’t be opened · Fix"
         }
     }
 
@@ -101,6 +108,7 @@ nonisolated struct CoreArrival: Equatable, Sendable {
         case .waiting(offline: true): return "\(what) arrive when there’s a connection"
         case .waiting(offline: false): return "\(what) paused by iOS; it resumes on its own"
         case .failed: return "\(what) didn’t finish downloading"
+        case .unusable: return "\(what) can’t be opened; Storage says how to fix it"
         }
     }
 }
@@ -160,7 +168,7 @@ struct MapsArrivingChip: View {
         case .queued: Image(systemName: StateSymbol.get).font(.footnote.weight(.semibold))
         case .waiting(offline: true): Image(systemName: StateSymbol.offline).font(.footnote.weight(.semibold))
         case .waiting(offline: false): Image(systemName: "pause.circle").font(.footnote.weight(.semibold))
-        case .failed: Image(systemName: StateSymbol.failed).font(.footnote.weight(.semibold))
+        case .failed, .unusable: Image(systemName: StateSymbol.failed).font(.footnote.weight(.semibold))
         }
     }
 }
@@ -185,7 +193,7 @@ struct MapStatusStack: View {
 
     private var arrival: CoreArrival? {
         CoreArrival.of(states: packs.states, resolved: packs.isResolved, canFetch: packs.canFetch,
-                       online: Connectivity.shared.online)
+                       online: Connectivity.shared.online, unusable: Set(packs.unusable.keys))
     }
 
     private var welcome: Bool { model.showsWelcome && !showsModeBar }
@@ -225,7 +233,7 @@ struct MapStatusStack: View {
 
     private func open(_ arrival: CoreArrival) {
         if arrival.phase == .failed || arrival.phase == .queued {
-            for pack in arrival.missing where packs.state(pack) != .installed { packs.fetch(pack) }
+            for pack in arrival.missing where packs.state(pack) != .installed && packs.unusable[pack] == nil { packs.fetch(pack) }
         }
         // the plant ID model alone: Storage opens on its row, highlighted
         model.openStorage(at: arrival.missing == [.plantid] ? StorageTarget.row(.plantid) : StorageTarget.core)
