@@ -101,7 +101,7 @@ def create(name, gpu, cloud, token, dcs=None):
     boot = base64.b64encode(open(os.path.join(HERE, "runpod_pod.py"), "rb").read()).decode()
     body = {"name": name, "image": IMAGE, "cloud": cloud, "disk": 80, "ports": ["8000/http"],
             "gpu": {"id": gpu, "count": 1, "minVcpuCountPerGpu": 8},
-            "env": {"IZZY_TOKEN": token, "IZZY_BOOT": boot},
+            "env": {"IZZY_TOKEN": token, "IZZY_BOOT": boot, "IZZY_MAX_H": "6"},  # pod self-removes (runpod_pod.py)
             "entrypoint": ["bash", "-c"],
             "cmd": ["echo \"$IZZY_BOOT\" | base64 -d > /boot.py && exec python3 /boot.py"]}
     if dcs:

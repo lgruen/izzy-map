@@ -149,7 +149,9 @@ def load_sets():
     crows = EA.c_rows()
     ic, Ec = BS.load_parts(os.path.join(TA.AU, "emb-w8"))
     cp = {int(p): i for i, p in enumerate(ic)}
-    rr = [r for r in crows if r["half"] == "report" and r["photo_id"] in cp]
+    import rare_heldout  # rare species' held-out observations moved into training (by construction)
+    moved = rare_heldout.moved_photo_ids()
+    rr = [r for r in crows if r["half"] == "report" and r["photo_id"] in cp and r["photo_id"] not in moved]
     mk("C-report", Ec[[cp[r["photo_id"]] for r in rr]], [r["lat"] for r in rr], [r["lon"] for r in rr],
        [r["u"] for r in rr], [r["w"] for r in rr], sub=np.array([r["subset"] for r in rr]),
        pid=[r["photo_id"] for r in rr], ext=[r["ext"] for r in rr])
@@ -157,7 +159,7 @@ def load_sets():
     pe = {k: np.array(v) for k, v in pq.read_table(os.path.join(TA.AU, "plan", "eval.parquet"), columns=[
         "lat", "lon", "role", "u", "photo_id", "n_split", "ext"]).to_pydict().items()}
     i_e, ok = TA.lookup(ids, pe["photo_id"])
-    m = ok & (pe["role"] == "test")
+    m = ok & (pe["role"] == "test") & ~np.isin(pe["photo_id"], list(moved))
     u = pe["u"][m]
     cnt = collections.Counter(u.tolist())
     mk("AU-test", E[i_e[m]], pe["lat"][m], pe["lon"][m], u, pe["n_split"][m] / np.array([cnt[x] for x in u]),

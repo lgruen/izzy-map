@@ -158,4 +158,58 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 
 
+# ---- spend cap ON THE POD (never depend on the Mac session staying alive; 2026-11-07:
+# a finished pod idled 4.5 h when the driving session restarted). The pod removes
+# ITSELF (RunPod's pod-scoped RUNPOD_API_KEY + RUNPOD_POD_ID, injected into every pod):
+#   * IZZY_MAX_H hours after boot (env, default 3.0), whatever the state;
+#   * IZZY_GRACE_MIN minutes after the job ended (default 45) — time for the Mac to
+#     pull; unpulled outputs are lost (a re-run costs ~$1), idle billing never runs on;
+#   * IZZY_IDLE_MIN minutes after boot if no job was ever started (default 60).
+# Removal = terminate (no stopped-pod volume billing).
+import time as _time
+import urllib.request as _ur
+_BOOT = _time.time()
+_DONE_AT = [None]
+
+
+def _self_remove(why):
+    pid, key = os.environ.get("RUNPOD_POD_ID"), os.environ.get("RUNPOD_API_KEY")
+    with open(os.path.join(W, "job.log"), "a") as f:
+        f.write(f"\nwatchdog: removing this pod ({why})\n")
+    try:
+        subprocess.run(["runpodctl", "remove", "pod", pid], timeout=60, check=True)
+        return
+    except Exception as e:  # noqa: BLE001 — fall back to the REST API
+        err = str(e)
+    try:
+        req = _ur.Request(f"https://rest.runpod.io/v1/pods/{pid}", method="DELETE",
+                          headers={"Authorization": f"Bearer {key}"})
+        _ur.urlopen(req, timeout=60).read()
+    except Exception as e2:  # noqa: BLE001
+        with open(os.path.join(W, "job.log"), "a") as f:
+            f.write(f"watchdog: removal FAILED ({err}; {e2}) — stopping the container\n")
+        os.kill(1, 15)  # last resort: end PID 1 (the container exits)
+
+
+def _watchdog():
+    max_h = float(os.environ.get("IZZY_MAX_H", "3.0"))
+    grace = 60 * float(os.environ.get("IZZY_GRACE_MIN", "45"))
+    idle = 60 * float(os.environ.get("IZZY_IDLE_MIN", "60"))
+    while True:
+        _time.sleep(30)
+        now = _time.time()
+        with LOCK:
+            st = STATE["state"]
+        if st in ("done", "failed") and _DONE_AT[0] is None:
+            _DONE_AT[0] = now
+        if now - _BOOT > max_h * 3600:
+            return _self_remove(f"max runtime {max_h} h")
+        if _DONE_AT[0] is not None and now - _DONE_AT[0] > grace:
+            return _self_remove(f"job {st} {grace / 60:.0f} min ago")
+        if st == "waiting for inputs" and now - _BOOT > idle:
+            return _self_remove(f"no job started within {idle / 60:.0f} min")
+
+
+threading.Thread(target=_watchdog, daemon=True).start()
+
 http.server.ThreadingHTTPServer(("0.0.0.0", 8000), H).serve_forever()

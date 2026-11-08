@@ -188,7 +188,11 @@ def cmd_data(a):
     pe = {k: np.array(v) for k, v in pq.read_table(os.path.join(TA.AU, "plan", "eval.parquet"), columns=[
         "observer_id", "lat", "lon", "role", "u", "photo_id", "n_split"]).to_pydict().items()}
     ie, oke = TA.lookup(ids, pe["photo_id"])
-    m = oke & (pe["role"] == "val") & ~np.isin(pe["observer_id"], list(excl))
+    import rare_heldout  # rare species' held-out observations now train (by construction) → not val
+    moved = rare_heldout.moved_photo_ids()
+    m = oke & (pe["role"] == "val") & ~np.isin(pe["observer_id"], list(excl)) & ~np.isin(pe["photo_id"], list(moved))
+    print(f"val: {int((oke & (pe['role'] == 'val') & np.isin(pe['photo_id'], list(moved))).sum())} AU-val photos "
+          f"moved into training (rare_heldout)")
     uv = pe["u"][m].copy()
     cnt = collections.Counter(uv.tolist())
     wv = pe["n_split"][m] / np.array([cnt[x] for x in uv])

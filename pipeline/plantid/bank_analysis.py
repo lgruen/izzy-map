@@ -53,8 +53,9 @@ def cmd_cache():
     t0 = time.time()
     D, U, genus, euc, sets, ship, ash = E2.load_sets()
     C = D["T"].shape[0]
-    z = np.load(os.path.join(V.V2, "runs", RUN + ".npz"))
-    n_tr = z["n_c"].astype(np.int64).copy()
+    # training photos per class FROM THE DATA in use (= the run's n_c for data-final;
+    # a newer data file, e.g. with the rare-heldout photos, has its own counts)
+    n_tr = np.bincount(np.asarray(npz_memmap(V.DATA, "ytr")), minlength=C).astype(np.int64)
     L_ = pq.read_table(os.path.join(TA.AU, "labels.parquet"), columns=["name", "inat_ids", "rg_au"]).to_pydict()
     merge = V.class_merges(L_["name"], L_["inat_ids"], n_tr, V.name_map_pairs(L_["inat_ids"]))
     mapv = np.arange(C)

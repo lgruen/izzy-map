@@ -866,6 +866,22 @@ tree data sheets are fetched by the device straight from their publishers
 
 ## Status log
 
+- 2026-11-07/08: Plant ID r2 for rare species (pack `plantid@04548a8cd13f`,
+  model `final-mpA01-adaptive-r2`). Encoder pilot (notes/encoder_pilot.md):
+  DINOv3-L/H+ and Perception Encoder L, alone 7–13 pt worse per species than
+  BioCLIP 2.5 and no gain combined once the location prior is on (rare
+  classes −3) → BioCLIP stays. Rare species keep their photos by
+  construction (`rare_heldout.py`, K = 10: held-out observers' observations
+  move into training; every eval set drops them; `V2_NO_MOVE=1` = old sets):
+  5,255 photos for 1,226 species; heads retrained on GCP
+  (`cloud/hc_retrain.sh`, self-deleting VM). Herbarium sheets via GBIF
+  (ALA's image server 504'd on sheets) give photo-less classes rows
+  (`sheet_rows.py`: genus-shifted text + ¼ sheet prototype; 23 → 39 % top-1
+  on held-out photo-less species, ≈ −0.2 pt on photographed ones): 2,636
+  of 3,485 classes. Spend safety: pods/VMs cap themselves (RunPod watchdog
+  self-removes; GCP `--max-run-duration` + DELETE); long chains run
+  detached (`r2_ship.sh`, `hf_r2.sh`) so a session restart can't stall
+  them. One RunPod pod idled 4.5 h after its job (~$5) before that fix.
 - 2026-11-05/06: Australia-wide plant ID (TestFlight builds 9–13). One
   model over 22,122 labels on frozen BioCLIP 2.5: two multi-prototype
   heads (balanced softmax + class-balanced sampling, τ-norm), an
