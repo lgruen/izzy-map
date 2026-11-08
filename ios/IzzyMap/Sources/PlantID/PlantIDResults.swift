@@ -8,10 +8,14 @@ import SwiftUI
 /// with the line where the ladder in force names it (pipeline.json: genus 50 %, species 50–75 % by training photos); the headline says what the ladder says. Ink only:
 /// no traffic-light colours, no reward for an unsure answer.
 struct PlantIDResults: View {
+    let model: AppModel
     let session: PlantIDSession
     let result: PlantIDResult
     let open: (PlantIDRoute) -> Void
     @State private var page = 0
+    /// The full-screen viewer: her photo, then each candidate's.
+    @State private var viewerID = UUID()
+    @State private var viewerPage = 0
     @Environment(\.horizontalSizeClass) private var widthClass
 
     private var library: PlantLibrary { .shared }
@@ -29,7 +33,33 @@ struct PlantIDResults: View {
             content(width: geo.size.width)
         }
         .task { _ = await library.load() }
+        .fullScreenCover(isPresented: Binding(
+            get: { model.photoViewer == viewerID },
+            set: { if !$0, model.photoViewer == viewerID { model.photoViewer = nil } }
+        )) {
+            PhotoViewer(model: model, title: AttributedString("Your photo and the matches"),
+                        photos: viewerPages.map(\.photo), page: $viewerPage)
+        }
         .accessibilityIdentifier("plant-id-results")
+    }
+
+    /// The viewer's pages: her photo, then every candidate with a photo
+    /// (`candidate` = its index in `result.candidates`).
+    private var viewerPages: [(candidate: Int?, photo: ViewerPhoto)] {
+        var pages: [(Int?, ViewerPhoto)] = []
+        if let yours = ViewerPhoto.yours(session) { pages.append((nil, yours)) }
+        for (i, c) in result.candidates.enumerated() {
+            guard let shown = shownPhoto(c.label) else { continue }
+            pages.append((i, .shown(shown, name: label(c.label)?.name ?? "")))
+        }
+        return pages
+    }
+
+    /// Opens the viewer on her photo (nil) or on candidate `i`'s.
+    private func openViewer(candidate: Int?) {
+        guard model.photoViewer == nil else { return }
+        viewerPage = viewerPages.firstIndex { $0.candidate == candidate } ?? 0
+        model.photoViewer = viewerID
     }
 
     private func content(width: CGFloat) -> some View {
@@ -119,6 +149,7 @@ struct PlantIDResults: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: s, height: s)
                         .clipped()
+                        .modifier(OpensViewer { openViewer(candidate: nil) })
                         .accessibilityLabel("Your photo")
                         .accessibilityIdentifier("plant-id-crop")
                 }
@@ -129,6 +160,8 @@ struct PlantIDResults: View {
                         }
                         .buttonStyle(.plain)
                         .hoverEffect(.highlight)
+                        // the tap opens its plant sheet; a pinch, the photo full screen
+                        .modifier(OpensViewer(open: { openViewer(candidate: i) }, onTap: false))
                         .tag(i)
                         .accessibilityLabel("Candidate \(i + 1) of \(result.candidates.count), \(label(c.label)?.name ?? "")")
                         .accessibilityHint("Opens its plant sheet")

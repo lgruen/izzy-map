@@ -53,6 +53,8 @@ struct PhotoViewer: View {
         .onAppear { focused = true }
         .onKeyPress(.leftArrow) { step(-1) }
         .onKeyPress(.rightArrow) { step(1) }
+        // a container: its own identifier, the close button keeps its own
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("photo-viewer")
         #if DEBUG
             // UI tests: what the window's Escape does now

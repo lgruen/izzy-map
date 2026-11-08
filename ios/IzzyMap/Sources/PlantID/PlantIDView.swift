@@ -82,7 +82,7 @@ struct PlantIDView: View {
             PlantIDFraming(session: session, packs: packs, hasSource: source != nil)
         case .result:
             if let result = session.result {
-                PlantIDResults(session: session, result: result) { route in path.append(route) }
+                PlantIDResults(model: model, session: session, result: result) { route in path.append(route) }
             }
         case let .failed(message):
             ContentUnavailableView {
@@ -111,7 +111,7 @@ struct PlantIDView: View {
                 .navigationTitle("")
         case let .noProfile(label):
             if let l = session.label(label) {
-                PlantIDNoProfile(label: l, crop: session.cropImage,
+                PlantIDNoProfile(model: model, session: session, label: l, crop: session.cropImage,
                                  p: session.result.flatMap { r in (r.candidates + r.genusSpecies).first { $0.label == label }?.p },
                                  ref: PlantIDRefPhotos.shared.photo(for: label, name: l.name))
             }
@@ -433,12 +433,28 @@ struct PlantIDModelStatus: View {
 /// visual (there is no reference photo to show), then the name set
 /// properly, the family and genus, and one honest line about the guide.
 struct PlantIDNoProfile: View {
+    let model: AppModel
+    let session: PlantIDSession
     let label: PlantIDLabel
     var crop: UIImage?
     var p: Double?
     /// Its reference photo (refphotos pack), shown beside hers.
     var ref: PlantIDRefPhoto?
     @Environment(\.horizontalSizeClass) private var widthClass
+    /// The full-screen viewer: her photo, then the reference.
+    @State private var viewerID = UUID()
+    @State private var viewerPage = 0
+
+    private var viewerPhotos: [ViewerPhoto] {
+        [ViewerPhoto.yours(session), ref.map { ViewerPhoto.reference($0, name: label.name) }].compactMap { $0 }
+    }
+
+    /// Opens the viewer on her photo (0) or the reference (1).
+    private func openViewer(_ page: Int) {
+        guard model.photoViewer == nil else { return }
+        viewerPage = min(page, max(viewerPhotos.count - 1, 0))
+        model.photoViewer = viewerID
+    }
 
     private var explanation: String {
         label.isTasmanian
@@ -463,8 +479,11 @@ struct PlantIDNoProfile: View {
                                 }
                                 .frame(width: s, height: s)
                                 .clipped()
+                                .modifier(OpensViewer { openViewer(0) })
                                 .accessibilityLabel("Your photo")
+                                .accessibilityIdentifier("plant-id-noprofile-crop")
                                 RefPhotoImage(photo: ref, side: s, label: label)
+                                    .modifier(OpensViewer { openViewer(ViewerPhoto.yours(session) == nil ? 0 : 1) })
                                     .accessibilityIdentifier("plant-id-noprofile-ref")
                             }
                         }
@@ -498,7 +517,9 @@ struct PlantIDNoProfile: View {
                                 .background(.black.opacity(0.45))
                                 .padding(8)
                         }
+                        .modifier(OpensViewer { openViewer(0) })
                         .accessibilityLabel("Your photo")
+                        .accessibilityIdentifier("plant-id-noprofile-crop")
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(BotanicalNames.species(label.name))
@@ -539,6 +560,12 @@ struct PlantIDNoProfile: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { model.photoViewer == viewerID },
+            set: { if !$0, model.photoViewer == viewerID { model.photoViewer = nil } }
+        )) {
+            PhotoViewer(model: model, title: BotanicalNames.species(label.name), photos: viewerPhotos, page: $viewerPage)
         }
         .accessibilityIdentifier("plant-id-noprofile")
     }

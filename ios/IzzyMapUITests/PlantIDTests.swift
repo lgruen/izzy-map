@@ -65,6 +65,15 @@ final class PlantIDUITests: XCTestCase {
         let loc = app.descendants(matching: .any)["plant-id-location"]
         XCTAssertTrue(loc.exists && loc.label.contains("within 10 km"), "location sentence: \(loc.label)")
         attachScreenshot("plant-id-results-species")
+        // her photo opens full screen (zoomable, as on the plant sheet); × closes it
+        app.descendants(matching: .any)["plant-id-crop"].tap()
+        let viewer = app.descendants(matching: .any)["photo-viewer"]
+        XCTAssertTrue(viewer.appears(within: wait), "the photo viewer from Suggestions")
+        attachScreenshot("plant-id-viewer")
+        let close = app.buttons["photo-viewer-close"]
+        XCTAssertTrue(close.appears(within: wait), "the viewer's close button")
+        close.tap()
+        XCTAssertTrue(eventually(wait) { !viewer.exists }, "viewer closed")
         // the top candidate opens the existing plant sheet
         let row = app.buttons["plant-id-candidate-0"]
         XCTAssertTrue(row.appears(within: wait))
@@ -119,6 +128,14 @@ final class PlantIDUITests: XCTestCase {
         nitens.tap()
         XCTAssertTrue(app.staticTexts["plant-id-noprofile-name"].appears(within: wait))
         XCTAssertTrue(app.staticTexts["Not in the Understorey Network guide"].exists)
+        // her photo opens full screen here too
+        app.descendants(matching: .any)["plant-id-noprofile-crop"].firstMatch.tap()
+        let viewer = app.descendants(matching: .any)["photo-viewer"]
+        XCTAssertTrue(viewer.appears(within: wait), "the photo viewer from the no-profile page")
+        let close = app.buttons["photo-viewer-close"]
+        XCTAssertTrue(close.appears(within: wait), "the viewer's close button")
+        close.tap()
+        XCTAssertTrue(eventually(wait) { !viewer.exists }, "viewer closed")
         // Frame Again keeps the photo
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let reframe = app.buttons["plant-id-reframe"]

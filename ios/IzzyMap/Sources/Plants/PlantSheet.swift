@@ -508,17 +508,32 @@ struct SheetCloseItem: ToolbarContent {
 }
 
 /// A photo plate opens the full-screen viewer on a tap, or as soon as a
-/// pinch on it starts to spread (the zooming itself happens there).
-private struct OpensViewer: ViewModifier {
+/// pinch on it starts to spread (the zooming itself happens there). Also
+/// Identify's photos (`PlantIDResults`, `PlantIDNoProfile`).
+struct OpensViewer: ViewModifier {
+    let open: () -> Void
+    /// False: only the pinch opens it (the tap belongs to a button).
+    var onTap = true
+
+    func body(content: Content) -> some View {
+        if onTap {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture(perform: open)
+                .modifier(PinchOpens(open: open))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("Opens the photo full screen")
+        } else {
+            content.modifier(PinchOpens(open: open))
+        }
+    }
+}
+
+private struct PinchOpens: ViewModifier {
     let open: () -> Void
 
     func body(content: Content) -> some View {
-        content
-            .contentShape(Rectangle())
-            .onTapGesture(perform: open)
-            .simultaneousGesture(MagnifyGesture().onChanged { if $0.magnification > 1.08 { open() } })
-            .accessibilityAddTraits(.isButton)
-            .accessibilityHint("Opens the photo full screen")
+        content.simultaneousGesture(MagnifyGesture().onChanged { if $0.magnification > 1.08 { open() } })
     }
 }
 
