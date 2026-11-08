@@ -615,7 +615,9 @@ milestones, map-proof results); the design brief and language is
   into the shared `Library/Caches/<bundle>/Staging/Unlocalized/` and logs
   it in the pack's `Staged Subpaths.plist`, so a folder from `url(for:)`
   holds only what was asked for so far — never infer a file's absence from
-  its siblings. The app may only read the daemon's real pack folders by
+  its siblings; to read many files beside each other, look up the FOLDER
+  (`url(for: "refphotos")` stages all of it — the reference photos showed
+  "Couldn't show the photo" until build 19 did). The app may only read the daemon's real pack folders by
   traversal (`--x`): no listing, no direct open. Now: damage (positive
   evidence only) or refused lookups = `PackStore.unusable` — hidden from
   MapLibre/Core ML, never re-requested, Storage says "Incomplete" / "iOS

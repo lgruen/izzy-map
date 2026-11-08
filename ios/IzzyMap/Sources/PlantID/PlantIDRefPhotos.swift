@@ -1,5 +1,6 @@
 import BackgroundAssets
 import Foundation
+import Synchronization
 import ImageIO
 import IzzyKit
 import os
@@ -87,14 +88,38 @@ final class PlantIDRefPhotos {
     }
 
     /// The installed pack's folder (a synchronous call into the system:
-    /// off the main thread).
+    /// off the main thread). Asked for as a FOLDER: iOS 27's `url(for:)`
+    /// stages each requested path into the shared `Staging/Unlocalized/`,
+    /// so looking up index.json staged only index.json and every photo
+    /// beside it was missing ("Couldn't show the photo", 2026-11-08); a
+    /// folder lookup stages the whole folder. Done once per pack version
+    /// (index.json's size and date), not on every Identify open.
     nonisolated static func locateInPack(installed: Bool) -> URL? {
-        guard installed,
-              let index = try? AssetPackManager.shared.url(for: FilePath("\(RefPhotoFiles.folder)/\(RefPhotoFiles.index)"))
-        else { return nil }
+        guard installed else {
+            staged.withLock { $0 = nil }
+            return nil
+        }
+        let manager = AssetPackManager.shared
+        let fm = FileManager.default
+        func hasIndex(_ dir: URL) -> Bool { fm.fileExists(atPath: dir.appending(path: RefPhotoFiles.index).path(percentEncoded: false)) }
+        guard let index = try? manager.url(for: FilePath("\(RefPhotoFiles.folder)/\(RefPhotoFiles.index)")) else { return nil }
+        let attributes = try? fm.attributesOfItem(atPath: index.path(percentEncoded: false))
+        let version = "\(attributes?[.size] ?? "?")|\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
+        if let known = staged.withLock({ $0 }), known.version == version, hasIndex(known.dir) { return known.dir }
+        let start = ContinuousClock.now
+        if let dir = try? manager.url(for: FilePath(RefPhotoFiles.folder)), hasIndex(dir) {
+            staged.withLock { $0 = (version, dir) }
+            logger.info("refphotos: folder staged in \(start.duration(to: .now), privacy: .public)")
+            return dir
+        }
+        // the folder didn't resolve: index.json's own folder (photos may be missing)
+        logger.error("refphotos: folder lookup failed; using index.json's folder")
         let dir = index.deletingLastPathComponent()
-        return FileManager.default.fileExists(atPath: dir.appending(path: RefPhotoFiles.index).path(percentEncoded: false)) ? dir : nil
+        return hasIndex(dir) ? dir : nil
     }
+
+    /// The staged folder and the index version it was staged for.
+    nonisolated private static let staged = Mutex<(version: String, dir: URL)?>(nil)
 
     /// Reads the index when the pack's folder is new (cheap when unchanged);
     /// forgets it when the pack is gone (removed, or replaced by a version
