@@ -358,6 +358,23 @@ def fmt(x, nd=1):
     return "–" if x is None else f"{100 * x:.{nd}f}"
 
 
+def short_lic(x):
+    """GBIF media licences arrive as URLs: …/licenses/by-nc/4.0/ → CC-BY-NC-4.0, …/zero/1.0 → CC0."""
+    import re
+    m = re.search(r"creativecommons\.org/(licenses|publicdomain)/([a-z-]+)/([\d.]+)", x or "")
+    if not m:
+        return x
+    k = m.group(2)
+    return "CC0" if k == "zero" else ("PD" if k == "mark" else f"CC-{k.upper()}-{m.group(3)}")
+
+
+def lic_sum(d):
+    out = {}
+    for k, v in d.items():
+        out[short_lic(k)] = out.get(short_lic(k), 0) + v
+    return out
+
+
 def sheet_classes():
     """How many labels got herbarium-specimen weights (sheet_rows.py's note in the head run's meta)."""
     z = np.load(HEAD_RUNS[0])
@@ -375,6 +392,14 @@ def card(ev, te_bank, cfgj, lab, n_apc, credits, apii, pj, check, commit):
             del L[k_]
     H = S.get("herbarium")
     lic_tot = sum(L.values())
+
+    def tail_rows():
+        """Rows for the rare buckets only when the test set still has photos there (r2: none —
+        their held-out photos moved into training by construction, see Changes)."""
+        out = [row(nm, k) for nm, k in (("AU-test, classes with 1–9 training photos", "AU-test 1-9"),
+                                        ("AU-test, classes with 0 training photos", "AU-test 0 photos")) if m[k]["n"]]
+        return "\n".join(out) + ("\n\nThe 1–9- and 0-photo buckets of AU-test are empty in r2: their held-out photos now "
+                                 "train the model (Changes)." if len(out) < 2 else "")
 
     def row(name, k, note=""):
         r = m[k]
@@ -487,7 +512,7 @@ hurt: edibility, medicinal use, poisoning, allergy, weed-control or legal/biosec
 - **r2 (2026-11-08)**: rare species no longer lose their only photos to the evaluation split — a species with < 10
   training photos takes its held-out observers' observations into training until it has 10 (2,237 observations,
   5,255 photos, 1,226 species, 257 of them previously photo-less); heads retrained (same recipe and seeds);
-  photo-less labels get herbarium-specimen weights (above). Per-species top-1 on identical test sets with the app's
+  photo-less labels get herbarium-specimen weights (see Labels). Per-species top-1 on identical test sets with the app's
   configuration: Australia 86.6 → 86.3, Tasmania 89.8 → 90.1 (the specimen weights cost ≈ 0.2 pt on photographed
   species in exchange for naming photo-less ones). The test sets lost the moved observations, so numbers are not
   comparable with r1's card.
@@ -541,8 +566,7 @@ below.
 {row("A-test, strict: no training photo of the class within 200 m", "A-test strict 0.2 km")}
 {row("C-main — mainland, one photo each of 1,411 random native species", "C-main")}
 {row("C-euc — mainland eucalypts (270 species)", "C-euc")}
-{row("AU-test, classes with 1–9 training photos", "AU-test 1-9")}
-{row("AU-test, classes with 0 training photos", "AU-test 0 photos")}
+{tail_rows()}
 
 Without a location (country-wide frequency instead of the local prior): AU-test {fmt(nl['AU-test']['top1_sp'])} per
 species / {fmt(nl['AU-test']['top1_nat'])} natural, A-test {fmt(nl['A-test']['top1_sp'])} / {fmt(nl['A-test']['top1_nat'])},
@@ -626,7 +650,7 @@ and per creator in `credits/creators.json.gz`. By source:
 | source | photos | creators | licences |
 |---|---|---|---|
 """ + "\n".join(
-        f"| {nm} | {S[k]['photos']:,} | {S[k]['credited']:,} | " + ", ".join(f"{a} {b:,}" for a, b in sorted(S[k]['licences'].items(), key=lambda kv: -kv[1])) + " |"
+        f"| {nm} | {S[k]['photos']:,} | {S[k]['credited']:,} | " + ", ".join(f"{a} {b:,}" for a, b in sorted(lic_sum(S[k]['licences']).items(), key=lambda kv: -kv[1])) + " |"
         for k, nm in (("inat", "iNaturalist (open-data snapshot 2026-10)"), ("ala", f"Atlas of Living Australia (incl. {apii:,} APII photos, © the photographers · Australian National Botanic Gardens)"),
                       ("commons", "Wikimedia Commons"), ("herbarium", "Herbarium specimen images via GBIF (weights of photo-less labels, not training photos; `https://www.gbif.org/occurrence/<id>`)"))
         if k in S) + f"""
