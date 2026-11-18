@@ -4,6 +4,9 @@
 # macOS's case-insensitive filesystem (core.ignorecase).
 /data/
 *.pmtiles
+# …except the soils overlay (3 MB, CC BY): it ships inside the app bundle,
+# not as a pack (pipeline/build_soils.py)
+!/ios/IzzyMap/Resources/Data/soils.pmtiles
 *.mbtiles
 *.gpkg
 *.fgb

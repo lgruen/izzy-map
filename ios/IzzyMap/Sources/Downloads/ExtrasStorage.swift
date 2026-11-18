@@ -4,8 +4,9 @@ import os
 
 /// Where the licensed extras live on the device: Application Support/
 /// Extras/<kind>/, excluded from iCloud backup. F2F chapters, Understorey
-/// Network photos and tree data sheets are all rights reserved upstream —
-/// the device fetches them for private use; they are never bundled,
+/// Network photos and tree data sheets are all rights reserved upstream,
+/// the soil reports carry no stated licence — the device fetches them for
+/// private use; they are never bundled,
 /// committed or hosted by us (docs/LICENSING.md §2).
 ///
 /// Safe from any thread. The read-modify-write operations — gone marks,

@@ -239,6 +239,8 @@ struct LayersSheet: View {
     }
 
     private func status(_ overlay: Overlay) -> String? {
+        // soils ships inside the app: missing means a broken build, not a download
+        if overlay == .soils { return model.tables.soils == nil || model.tables.soilsArchive == nil ? "Unavailable" : nil }
         guard let archive = overlay.archive else { return nil }
         return model.data.url(for: archive) != nil ? nil : "Not downloaded"
     }
@@ -409,7 +411,7 @@ struct StrengthPicker: View {
                 } label: {
                     VStack(spacing: 4) {
                         KeyBox(hex: hex, opacity: LayerState.fillOpacity(base: model.layers.base, strength: strength),
-                               width: 36, height: 24)
+                               width: 36, height: 24, band: model.layers.overlay.hasOutlineBand)
                             .padding(3)
                             .overlay {
                                 if isOn { Rectangle().strokeBorder(DesignColor.ink, lineWidth: 2) }
@@ -436,16 +438,19 @@ struct StrengthPicker: View {
     }
 
     /// The selected feature's colour when it belongs to the overlay shown,
-    /// else a typical unit (dry E. obliqua forest, dolerite, open forest).
+    /// else a typical unit (dry E. obliqua forest, dolerite, open forest,
+    /// the Brickendon Association's ochre).
     private var sampleHex: String? {
         let tables = model.tables
         switch (model.layers.overlay, model.selection?.feature) {
         case let (.vegetation, .community(c)?): return c.colorHex
         case let (.geology, .geology(symb)?): return tables.geology[symb]?.color
         case let (.pre1750, .pre1750(mvs)?): return tables.pre1750[mvs]?.color
+        case let (.soils, .soils(s)?): return tables.soils?.units[s.code]?.color
         case (.vegetation, _): return tables.communities["DOB"]?.color
         case (.geology, _): return tables.geology["Jd"]?.color
         case (.pre1750, _): return tables.pre1750["4"]?.color
+        case (.soils, _): return tables.soils?.units["Bk"]?.color
         case (.none, _): return nil
         }
     }

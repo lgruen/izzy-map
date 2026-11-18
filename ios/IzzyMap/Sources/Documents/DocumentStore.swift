@@ -1,30 +1,36 @@
 import Foundation
 import IzzyKit
 
-/// A document a card can open: an F2F chapter at a community's page, or a
-/// City of Hobart tree data sheet.
+/// A document a card can open: an F2F chapter at a community's page, a
+/// City of Hobart tree data sheet, or a soil map sheet's report.
 nonisolated enum DocumentRef: Hashable, Sendable, Identifiable {
     /// From Forest to Fjaeldmark chapter `file`, opened at 0-based `page`.
     case f2f(file: String, page: Int, title: String)
     /// An ArcGIS Online item id (the sheet PDF), its declared size.
     case sheet(item: String, title: String, bytes: Int?)
+    /// A reconnaissance soil map sheet's report: the sheet key ("hobart"),
+    /// the report's URL and size from soil_units.json. Opens at page 1
+    /// (the reports have no per-unit page index).
+    case soilReport(sheet: String, title: String, url: URL, bytes: Int?)
 
     var id: String { "\(kind.rawValue)/\(storedName)" }
     var kind: ExtraKind {
         switch self {
         case .f2f: .f2f
         case .sheet: .sheets
+        case .soilReport: .soilReports
         }
     }
     var storedName: String {
         switch self {
         case let .f2f(file, _, _): file
         case let .sheet(item, _, _): ExtrasCatalog.sheetFileName(item)
+        case let .soilReport(sheet, _, _, _): ExtrasCatalog.soilReportFileName(sheet)
         }
     }
     var title: String {
         switch self {
-        case let .f2f(_, _, title), let .sheet(_, title, _): title
+        case let .f2f(_, _, title), let .sheet(_, title, _), let .soilReport(_, title, _, _): title
         }
     }
     /// 0-based page to open at.
@@ -33,10 +39,36 @@ nonisolated enum DocumentRef: Hashable, Sendable, Identifiable {
         return 0
     }
 
+    /// Declared size, if known (sizes the whole-transfer ceiling).
+    var bytes: Int? {
+        switch self {
+        case .f2f: nil
+        case let .sheet(_, _, bytes), let .soilReport(_, _, _, bytes): bytes
+        }
+    }
+
+    /// Whether its stored name is a plain file name: a soil report's sheet
+    /// key comes from a bundled table and must never become a path
+    /// ("../trees/x"). An invalid document has no local file, no gone mark
+    /// and no remote URL.
+    var isValid: Bool {
+        if case let .soilReport(sheet, _, _, _) = self { return ExtrasCatalog.isSoilSheetKey(sheet) }
+        return true
+    }
+
+    /// The report of soil map sheet `key`, or nil when the key or its URL
+    /// may not be used (then the card shows no button).
+    static func soilReport(key: String, sheet: SoilsFile.Sheet) -> DocumentRef? {
+        guard ExtrasCatalog.soilReportURL(key: key, url: sheet.url) != nil else { return nil }
+        return .soilReport(sheet: key, title: "\(sheet.name) sheet soil report", url: sheet.url, bytes: sheet.bytes)
+    }
+
     func remoteURL(f2fBase: String) -> URL? {
         switch self {
         case let .f2f(file, _, _): URL(string: f2fBase + file)
         case let .sheet(item, _, _): ExtrasCatalog.sheetURL(item)
+        // only a plain sheet key and an https URL on NRE's data library
+        case let .soilReport(sheet, _, url, _): ExtrasCatalog.soilReportURL(key: sheet, url: url)
         }
     }
 }
@@ -58,23 +90,33 @@ nonisolated enum DocumentError: Error, Equatable, Sendable {
         }
     }
 
-    /// The message for `doc`, nil for our own cancel.
+    /// The message for `doc`, nil for our own cancel. `sheetsTotal` is the
+    /// size of all of the document's family (tree sheets, soil reports).
     func message(for doc: DocumentRef, device: String, sheetsTotal: Int?) -> String? {
-        let sheet = doc.kind == .sheets
+        let all = sheetsTotal.map { " (\(ExtrasText.megabytes($0)))" } ?? ""
         switch self {
         case .cancelled: return nil
         case .offline:
-            if sheet {
-                let all = sheetsTotal.map { " (\(ExtrasText.megabytes($0)))" } ?? ""
+            switch doc.kind {
+            case .sheets:
                 return "This data sheet isn’t on the \(device) yet — open it once while online, or get all sheets\(all) in Storage."
+            case .soilReports:
+                return "This soil report isn’t on the \(device) yet — open it once while online, or get all soil reports\(all) in Storage."
+            case .f2f, .photos:
+                return "This description isn’t on the \(device) yet — open it once while online, or get all descriptions in Storage."
             }
-            return "This description isn’t on the \(device) yet — open it once while online, or get all descriptions in Storage."
         case .gone:
-            return sheet ? "This data sheet is no longer published by the council."
-                : "This chapter isn’t at its usual address on nre.tas.gov.au any more."
+            switch doc.kind {
+            case .sheets: return "This data sheet is no longer published by the council."
+            case .soilReports: return "This soil report isn’t at its usual address in NRE Tasmania’s data library any more."
+            case .f2f, .photos: return "This chapter isn’t at its usual address on nre.tas.gov.au any more."
+            }
         case .timedOut:
-            return sheet ? "Fetching the data sheet took too long — try again on Wi-Fi."
-                : "Fetching the description took too long — try again on Wi-Fi."
+            switch doc.kind {
+            case .sheets: return "Fetching the data sheet took too long — try again on Wi-Fi."
+            case .soilReports: return "Fetching the soil report took too long — try again on Wi-Fi."
+            case .f2f, .photos: return "Fetching the description took too long — try again on Wi-Fi."
+            }
         case .notPDF:
             return "The download wasn’t a PDF — a Wi-Fi login page may be in the way."
         case let .failed(status):
@@ -83,8 +125,9 @@ nonisolated enum DocumentError: Error, Equatable, Sendable {
     }
 }
 
-/// F2F chapters and tree sheets on the device: opened from disk, else
-/// fetched once from the publisher (nre.tas.gov.au, www.arcgis.com),
+/// F2F chapters, tree sheets and soil reports on the device: opened from
+/// disk, else fetched once from the publisher (nre.tas.gov.au,
+/// www.arcgis.com, nrmdatalibrary.nre.tas.gov.au),
 /// checked for the %PDF magic (a captive portal answers 200 HTML) AND that
 /// PDFKit opens it with at least one page (a truncated body is a failed
 /// transfer), kept. A stored file that no longer opens is fetched again.
@@ -98,9 +141,12 @@ actor DocumentStore {
     let storage: ExtrasStorage
     /// Tap fetches: 30 s without a byte is a stall (a stalled cellular
     /// fetch must not hold the button for ever); the whole transfer may
-    /// take `ExtrasNetwork.resourceTimeout` (a 6.6 MB chapter on a slow link).
+    /// take what the document's declared size needs on a slow link
+    /// (`ExtrasTimeouts`: 10 min, 40 min for the 20 MB South Esk report).
     static let timeout: TimeInterval = 30
-    private let session: URLSession
+    /// A test's session, used for every document; else one per ceiling.
+    private let injected: URLSession?
+    private var sessions: [TimeInterval: URLSession] = [:]
     private var f2fBase = "https://nre.tas.gov.au/Documents/"
 
     private struct Inflight {
@@ -109,21 +155,37 @@ actor DocumentStore {
     }
     private var inflight: [String: Inflight] = [:]
 
-    init(storage: ExtrasStorage, session: URLSession = ExtrasNetwork.session(timeout: DocumentStore.timeout)) {
+    init(storage: ExtrasStorage, session: URLSession? = nil) {
         self.storage = storage
-        self.session = session
+        injected = session
+    }
+
+    /// The whole-transfer ceiling for `doc` (its session's resource timeout).
+    nonisolated static func resourceTimeout(for doc: DocumentRef) -> TimeInterval {
+        ExtrasTimeouts.resourceCeiling(bytes: doc.bytes)
+    }
+
+    /// The session a fetch of `doc` uses (internal for the tests).
+    func session(for doc: DocumentRef) -> URLSession {
+        if let injected { return injected }
+        let ceiling = Self.resourceTimeout(for: doc)
+        if let s = sessions[ceiling] { return s }
+        let s = ExtrasNetwork.session(timeout: Self.timeout, resourceTimeout: ceiling)
+        sessions[ceiling] = s
+        return s
     }
 
     func setF2FBase(_ base: String) { f2fBase = base }
 
     /// The document on the device, if there.
     nonisolated func localURL(_ doc: DocumentRef) -> URL? {
-        storage.existing(doc.kind, doc.storedName)
+        guard doc.isValid else { return nil }
+        return storage.existing(doc.kind, doc.storedName)
     }
 
     /// Whether the publisher withdrew it (last time anyone asked).
     nonisolated func isGone(_ doc: DocumentRef) -> Bool {
-        storage.goneMarks(doc.kind).contains(doc.storedName)
+        doc.isValid && storage.goneMarks(doc.kind).contains(doc.storedName)
     }
 
     /// Drops the stored copy (it didn't open in the reader).
@@ -178,7 +240,7 @@ actor DocumentStore {
         guard let url = doc.remoteURL(f2fBase: f2fBase) else { return .failure(.failed(status: nil)) }
         // stamped now: a Delete while this is in flight retires it
         let generation = storage.generation(doc.kind)
-        let (result, file) = await ExtrasNetwork.fetch(url, kind: doc.kind, session: session)
+        let (result, file) = await ExtrasNetwork.fetch(url, kind: doc.kind, session: session(for: doc))
         // a tap cares only whether THIS file is a PDF: a sheet's 200 HTML is
         // a login page here, not a withdrawal (the batch decides "gone")
         var verdict = FetchVerdict.of(result, kind: doc.kind)

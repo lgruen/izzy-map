@@ -4,9 +4,10 @@ import SwiftUI
 /// The overlay's key, drawn like a printed map key (docs/DESIGN.md §4):
 /// keylined boxes on a white plate, one box spanning every code that shares
 /// a fill, small-caps codes in a fixed column, names in New York with
-/// botanical italics; groups as sticky section headers. Only vegetation
-/// gets a section index — its groups have one-letter labels (the codes'
-/// first letter); a column of whole words would squeeze the list.
+/// botanical italics; groups as sticky section headers. Vegetation and
+/// soils get a section index — their labels are one letter (the codes'
+/// first) or two (the ASC order codes, "FE"); a column of whole words, as
+/// geology's or pre-1750's would be, would squeeze the list.
 struct LegendView: View {
     @Bindable var model: AppModel
     @Environment(\.horizontalSizeClass) private var widthClass
@@ -18,15 +19,20 @@ struct LegendView: View {
         switch overlay {
         case .geology: Legend.geology(model.tables.geology)
         case .pre1750: Legend.pre1750(model.tables.pre1750)
+        case .soils: model.tables.soils.map(Legend.soils) ?? []
         case .vegetation, .none: Legend.vegetation(model.tables.communities)
         }
     }
 
+    private var hasIndex: Bool { overlay == .vegetation || overlay == .soils }
+
     var body: some View {
         let sections = sections
         // the code column's width: the longest ordinary code (geology's lone
-        // "Unknown" may overhang rather than widen every row)
-        let codeTemplate = sections.flatMap { $0.runs.flatMap(\.rows) }.map(\.code).filter { $0.count <= 5 }
+        // "Unknown" may overhang rather than widen every row); soil codes
+        // run to nine characters ("Blb1-RBb1") and all must fit
+        let codeTemplate = sections.flatMap { $0.runs.flatMap(\.rows) }.map(\.code)
+            .filter { overlay == .soils || $0.count <= 5 }
             .max { $0.count < $1.count } ?? "WWW"
         List {
             // strength and the note sit under the title, part of the key's
@@ -54,12 +60,14 @@ struct LegendView: View {
                     .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
                 } header: {
                     SectionHeader(section: section, showsLetter: overlay == .vegetation)
+                        // the two-letter index column would sit on the count
+                        .padding(.trailing, overlay == .soils ? 18 : 0)
                 }
-                .sectionIndexLabel(overlay == .vegetation ? section.shortTitle : nil)
+                .sectionIndexLabel(hasIndex ? section.shortTitle : nil)
             }
         }
         .listStyle(.plain)
-        .listSectionIndexVisibility(overlay == .vegetation ? .visible : .hidden)
+        .listSectionIndexVisibility(hasIndex ? .visible : .hidden)
         .panelListSurface()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -71,6 +79,7 @@ struct LegendView: View {
         case .vegetation, .none: "Vegetation key"
         case .pre1750: "Pre-1750 key"
         case .geology: "Geology key"
+        case .soils: "Soils key"
         }
     }
 
@@ -88,6 +97,9 @@ struct LegendView: View {
             return "An estimate of the vegetation before European clearing, modelled from remnants and historical records (NVIS V7.0, 1 ha cells)."
         }
         if overlay == .geology { return "Groups run from oldest to youngest." }
+        if overlay == .soils {
+            return "Grouped by each unit's main soil order (Australian Soil Classification). Codes beside one box share its colour on the map, and a few colours recur in other groups. Mapped on 11 reconnaissance sheets only."
+        }
         return nil
     }
 
@@ -147,7 +159,7 @@ private struct RunRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            KeyBox(hex: run.color, opacity: opacity, height: run.rows.count > 1 ? nil : 18)
+            KeyBox(hex: run.color, opacity: opacity, height: run.rows.count > 1 ? nil : 18, band: overlay.hasOutlineBand)
                 .padding(.top, 2)
                 .padding(.bottom, 1)
             VStack(alignment: .leading, spacing: 8) {
@@ -180,6 +192,7 @@ private struct RunRow: View {
         switch overlay {
         case .pre1750: DisplayText.corrected(row.name)
         case .geology: "\(row.code), \(DisplayText.unitTitle(row.name))"
+        case .soils: "\(row.code), \(row.name)"
         case .vegetation, .none: "\(row.code), \(row.name)"
         }
     }
@@ -224,6 +237,9 @@ private struct KeyRowContent: View {
         case .pre1750:
             Text(BotanicalNames.attributed(DisplayText.corrected(row.name)))
                 .font(.body).fontDesign(.serif).foregroundStyle(DesignColor.ink)
+        case .soils:
+            // a unit name, not a living thing: the system face, as geology
+            Text(row.name).font(.body).foregroundStyle(DesignColor.ink)
         case .vegetation, .none:
             Text(BotanicalNames.attributed(row.name))
                 .font(.body).fontDesign(.serif).foregroundStyle(DesignColor.ink)
@@ -231,9 +247,9 @@ private struct KeyRowContent: View {
     }
 }
 
-/// A geology description: two lines, a tap shows the rest (VoiceOver always
+/// A long description (geology key rows, the soil card): two lines, a tap shows the rest (VoiceOver always
 /// reads it whole — the row's label carries the full text).
-private struct ExpandableText: View {
+struct ExpandableText: View {
     let text: String
     @State private var expanded = false
     @State private var fullHeight: CGFloat = 0

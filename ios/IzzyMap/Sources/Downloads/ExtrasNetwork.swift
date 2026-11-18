@@ -7,8 +7,9 @@ import UIKit
 /// have no CORS). Used for a tapped document and for photos shown on
 /// screen; the one-tap batches go through `ExtrasTransport`.
 nonisolated enum ExtrasNetwork {
-    /// Whole-transfer ceiling: a 6.6 MB chapter at ~20 KB/s still arrives.
-    static let resourceTimeout: TimeInterval = 600
+    /// Whole-transfer ceiling for a file of no particular size (10 min);
+    /// a document or batch file sizes its own (`ExtrasTimeouts`).
+    static let resourceTimeout: TimeInterval = ExtrasTimeouts.resourceFloor
 
     /// A fresh ephemeral session: no URL cache (the store is the cache),
     /// no waiting for connectivity (offline must answer at once).
@@ -108,9 +109,10 @@ nonisolated final class RedirectGuard: NSObject, URLSessionTaskDelegate {
 
 #if DEBUG
 /// DEBUG launch argument `-stubNetwork <mode>` (UI tests, screenshots):
-/// - `documents`: F2F chapters and tree sheets answer with a small
-///   generated PDF; everything else goes to the network;
-/// - `gone`: tree sheets answer HTTP 400 + HTML (ArcGIS's removed item);
+/// - `documents`: F2F chapters, tree sheets and soil reports answer with a
+///   small generated PDF; everything else goes to the network;
+/// - `gone`: tree sheets answer HTTP 400 + HTML (ArcGIS's removed item),
+///   soil reports 404 + HTML (NRE's data library for a missing file);
 /// - `portal`: documents answer 200 HTML (a Wi-Fi login page);
 /// - `offline`: every extras request fails as not connected;
 /// - `broken`: documents answer "%PDF" followed by garbage (a corrupt file).
@@ -143,7 +145,7 @@ nonisolated final class StubURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool {
         guard let host = request.url?.host() else { return false }
         if StubNetwork.mode == "offline" { return true }
-        return host == "www.arcgis.com" || host == "nre.tas.gov.au"
+        return host == "www.arcgis.com" || host == "nre.tas.gov.au" || ExtrasCatalog.soilReportHosts.contains(host)
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -157,6 +159,8 @@ nonisolated final class StubURLProtocol: URLProtocol {
         }
         let (status, body, type): (Int, Data, String) = switch mode {
         case "gone" where url.host() == "www.arcgis.com": (400, Data("<html>Item does not exist</html>".utf8), "text/html")
+        case "gone" where ExtrasCatalog.soilReportHosts.contains(url.host() ?? ""):
+            (404, Data("<html>Not Found</html>".utf8), "text/html")
         case "portal": (200, Data("<html><title>Log in to Wi-Fi</title></html>".utf8), "text/html")
         case "broken": (200, Data("%PDF-1.7\n% truncated".utf8), "application/pdf")
         default: (200, StubNetwork.pdf, "application/pdf")

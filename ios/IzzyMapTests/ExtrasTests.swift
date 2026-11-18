@@ -359,6 +359,42 @@ struct ExtrasDownloadsTests {
         #expect(f2f.allSatisfy { ($0.bytes ?? 0) > 0 })  // sizes from f2f_index.json
         let trees = try? data?.trees()
         #expect(ExtrasDownloads.items(.sheets, data: data, catalog: nil, trees: trees).count == trees?.sheets.count)
+        // soil reports: one per map sheet of soil_units.json, its sizes
+        let soils = try? data?.soilUnits()
+        let reports = ExtrasDownloads.items(.soilReports, data: data, catalog: nil, trees: nil)
+        #expect(reports.count == 11)
+        #expect(ExtrasCatalog.totalBytes(reports) == soils?.sheets.values.reduce(0) { $0 + $1.bytes })
+        #expect(reports.contains { $0.id == "hobart.pdf" && $0.url.host() == "nrmdatalibrary.nre.tas.gov.au" })
+    }
+
+    /// Soil reports keep their own folder and gone marks, and a batch runs
+    /// one file at a time under F2F's rules.
+    @Test func soilReportsBatch() async throws {
+        #expect(storage.directory(.soilReports).lastPathComponent == "soil-reports")
+        #expect(storage.directory(.soilReports).path(percentEncoded: false).hasPrefix(storage.root.path(percentEncoded: false)))
+        let items = ["beaconsfield", "brighton", "hobart"].map {
+            ExtraItem(id: "\($0).pdf", url: URL(string: "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/\($0).pdf")!,
+                      bytes: 100)
+        }
+        let t = FakeTransport(storage: storage)
+        t.script = ["beaconsfield.pdf": (200, Self.pdf), "brighton.pdf": (404, Self.html), "hobart.pdf": (200, Self.pdf)]
+        let d = ExtrasDownloads(storage: storage, transport: t)
+        d.start(.soilReports, items: items)
+        await finish(d, .soilReports)
+        #expect(d.jobs[.soilReports]?.batch.phase == .finished)
+        #expect(storage.storedNames(.soilReports) == ["beaconsfield.pdf", "hobart.pdf"])
+        #expect(storage.storedNames(.sheets).isEmpty)
+        #expect(storage.goneMarks(.soilReports).contains("brighton.pdf"))
+        #expect(storage.goneMarks(.f2f).count == 0)
+        #expect(d.jobs[.soilReports]?.batch.statusText == "✓ downloaded · 1 report no longer published")
+        #expect(t.started.allSatisfy { $0.tag.kind == .soilReports })
+        // the kind survives a relaunch in the task description
+        let tag = try #require(t.started.first?.tag)
+        #expect(tag.description == "soil-reports|\(tag.generation)|beaconsfield.pdf")
+        #expect(TransportTag(tag.description) == tag)
+        await d.delete(.soilReports)
+        #expect(storage.storedNames(.soilReports).isEmpty)
+        #expect(storage.goneMarks(.soilReports).count == 0)
     }
 }
 
@@ -466,6 +502,140 @@ struct DocumentStoreTests {
             .contains("get all sheets (446\u{00A0}MB) in Storage") == true)
         #expect(DocumentError.gone.message(for: sheet, device: "iPhone", sheetsTotal: nil) == "This data sheet is no longer published by the council.")
         #expect(DocumentError.notPDF.message(for: sheet, device: "iPhone", sheetsTotal: nil)?.contains("Wi-Fi login page") == true)
+    }
+
+    static let report = DocumentRef.soilReport(
+        sheet: "hobart", title: "Hobart sheet soil report",
+        url: URL(string: "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Hobart_report.pdf")!, bytes: 207_726)
+
+    @Test func aSoilReportIsKeptUnderItsSheetKey() async throws {
+        let doc = Self.report
+        #expect(doc.kind == .soilReports)
+        #expect(doc.storedName == "hobart.pdf")
+        #expect(doc.page == 0)
+        #expect(doc.sizeText == "0.2\u{00A0}MB")
+        #expect(doc.identifier == "open-soil-report")
+        #expect(doc.remoteURL(f2fBase: "")?.lastPathComponent == "Hobart_report.pdf")
+        // only a plain sheet key and NRE's data library
+        let foreign = DocumentRef.soilReport(sheet: "hobart", title: "x", url: URL(string: "https://evil.example/a.pdf")!, bytes: nil)
+        #expect(foreign.remoteURL(f2fBase: "") == nil)
+        let traversal = DocumentRef.soilReport(sheet: "../x", title: "x", url: doc.remoteURL(f2fBase: "")!, bytes: nil)
+        #expect(traversal.remoteURL(f2fBase: "") == nil)
+        #expect(DocumentRef.soilReport(sheet: "south-esk", title: "x", url: doc.remoteURL(f2fBase: "")!, bytes: 20_150_978)
+            .sizeText == "20\u{00A0}MB")
+
+        ScriptedURLProtocol.response = (200, Self.pdf)
+        ScriptedURLProtocol.requests = 0
+        let url = try await store.open(doc)
+        #expect(url.lastPathComponent == "hobart.pdf")
+        #expect(url.deletingLastPathComponent().lastPathComponent == "soil-reports")
+        _ = try await store.open(doc)
+        #expect(ScriptedURLProtocol.requests == 1)
+        // the tree sheets' file of the same name is another document
+        #expect(storage.existing(.sheets, "hobart.pdf") == nil)
+    }
+
+    @Test func aSoilReportsCauses() async {
+        let doc = Self.report
+        for (response, want) in [((404, Data("<html>Not Found</html>".utf8)), DocumentError.gone),
+                                 ((200, Data("<html>login".utf8)), .notPDF),
+                                 ((502, Data()), .failed(status: 502))] as [((Int, Data), DocumentError)] {
+            ScriptedURLProtocol.response = response
+            do {
+                _ = try await store.open(doc)
+                Issue.record("expected \(want)")
+            } catch {
+                #expect(error == want)
+            }
+            #expect(store.localURL(doc) == nil)
+        }
+        #expect(store.isGone(doc))
+        #expect(!storage.goneMarks(.sheets).contains("hobart.pdf"))
+    }
+
+    @Test func soilReportMessages() {
+        let doc = Self.report
+        #expect(DocumentError.offline.message(for: doc, device: "iPad", sheetsTotal: 29_784_161)
+            == "This soil report isn’t on the iPad yet — open it once while online, or get all soil reports (30\u{00A0}MB) in Storage.")
+        #expect(DocumentError.gone.message(for: doc, device: "iPhone", sheetsTotal: nil)?.contains("soil report") == true)
+        #expect(DocumentError.timedOut.message(for: doc, device: "iPhone", sheetsTotal: nil)
+            == "Fetching the soil report took too long — try again on Wi-Fi.")
+        for error in [DocumentError.offline, .gone, .timedOut] {
+            let text = error.message(for: doc, device: "iPhone", sheetsTotal: nil) ?? ""
+            #expect(!text.contains("chapter") && !text.contains("description") && !text.contains("data sheet"))
+        }
+    }
+
+    /// Finding (review 2): a sheet key from the table never becomes a path.
+    @Test func aMalformedSheetKeyIsNoDocument() async throws {
+        let url = try #require(Self.report.remoteURL(f2fBase: ""))
+        let bad = DocumentRef.soilReport(sheet: "../trees/x", title: "x", url: url, bytes: 100)
+        // a file where the raw key would point: soil-reports/../trees/x.pdf
+        _ = try storage.write(Self.pdf, as: .sheets, "x.pdf")
+        storage.updateGone(.soilReports) { $0.mark("../trees/x.pdf") }
+        #expect(!bad.isValid)
+        #expect(store.localURL(bad) == nil)
+        #expect(!store.isGone(bad))
+        #expect(bad.remoteURL(f2fBase: "") == nil)
+        await store.discard(bad)
+        #expect(storage.existing(.sheets, "x.pdf") != nil, "discard stayed inside soil-reports/")
+        ScriptedURLProtocol.response = (200, Self.pdf)
+        do {
+            _ = try await store.open(bad)
+            Issue.record("a malformed key was fetched")
+        } catch {
+            #expect(error == .failed(status: nil))
+        }
+        #expect(storage.existing(.sheets, "x.pdf") != nil)
+        // the card's factory gives no document (so no button) for such a key
+        let table = #"{"name":"X","url":"\#(url.absoluteString)","bytes":1,"ha":1,"bbox":[146,-43,147,-42]}"#
+        let sheet = try JSONDecoder().decode(SoilsFile.Sheet.self, from: Data(table.utf8))
+        #expect(DocumentRef.soilReport(key: "../trees/x", sheet: sheet) == nil)
+        #expect(DocumentRef.soilReport(key: "Hobart", sheet: sheet) == nil)
+        #expect(DocumentRef.soilReport(key: "hobart", sheet: sheet)?.storedName == "hobart.pdf")
+    }
+
+    /// Finding (review 1): the whole-transfer ceiling follows the size, so
+    /// the 20 MB South Esk report survives a slow link (taps and batches),
+    /// one session per ceiling rung.
+    @Test func wholeTransferCeilingFollowsTheDocument() async {
+        let url = Self.report.remoteURL(f2fBase: "")!
+        let southEsk = DocumentRef.soilReport(sheet: "south-esk", title: "x", url: url, bytes: 20_150_978)
+        let f2f = DocumentRef.f2f(file: "f2f_dry_eucalypt.pdf", page: 0, title: "x")
+        #expect(DocumentStore.resourceTimeout(for: southEsk) == 2_400)
+        #expect(DocumentStore.resourceTimeout(for: Self.report) == 600)
+        #expect(DocumentStore.resourceTimeout(for: Self.sheet) == 600)
+        #expect(DocumentStore.resourceTimeout(for: f2f) == 600)
+
+        // taps: a store of its own sessions gives each rung its own session
+        let own = DocumentStore(storage: storage)
+        let long = await own.session(for: southEsk), short = await own.session(for: Self.report)
+        #expect(long !== short)
+        #expect(long.configuration.timeoutIntervalForResource == 2_400)
+        #expect(short.configuration.timeoutIntervalForResource == 600)
+        #expect(short.configuration.timeoutIntervalForRequest == 30)
+        #expect(await own.session(for: Self.sheet) === short)
+        #expect(await own.session(for: f2f) === short)
+        // an injected session (the tests') is used for every document
+        #expect(await store.session(for: southEsk) === store.session(for: Self.report))
+        #expect(await store.session(for: southEsk).configuration.protocolClasses?.first === ScriptedURLProtocol.self)
+
+        // batches: big and small items get different foreground sessions,
+        // small items share one
+        let transport = SessionTransport(storage: storage)
+        let big = ExtraItem(id: "south-esk.pdf", url: url, bytes: 20_150_978)
+        let small = ExtraItem(id: "s.pdf", url: url, bytes: 6_600_000)
+        let other = ExtraItem(id: "t.pdf", url: url, bytes: 600_000)
+        let unknown = ExtraItem(id: "u.jpg", url: url, bytes: nil)
+        let bigSession = transport.foreground(for: big), smallSession = transport.foreground(for: small)
+        #expect(bigSession !== smallSession)
+        #expect(bigSession.configuration.timeoutIntervalForResource == 2_400)
+        #expect(smallSession.configuration.timeoutIntervalForResource == 600)
+        #expect(bigSession.configuration.timeoutIntervalForRequest == 30)
+        #expect(transport.foreground(for: other) === smallSession)
+        #expect(transport.foreground(for: unknown) === smallSession)
+        #expect(transport.foreground(for: big) === bigSession)
+        for s in [bigSession, smallSession, long, short] { s.invalidateAndCancel() }
     }
 
     @Test func tapFetchesIdleNotWholeTransferTimeout() {

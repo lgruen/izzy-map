@@ -58,7 +58,7 @@ nonisolated enum BaseMap: String, Codable, CaseIterable, Sendable, Identifiable 
 
 /// The overlay drawn over the base (exactly one, or none).
 nonisolated enum Overlay: String, Codable, CaseIterable, Sendable, Identifiable {
-    case vegetation, pre1750, geology, none
+    case vegetation, pre1750, geology, soils, none
     var id: String { rawValue }
 
     var title: String {
@@ -66,6 +66,7 @@ nonisolated enum Overlay: String, Codable, CaseIterable, Sendable, Identifiable 
         case .vegetation: "Vegetation"
         case .pre1750: "Pre-1750 vegetation"
         case .geology: "Geology"
+        case .soils: "Soils"
         case .none: "None"
         }
     }
@@ -76,6 +77,7 @@ nonisolated enum Overlay: String, Codable, CaseIterable, Sendable, Identifiable 
         case .vegetation: "Vegetation"
         case .pre1750: "Pre-1750"
         case .geology: "Geology"
+        case .soils: "Soils"
         case .none: "None"
         }
     }
@@ -86,6 +88,7 @@ nonisolated enum Overlay: String, Codable, CaseIterable, Sendable, Identifiable 
         case .vegetation: "leaf"
         case .pre1750: "hourglass"
         case .geology: "square.3.layers.3d.down.right"
+        case .soils: "square.stack.3d.down.right"
         case .none: "circle.slash"
         }
     }
@@ -95,22 +98,30 @@ nonisolated enum Overlay: String, Codable, CaseIterable, Sendable, Identifiable 
         case .vegetation: "TASVEG 5.0 plant communities today"
         case .pre1750: "Modelled, before European clearing"
         case .geology: "1:500,000 rock units"
+        case .soils: "Reconnaissance soil maps, 11 sheets (17 % of the state)"
         case .none: "Base map only"
         }
     }
 
+    /// The pack holding the overlay. Soils has none: its 3 MB of tiles are
+    /// bundled with the app (`MapTables.soilsArchive`, `StyleBuilder.overlayURL`).
     var archive: Archive? {
         switch self {
         case .vegetation: .tasveg
         case .pre1750: .pre1750
         case .geology: .geology
-        case .none: nil
+        case .soils, .none: nil
         }
     }
 
     /// Pre-1750's 1 ha cell edges are grid artefacts: it has no boundaries,
     /// so "Outlines" would show nothing and falls back to Light.
-    var hasBoundaries: Bool { self == .vegetation || self == .geology }
+    var hasBoundaries: Bool { self == .vegetation || self == .geology || self == .soils }
+
+    /// Outlines draws a band of the unit colour inside each polygon —
+    /// except soils, whose Outlines are its grey unit lines alone (a band
+    /// would paint the same-unit seams at sheet edges, StyleBuilder).
+    var hasOutlineBand: Bool { self == .vegetation || self == .geology }
 }
 
 /// How strongly the overlay tints the base.

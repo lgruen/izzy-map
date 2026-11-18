@@ -1,0 +1,2538 @@
+{
+ "version": 1,
+ "source": {
+  "title": "Correlated Reconnaissance Soils (Soil Types)",
+  "custodian": "Department of Natural Resources and Environment Tasmania (Natural and Cultural Heritage Division)",
+  "licence": "CC BY 3.0 AU",
+  "attribution": "Soil types: Correlated Reconnaissance Soils from theLIST (CC BY 3.0 AU) © State of Tasmania",
+  "url": "https://listdata.thelist.tas.gov.au/opendata/data/LIST_CORRELATED_RECONNAISSANCE_SOILS_SOIL_TYPES_STATEWIDE.zip",
+  "modified": "2025-07-17",
+  "built": "2026-11-18",
+  "polygons": 2468
+ },
+ "units": {
+  "A": {
+   "name": "Undifferentiated alluvial soils",
+   "description": "Undifferentiated soils developed on Quaternary alluvium.",
+   "orders": [],
+   "profile": null,
+   "color": "#aaa9ad",
+   "ha": 54337.7,
+   "polygons": 206,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "hobart",
+    "oatlands",
+    "sorell"
+   ]
+  },
+  "A-Pm": {
+   "name": "Undifferentiated alluvial soils - podzolic soils on mudstone",
+   "description": "As for A with soils developed on Permian siltstone and mudstone alluvium on undulating (3-10%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#aaa9ad",
+   "ha": 2389.0,
+   "polygons": 1,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "An": {
+   "name": "Arnon Association",
+   "description": "Soils developed on Permian mudstone and siliceous contact metamorphic sediments on very gently undulating (1-3%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#72c666",
+   "ha": 1231.5,
+   "polygons": 8,
+   "sheets": [
+    "longford"
+   ]
+  },
+  "Ar": {
+   "name": "Archer Association",
+   "description": "Deep red or brown rocky clayey soils developed on Jurassic Dolerite on moderately steep (10-32%) hillslopes",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Archer SPC",
+   "color": "#b5564d",
+   "ha": 1703.9,
+   "polygons": 9,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Ar-M1": {
+   "name": "Archer with miscellaneous soils 1",
+   "description": "As for Ar with miscellaneous soils 1 on Jurassic dolerite bedrock and colluvium",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Archer SPC",
+   "color": "#b5564d",
+   "ha": 473.1,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "ArLv": {
+   "name": "Archer lateritic variant",
+   "description": "Deeply weathered soils of the Archer soil Association",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#b5564d",
+   "ha": 13.0,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "As": {
+   "name": "Asbestos Association",
+   "description": "Soils developed from Precambrian and lower Palaeozoic quartzites, phyllites and conglomerates on steep and stony land.",
+   "orders": [
+    "Rudosol",
+    "Dermosol",
+    "Kandosol"
+   ],
+   "profile": null,
+   "color": "#febc7f",
+   "ha": 9430.3,
+   "polygons": 6,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "BL": {
+   "name": "Brown soils on limestone",
+   "description": "Undefined soils developed on Permian limestone bedrock on undulating to rolling (3-32%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#610000",
+   "ha": 324.3,
+   "polygons": 4,
+   "sheets": [
+    "brighton",
+    "hobart"
+   ]
+  },
+  "Bb": {
+   "name": "Brown soils on basalt",
+   "description": "Soils developed on Tertiary basalt bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#cb7f99",
+   "ha": 1453.0,
+   "polygons": 13,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bb-Bd1": {
+   "name": "Brown soils on basalt with brown soils on dolerite 1",
+   "description": "As for Bb soils with moderately well drained brown soils developed on Jurassic dolerite bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#cb7f99",
+   "ha": 22.0,
+   "polygons": 1,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bb1": {
+   "name": "Brown soils on basalt 1",
+   "description": "Moderate to well drained brown stony soils developed on Tertiary basalt bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Chiltern SPC",
+   "color": "#cb7f99",
+   "ha": 34.6,
+   "polygons": 2,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Bd": {
+   "name": "Brown soils on dolerite",
+   "description": "Undefined brown soil developed on Jurassic dolerite bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#d6a7a8",
+   "ha": 351.9,
+   "polygons": 8,
+   "sheets": [
+    "buckland",
+    "sorell"
+   ]
+  },
+  "Bd-Bld1": {
+   "name": "Brown soils on dolerite - black soils on dolerite",
+   "description": "As for Bd with Bld1 soils on the lower undulating (3-10%) slopes.",
+   "orders": [],
+   "profile": null,
+   "color": "#d6a7a8",
+   "ha": 784.5,
+   "polygons": 3,
+   "sheets": [
+    "buckland",
+    "sorell"
+   ]
+  },
+  "Bd-Pd1": {
+   "name": "Brown soils on dolerite with podzolic soils on dolerite",
+   "description": "As for Bd with Pd1 soils on the steeper slopes.",
+   "orders": [],
+   "profile": null,
+   "color": "#d6a7a8",
+   "ha": 1178.9,
+   "polygons": 4,
+   "sheets": [
+    "buckland"
+   ]
+  },
+  "Bd1": {
+   "name": "Brown soils on dolerite 1",
+   "description": "Undefined brown soils developed on Jurassic dolerite bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Tea Tree SPC",
+   "color": "#d6a7a8",
+   "ha": 54340.4,
+   "polygons": 182,
+   "sheets": [
+    "brighton",
+    "ellendale",
+    "hobart",
+    "oatlands"
+   ]
+  },
+  "Bd1-Bfs2": {
+   "name": "Brown soils on dolerite 1 - brown soils on feldspathic sandstone 2",
+   "description": "As for Bd1 soils with well drained brown shallow soils on feldspathic sandstone.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Tea Tree SPC",
+   "color": "#d6a7a8",
+   "ha": 585.9,
+   "polygons": 2,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bd1-Pd1": {
+   "name": "Brown soils on dolerite 1 - podzolics soils on dolerite 1",
+   "description": "As for Bd1 soils with imperfectly drained grey-brown soils in areas with rainfall >635mm.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Tea Tree SPC",
+   "color": "#d6a7a8",
+   "ha": 498.5,
+   "polygons": 2,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bde": {
+   "name": "Breadalbane Association",
+   "description": "Brown clayey soils developed on Tertiary basaltic remnants within the Launceston Basin on gently undulating to rolling (3-32%) land.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Breadalbane SPC",
+   "color": "#d6a7a8",
+   "ha": 6010.5,
+   "polygons": 36,
+   "sheets": [
+    "longford",
+    "south-esk"
+   ]
+  },
+  "Bde-Ps": {
+   "name": "Breadalbane with panshanger soils on sand dunes",
+   "description": "Brown clayey soils developed on Tertiary basaltic remnants within the Launceston Basin on gently undulating to rolling (3-32%) land, with sandy rises.",
+   "orders": [
+    "Dermosol",
+    "Tenosol"
+   ],
+   "profile": "Breadalbane SPC",
+   "color": "#d6a7a8",
+   "ha": 704.1,
+   "polygons": 5,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "BdeKp": {
+   "name": "Breadalbane krasnozem phase",
+   "description": "Deep friable red-brown clays on Tertiary basaltic remnants within the Launceston Basin.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#d6a7a8",
+   "ha": 92.1,
+   "polygons": 4,
+   "sheets": [
+    "longford"
+   ]
+  },
+  "Be": {
+   "name": "Beaconsfield Association",
+   "description": "Soils developed from late Tertiary quartz sands and gravels on undulating surfaces ranging in elevation from 140m in SW to 30m in NE. Much white angular quartz gravel on surface",
+   "orders": [
+    "Podosol"
+   ],
+   "profile": null,
+   "color": "#bffbf9",
+   "ha": 1659.9,
+   "polygons": 9,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Bfs1": {
+   "name": "Brown soils on feldspathic sandstone 1",
+   "description": "Imperfectly drained grey-brown soils developed on Triassic feldspathic sandstone bedrock and colluvium on undulating to rolling land (3-32%) land.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Langloh SPC",
+   "color": "#1b7a5a",
+   "ha": 1624.2,
+   "polygons": 11,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Bfs2": {
+   "name": "Brown soils on feldspathic sandstone 2",
+   "description": "Well drained brown shallow soils developed on Triassic feldspathic sandstone bedrock and colluvium on undulating to rolling land (3-32%) land.",
+   "orders": [
+    "Kandosol",
+    "Tenosol"
+   ],
+   "profile": "York Plains SPC",
+   "color": "#1b7a5a",
+   "ha": 2791.6,
+   "polygons": 22,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bgb": {
+   "name": "Black & grey brown soils on basalt",
+   "description": "Moderate to imperfectly drained black cracking soils with co-dominant well drained dark grey brown soils developed on Tertiary basalt bedrock and colluvium on undulating to rolling…",
+   "orders": [
+    "Vertosol"
+   ],
+   "profile": "Sorell SPC",
+   "color": "#b06967",
+   "ha": 346.7,
+   "polygons": 2,
+   "sheets": [
+    "sorell"
+   ]
+  },
+  "Bi": {
+   "name": "Bicton Association",
+   "description": "Imperfectly drained soils on alluvium derived from Permian and older rocks above Tertiary clays on flat to gently undulating (0-3%) higher level river terraces",
+   "orders": [
+    "Kurosol",
+    "Chromosol"
+   ],
+   "profile": "Bicton SPC",
+   "color": "#dd686c",
+   "ha": 1860.5,
+   "polygons": 5,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Bk": {
+   "name": "Brickendon Association",
+   "description": "Soils developed on flat to gently undulating (0-3%) river terraces.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Brickendon SPC",
+   "color": "#e2a532",
+   "ha": 25112.1,
+   "polygons": 58,
+   "sheets": [
+    "longford",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Bl": {
+   "name": "Blessington Association",
+   "description": "Soils developed on Triassic sandstone on rolling and steep (10-56%) land.",
+   "orders": [
+    "Sodosol"
+   ],
+   "profile": "Blessington SPC",
+   "color": "#6d2a6f",
+   "ha": 4509.6,
+   "polygons": 37,
+   "sheets": [
+    "longford",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Bl-Ca": {
+   "name": "Blessington with Canola soils in drainage lines",
+   "description": "Soils developed on Triassic sandstone on rolling and steep (10-56%) land, with black cracking clays in depressions.",
+   "orders": [
+    "Sodosol",
+    "Vertosol"
+   ],
+   "profile": "Blessington SPC",
+   "color": "#6d2a6f",
+   "ha": 266.8,
+   "polygons": 2,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Bl-Ps": {
+   "name": "Blessington with Panshanger soils on sand dunes",
+   "description": "Soils developed on Triassic sandstone on rolling and steep (10-56%) land, with black cracking clays in depressions.",
+   "orders": [
+    "Sodosol",
+    "Vertosol"
+   ],
+   "profile": "Blessington SPC",
+   "color": "#6d2a6f",
+   "ha": 1686.8,
+   "polygons": 3,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Blb1": {
+   "name": "Black soils on basalt 1",
+   "description": "Moderate to imperfectly drained black cracking soils developed on Tertiary basalt bedrock and colluvium on low undulating (3-10%) plateaus.",
+   "orders": [
+    "Vertosol"
+   ],
+   "profile": "Sorell SPC",
+   "color": "#fdc5c8",
+   "ha": 9317.4,
+   "polygons": 44,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "ellendale",
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Blb1-Bb1": {
+   "name": "Black soils on basalt 1 with brown soils on basalt 1",
+   "description": "As for Blb1 with brown stony soils on the moderate to steep plateau slopes.",
+   "orders": [
+    "Vertosol"
+   ],
+   "profile": "Sorell SPC",
+   "color": "#fdc5c8",
+   "ha": 2428.9,
+   "polygons": 13,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Blb1-RBb1": {
+   "name": "Black soils on Basalt 1with red brown soils on basalt 1",
+   "description": "As for Blb1 with RBb1 soils on the gentle slopes of ridges.",
+   "orders": [
+    "Vertosol"
+   ],
+   "profile": "Sorell SPC",
+   "color": "#fdc5c8",
+   "ha": 684.8,
+   "polygons": 2,
+   "sheets": [
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Bld1": {
+   "name": "Black soils on dolerite 1",
+   "description": "Moderately well drained black soils developed on Jurassic dolerite bedrock and colluvium on low undulating (3-10%) land.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Belmont SPC",
+   "color": "#d2ccf0",
+   "ha": 7760.8,
+   "polygons": 30,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Bld1-Bd": {
+   "name": "Black soils on dolerite 1 with brown soils on dolerite",
+   "description": "As for Bld1 with Bd soils on the steeper (10-56%) slopes.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Belmont SPC",
+   "color": "#d2ccf0",
+   "ha": 44.9,
+   "polygons": 1,
+   "sheets": [
+    "sorell"
+   ]
+  },
+  "Bld1-Pd1": {
+   "name": "Black soils on dolerite 1 with podzolic soils on dolerite 1",
+   "description": "As for Bld1 with imperfectly drained texture contrat soils on steeper dolerite slopes",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Belmont SPC",
+   "color": "#d2ccf0",
+   "ha": 348.0,
+   "polygons": 3,
+   "sheets": [
+    "buckland",
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Bld1-Pss": {
+   "name": "Black soils on dolerite 1 with podzol and podzolic soils on Sandstone",
+   "description": "As for Bld1 with Pss soils on Triassic sandstone bedrock.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Belmont SPC",
+   "color": "#d2ccf0",
+   "ha": 151.7,
+   "polygons": 1,
+   "sheets": [
+    "brighton"
+   ]
+  },
+  "Bms": {
+   "name": "Brown soils on micaceous sandstone",
+   "description": "Undefined brown soils developed on Triassic micaceous sandstone bedrock and colluvium on undulating to rolling land (3-32%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#70c862",
+   "ha": 1223.2,
+   "polygons": 3,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Bms1": {
+   "name": "Brown soils on micaceous Sandstone 1",
+   "description": "Brown imperfectly drained texture contrast soils developed on Triassic micaceous sandstone bedrock and colluvium on undulating to rolling land (3-32%) land.",
+   "orders": [
+    "Chromosol",
+    "Sodosol"
+   ],
+   "profile": "Lovely Banks SPC",
+   "color": "#70c862",
+   "ha": 9.2,
+   "polygons": 1,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bms1-Pss": {
+   "name": "Brown soils on micaeous Sandstone 1 - podzol and podzolic soils on siliceous sands",
+   "description": "As for Bms1 with texture contrast soils and deep sands on siliceous sandstone",
+   "orders": [
+    "Chromosol",
+    "Sodosol"
+   ],
+   "profile": "Lovely Banks SPC",
+   "color": "#70c862",
+   "ha": 8138.3,
+   "polygons": 1,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bo": {
+   "name": "Bloomfield Association",
+   "description": "Moderately well drained soils on dolerite bedrock and colluvium on rolling to steep (10-56%) land",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Bloomfield SPC",
+   "color": "#99ab9d",
+   "ha": 1546.7,
+   "polygons": 13,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Bo-Ps": {
+   "name": "Bloomfield with Panshanger soils on sandy banks",
+   "description": "Moderately well drained soils on dolerite bedrock and colluvium on rolling to steep (10-56%) land, with sandy rises",
+   "orders": [
+    "Chromosol",
+    "Tenosol"
+   ],
+   "profile": "Bloomfield SPC",
+   "color": "#99ab9d",
+   "ha": 2402.3,
+   "polygons": 10,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Bp": {
+   "name": "Bushy Park Association",
+   "description": "Soils developed on flat to gently undulating (0-3%) river terraces.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Bushy Park SPC",
+   "color": "#2a5034",
+   "ha": 1222.6,
+   "polygons": 9,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Br": {
+   "name": "Brumby Association",
+   "description": "Soils developed on alluvium overlying Tertiary clays on flat to gently undulating (0-3%) river terraces",
+   "orders": [
+    "Sodosol"
+   ],
+   "profile": "Brumby SPC",
+   "color": "#ba7242",
+   "ha": 20101.6,
+   "polygons": 99,
+   "sheets": [
+    "longford",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Br-Ca": {
+   "name": "Brumby with Canola",
+   "description": "As for Br with Canola soils on the lower floodplain level",
+   "orders": [
+    "Sodosol"
+   ],
+   "profile": "Brumby SPC",
+   "color": "#ba7242",
+   "ha": 62.8,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Br-Ps": {
+   "name": "Brumby with Panshanger soils on sand dunes",
+   "description": "Soils developed on alluvium overlying Tertiary clays on flat to gently undulating (0-3%) river terraces, with sandy rises",
+   "orders": [
+    "Sodosol",
+    "Hydrosol",
+    "Tenosol"
+   ],
+   "profile": "Brumby SPC",
+   "color": "#ba7242",
+   "ha": 3621.8,
+   "polygons": 15,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Br-Ta": {
+   "name": "Brumby with Tara soils on sandy rises",
+   "description": "Soils developed on alluvium overlying Tertiary clays on flat to gently undulating (0-3%) river terraces, with sandy rises",
+   "orders": [
+    "Sodosol",
+    "Hydrosol",
+    "Tenosol"
+   ],
+   "profile": "Brumby SPC",
+   "color": "#ba7242",
+   "ha": 2131.5,
+   "polygons": 4,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Bss": {
+   "name": "Brown soils on Siliceous Sandstone",
+   "description": "Undefined brown soils developed on Triassic siliceous sandstone bedrock and colluvium on undulating to rolling land (3-32%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#498901",
+   "ha": 1568.9,
+   "polygons": 6,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Bu": {
+   "name": "Burnie Association",
+   "description": "Soils developed on Tertiary basalt bedrock and colluvium on broad, level to gently inclined (<1-10%) plateaus and rolling (10-32%) land adjacent to the coastline. Extending inland to approximately…",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Burnie SPC",
+   "color": "#d02221",
+   "ha": 8973.2,
+   "polygons": 10,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Ca": {
+   "name": "Canola Association",
+   "description": "Soils developed on alluvium on flat to gently undulating (0-3%) flood plains, valley flats and depressions",
+   "orders": [
+    "Vertosol"
+   ],
+   "profile": "Canola SPC",
+   "color": "#d5b87e",
+   "ha": 21351.9,
+   "polygons": 87,
+   "sheets": [
+    "longford",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Ca-Ea": {
+   "name": "Canola with Eastfield soils on dolerite rises",
+   "description": "Soils developed on alluvium on flat to gently undulating (0-3%) flood plains, valley flats and depressions, with dolerite rises",
+   "orders": [
+    "Vertosol",
+    "Chromosol",
+    "Sodosol"
+   ],
+   "profile": "Canola SPC",
+   "color": "#d5b87e",
+   "ha": 558.8,
+   "polygons": 4,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ca-Gl": {
+   "name": "Canola with Glen soils on undulating (3-10%) fans",
+   "description": "Soils developed on alluvium on flat to gently undulating (0-3%) flood plains, valley flats and depressions, with poorly drained depressions",
+   "orders": [
+    "Vertosol",
+    "Hydrosol"
+   ],
+   "profile": "Canola SPC",
+   "color": "#d5b87e",
+   "ha": 3182.5,
+   "polygons": 8,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ca-Ps": {
+   "name": "Canola with Panshanger soils on sand dunes",
+   "description": "Soils developed on alluvium on flat to gently undulating (0-3%) flood plains, valley flats and depressions, with sandy rises",
+   "orders": [
+    "Vertosol",
+    "Tenosol"
+   ],
+   "profile": "Canola SPC",
+   "color": "#d5b87e",
+   "ha": 2618.2,
+   "polygons": 5,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ca-Ta": {
+   "name": "Canola with Tara soils on small sandy rises",
+   "description": "Canola with Tara soils having dark brown, sandy loam topsoils above reddish brown, sandy clay loam B1 horizons with clear to gradual change to strong brown, sandy light clay subsoils, neutral…",
+   "orders": [
+    "Vertosol",
+    "Tenosol"
+   ],
+   "profile": "Canola SPC",
+   "color": "#d5b87e",
+   "ha": 499.9,
+   "polygons": 1,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Cc": {
+   "name": "Cam Association",
+   "description": "Soils developed on Precambrain schists bedrock and colluvium on undulating (3-10%) land and steep-sided (32-56%) narrow ridges.",
+   "orders": [
+    "Kurosol"
+   ],
+   "profile": "Cam SPC",
+   "color": "#80954a",
+   "ha": 13430.0,
+   "polygons": 18,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Cl": {
+   "name": "Calder Association",
+   "description": "Soils developed on Jurassic dolerite bedrock and colluvium on ridges and undulating to steep (3-56%) land.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Calder SPC",
+   "color": "#428fc1",
+   "ha": 2499.9,
+   "polygons": 4,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Cm": {
+   "name": "Campbell Town Association",
+   "description": "Well drained soils on basalt on gently undulating to rolling (3-32%) low hills (crests and shoulders)",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Campbell Town SPC",
+   "color": "#eab976",
+   "ha": 533.5,
+   "polygons": 5,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Cm-Bd": {
+   "name": "Campbell with Breadalbane soils on gentler slopes",
+   "description": "Well drained soils on basalt on gently undulating to rolling (3-32%) low hills (crests and shoulders), broner soils on gentler slopes",
+   "orders": [
+    "Ferrosol",
+    "Dermosol"
+   ],
+   "profile": "Campbell Town SPC",
+   "color": "#eab976",
+   "ha": 1612.4,
+   "polygons": 4,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Cm-Ps": {
+   "name": "Campbell Town with Panshanger soils on sandy banks",
+   "description": "Well drained soils on basalt on gently undulating to rolling (3-32%) low hills (crests and shoulders), with sandy rises",
+   "orders": [
+    "Ferrosol",
+    "Tenosol"
+   ],
+   "profile": "Campbell Town SPC",
+   "color": "#eab976",
+   "ha": 43.9,
+   "polygons": 1,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Cs": {
+   "name": "Cressy Association",
+   "description": "Soils developed from alluvium derived from the Woodstock and Brickendon surfaces in valley flats and depressions.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Cressy SPC",
+   "color": "#fae25a",
+   "ha": 15737.7,
+   "polygons": 30,
+   "sheets": [
+    "longford",
+    "quamby"
+   ]
+  },
+  "Cy": {
+   "name": "Craythorne Association",
+   "description": "Soils developed from Tertiary basalt on rolling plateau tops.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#492902",
+   "ha": 278.9,
+   "polygons": 2,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Da": {
+   "name": "Dalrymple Association",
+   "description": "Soils developed from Pleistocene littoral sands on gently undulating sand plains ranging in elevation from 9m to 30m or more.",
+   "orders": [
+    "Podosol",
+    "Hydrosol"
+   ],
+   "profile": null,
+   "color": "#204406",
+   "ha": 7667.2,
+   "polygons": 2,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Dl": {
+   "name": "Deloraine Association",
+   "description": "Red clayey soils developed on Tertiary basalt on undulating low hills (3-10%)",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Deloraine SPC",
+   "color": "#f8e5ba",
+   "ha": 9350.1,
+   "polygons": 23,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "DlLv": {
+   "name": "Deloraine lateritic variant",
+   "description": "Deeply weathered red clayey soils developed on Tertiary basalt on undulating low hills (3-10%)",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#f8e5ba",
+   "ha": 1007.7,
+   "polygons": 14,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Dw": {
+   "name": "Derwent Association",
+   "description": "Moderately well drained black gradational soils developed on alluvium on flat to gently undulating (0-3%) floodplains, valley flats and depressions.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Derwent SPC",
+   "color": "#3e2e23",
+   "ha": 3276.7,
+   "polygons": 35,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Ea": {
+   "name": "Eastfield Association",
+   "description": "Imperfectly drained texture contrast soils developed from Jurassic dolerite on rugged hilly land with frequent rock outcrops.",
+   "orders": [
+    "Chromosol",
+    "Ferrosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#7a9e9c",
+   "ha": 54492.7,
+   "polygons": 139,
+   "sheets": [
+    "beaconsfield",
+    "longford",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Ea+K": {
+   "name": "Eastfield & Kraznozems & hydromorphic soils on basalt",
+   "description": "Imperfectly drained texture contrast soils developed from Jurassic dolerite on rugged hilly land with frequent rock outcrops, with occasional red soils on basalt",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#7a9e9c",
+   "ha": 29.8,
+   "polygons": 1,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Ea-Ar": {
+   "name": "Eastfield with Archer complex",
+   "description": "Imperfectly drained texture contrast soils developed from Jurassic dolerite on rugged hilly land with frequent rock outcrops, mixed with well-drained red soils",
+   "orders": [
+    "Sodosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#7a9e9c",
+   "ha": 516.2,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Ea-Ps": {
+   "name": "Eastfield with Panshanger soils on sandy banks",
+   "description": "Imperfectly drained texture contrast soils developed from Jurassic dolerite on rugged hilly land with frequent rock outcrops, with sandy banks.",
+   "orders": [
+    "Chromosol",
+    "Sodosol",
+    "Tenosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#7a9e9c",
+   "ha": 962.4,
+   "polygons": 6,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ea-Wk": {
+   "name": "Eastfield with Woodstock complex",
+   "description": "As for Ea with Woodstock soils on relic lake beds or terraces",
+   "orders": [
+    "Sodosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#7a9e9c",
+   "ha": 183.6,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Ec": {
+   "name": "Ecclestone Association",
+   "description": "Soils developed from lateritized Jurassic dolerite, Tertiary ferruginous sediments and Jurassic dolerite on rolling to hilly land with some rock outcrops.",
+   "orders": [
+    "Ferrosol",
+    "Sodosol",
+    "Chromosol"
+   ],
+   "profile": null,
+   "color": "#cdb76a",
+   "ha": 1062.5,
+   "polygons": 3,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "FG": {
+   "name": "Flowery Gully Association",
+   "description": "Soils developed from Ordovician limestones on steep slopes with subdued rock outcrops and some sink holes.",
+   "orders": [
+    "Ferrosol",
+    "Calcarosol"
+   ],
+   "profile": null,
+   "color": "#a67400",
+   "ha": 73.1,
+   "polygons": 1,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Fl": {
+   "name": "Flowerdale Association",
+   "description": "Soils developed on Quaternary alluvium on flat to very gently undulating (<1-3%) coastal plains and the floodplains of the Flowerdale and Inglis River and it's tributaries.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Flowerdale SPC",
+   "color": "#a4b26a",
+   "ha": 3792.8,
+   "polygons": 18,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "GBb": {
+   "name": "Grey brown soils on basalt",
+   "description": "Imperfect to poorly drained grey brown soils developed on Teriary basalt bedrock and colluvium on undulating to rolling (3-32%) land.",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": null,
+   "color": "#fc6aad",
+   "ha": 505.5,
+   "polygons": 3,
+   "sheets": [
+    "hobart"
+   ]
+  },
+  "Gl": {
+   "name": "Glen Association",
+   "description": "Soils on gently undulating to rolling (3-32%) alluvial fans",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": "Glen SPC",
+   "color": "#41b7a1",
+   "ha": 4136.1,
+   "polygons": 7,
+   "sheets": [
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Gl-Ca": {
+   "name": "Glen with Canola Association",
+   "description": "Soils on gently undulating to rolling (3-32%) alluvial fans, with black cracking clays in drainage lines.",
+   "orders": [
+    "Hydrosol",
+    "Vertosol"
+   ],
+   "profile": "Glen SPC",
+   "color": "#41b7a1",
+   "ha": 1520.5,
+   "polygons": 7,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Gl-Ps": {
+   "name": "Glen with Panshanger soils on sandy rises",
+   "description": "Soils on gently undulating to rolling (3-32%) alluvial fans, with sandy rises",
+   "orders": [
+    "Hydrosol",
+    "Tenosol"
+   ],
+   "profile": "Glen SPC",
+   "color": "#41b7a1",
+   "ha": 100.7,
+   "polygons": 1,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Gl-Qu": {
+   "name": "Glen with Quamby",
+   "description": "Gently undulating to rolling (3-32%) alluvial fans with soils on Permian mudstone on rolling to steep (10-56%) land",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": "Glen SPC",
+   "color": "#41b7a1",
+   "ha": 597.9,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Hg": {
+   "name": "Hagley Association",
+   "description": "Soils developed from basaltic alluvium on gently undulating (3-10%) rises",
+   "orders": [],
+   "profile": null,
+   "color": "#a9b27d",
+   "ha": 1244.3,
+   "polygons": 8,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Hl": {
+   "name": "Hellyer Association",
+   "description": "Soils developed on Permian tillites and shales bedrock and colluvium on mostly steep (32-56%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#dc911d",
+   "ha": 19907.9,
+   "polygons": 10,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Ho": {
+   "name": "Holwell Association",
+   "description": "Soils developed from Permian mudstone above 150m and below 450m.",
+   "orders": [
+    "Kandosol"
+   ],
+   "profile": null,
+   "color": "#e1690a",
+   "ha": 4394.3,
+   "polygons": 1,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "In": {
+   "name": "Inglis Association",
+   "description": "Soils developed on Tertiary quartz gravel and sand on undulating to rolling (3-32%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#a09247",
+   "ha": 2807.9,
+   "polygons": 9,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "K": {
+   "name": "Kraznozems & hydromorphic soils on basalt",
+   "description": "Well drained deep red friable strongly structured soils developed on Tertiary basalt bedrock and colluvium on undulating to rolling (3-32%) land. With poorly drained soil…",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#aa8c8e",
+   "ha": 1166.4,
+   "polygons": 2,
+   "sheets": [
+    "buckland",
+    "sorell"
+   ]
+  },
+  "Kb": {
+   "name": "Kinburn Association",
+   "description": "Soils developed from alluvium derived from the Cressy surface of the Launceston basin",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": null,
+   "color": "#b2a4f9",
+   "ha": 2667.7,
+   "polygons": 14,
+   "sheets": [
+    "longford",
+    "quamby"
+   ]
+  },
+  "Kl": {
+   "name": "Kelso Association",
+   "description": "Soils developed from recent calcareous sands on stabilised dunes and beach ridges.",
+   "orders": [
+    "Podosol",
+    "Tenosol"
+   ],
+   "profile": null,
+   "color": "#1c855a",
+   "ha": 1298.7,
+   "polygons": 6,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "L": {
+   "name": "Lateritic soils",
+   "description": "Undefined soils developed on deeply weathered sediments.",
+   "orders": [],
+   "profile": null,
+   "color": "#c874bf",
+   "ha": 1299.9,
+   "polygons": 11,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "ellendale",
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Le": {
+   "name": "Legana Association",
+   "description": "Soils developed from Tertiary sands, clays and gravels on gently rolling to rolling land.",
+   "orders": [
+    "Chromosol",
+    "Ferrosol",
+    "Podosol"
+   ],
+   "profile": null,
+   "color": "#c2fec0",
+   "ha": 3925.3,
+   "polygons": 7,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Lf": {
+   "name": "Liffey Association",
+   "description": "Soils developed on solifluction deposits derived from Triassic sandstones on the upper steep (32-56%) slopes of the Western Tiers escarpment",
+   "orders": [
+    "Kandosol"
+   ],
+   "profile": "Liffey SPC",
+   "color": "#7a331a",
+   "ha": 1162.9,
+   "polygons": 2,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "Lg": {
+   "name": "Lagoon Association",
+   "description": "Very poorly drained soils on alluvium in flat (<1%) lagoon depressions",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": "Lagoon SPC",
+   "color": "#e7e46d",
+   "ha": 466.6,
+   "polygons": 8,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Lp": {
+   "name": "Lapoinya Association",
+   "description": "Soils developed on Tertiary basalt bedrock and colluvium on undulating to rolling (3-32%) plateaus and hills between altitudes of 160m and 300m and between 1100mm and 1300mm of rainfall.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Lapoinya SPC",
+   "color": "#d75a48",
+   "ha": 24652.6,
+   "polygons": 24,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Lw": {
+   "name": "Liawenne Association",
+   "description": "Soils developed on Jurassic dolerite bedrock and colluvium on rolling to very steep (10-100%) land. Rock outcrop is frequent and humus rich deposits occur in depressions…",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "High Moor Peat and Yellow Brown soils on Solifluction…",
+   "color": "#f9504d",
+   "ha": 31895.3,
+   "polygons": 9,
+   "sheets": [
+    "ellendale",
+    "hobart",
+    "quamby"
+   ]
+  },
+  "M1": {
+   "name": "Miscellaneous soils 1",
+   "description": "Stony well drained yellow-brown soils developed on Jurassic dolerite bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Yellow Brown soils on Solifluction Deposits SPC",
+   "color": "#4d7485",
+   "ha": 74031.6,
+   "polygons": 25,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "ellendale",
+    "hobart",
+    "oatlands",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "M1-Pd1": {
+   "name": "Miscellaneous soils 1 with podzolic soils on dolerite 1",
+   "description": "As for M1 with imperfectly drained texture contrast soils developed on Jurassic dolerite bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Yellow Brown soils on Solifluction Deposits SPC",
+   "color": "#4d7485",
+   "ha": 664.0,
+   "polygons": 1,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "M1-Qu": {
+   "name": "Miscellaneous soils 1 - Quamby",
+   "description": "As for M1 with Qu soils on Permian mudstone",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Yellow Brown soils on Solifluction Deposits SPC",
+   "color": "#4d7485",
+   "ha": 908.8,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "M10": {
+   "name": "Miscellaneous Soils 10",
+   "description": "Miscellaneous disturbed soils developed from Tertiary basalt and river terraces currently under urban & industrial development",
+   "orders": [],
+   "profile": null,
+   "color": "#10a393",
+   "ha": 1458.8,
+   "polygons": 3,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "M2": {
+   "name": "Miscellaneous soils 2",
+   "description": "Soils on Cambrian & Precambrian basic volcanic rocks and phyllite on rolling to very steep (10-100%) land",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": null,
+   "color": "#74f27f",
+   "ha": 10055.5,
+   "polygons": 15,
+   "sheets": [
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "M3": {
+   "name": "Miscellaneous soils 3",
+   "description": "Very poorly drained soils from organic deposits in depressions on flat to gently undulating (0-3%) land.",
+   "orders": [
+    "Organosol"
+   ],
+   "profile": "High Moor Peat SPC",
+   "color": "#907d39",
+   "ha": 620.1,
+   "polygons": 11,
+   "sheets": [
+    "brighton",
+    "south-esk"
+   ]
+  },
+  "M4": {
+   "name": "Miscellaneous soils 4",
+   "description": "Soils developed on alluvium, glacial deposits, windblown sands and clays and fan deposits on the Dairy plains and Meander Valley",
+   "orders": [],
+   "profile": null,
+   "color": "#da7a71",
+   "ha": 7075.3,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "M5": {
+   "name": "Miscellaneous soils 5",
+   "description": "Soils developed on alluvium derived from Quamby Brook",
+   "orders": [],
+   "profile": null,
+   "color": "#5e5b47",
+   "ha": 870.0,
+   "polygons": 2,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "M6": {
+   "name": "Miscellaneous soils 6",
+   "description": "Soils developed on alluvium derived from the Launceston Tertiary Basin and Cluan Tiers",
+   "orders": [],
+   "profile": null,
+   "color": "#7cedbf",
+   "ha": 3775.2,
+   "polygons": 1,
+   "sheets": [
+    "quamby"
+   ]
+  },
+  "M7": {
+   "name": "Miscellaneous soils 7",
+   "description": "Miscellaneous soils on Ordovician and Precambrian Rocks.",
+   "orders": [],
+   "profile": null,
+   "color": "#e82897",
+   "ha": 2876.6,
+   "polygons": 1,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "M8": {
+   "name": "Miscellaneous Soils 8",
+   "description": "Miscellaneous soils developed from lower Devonian to Cambrian quartzite & schist on low hills 60-90m above sea level",
+   "orders": [],
+   "profile": null,
+   "color": "#786a1f",
+   "ha": 6731.9,
+   "polygons": 1,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "M9": {
+   "name": "Miscellaneous Soils 9",
+   "description": "Miscellaneous soils developed from Lower Devonian to Cambrian slate & schist on low hills",
+   "orders": [],
+   "profile": null,
+   "color": "#808144",
+   "ha": 1005.8,
+   "polygons": 1,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "MEa": {
+   "name": "Miscellaneous soils related to Eastfield",
+   "description": "Soils developed from insitu dolerite, colluvial and solifluction dolerite debris on steep (32 - 56%) slopes of the Western Tiers and Ben Lomond Plateau.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": null,
+   "color": "#3999a7",
+   "ha": 25294.6,
+   "polygons": 9,
+   "sheets": [
+    "longford",
+    "south-esk"
+   ]
+  },
+  "MEa2": {
+   "name": "Miscellaneous soils related to Eastfield 2",
+   "description": "Deeply weathered red clayey soils on Jurassic dolerite",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#4461b1",
+   "ha": 291.1,
+   "polygons": 14,
+   "sheets": [
+    "longford"
+   ]
+  },
+  "Mi": {
+   "name": "Miller Association",
+   "description": "Imperfectly drained soils on Permian tillite on rolling and steep (10-56%) land",
+   "orders": [
+    "Dermosol",
+    "Chromosol"
+   ],
+   "profile": null,
+   "color": "#e8d5c6",
+   "ha": 2092.3,
+   "polygons": 5,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Mq": {
+   "name": "Macquarie Association",
+   "description": "Imperfectly drained soils on alluvium above Tertiary clays on flat to gently undulating (0-3%) higher level river terraces",
+   "orders": [
+    "Sodosol"
+   ],
+   "profile": "Macquarie SPC",
+   "color": "#da666c",
+   "ha": 175.4,
+   "polygons": 6,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Mq-Bk": {
+   "name": "Macquarie with Brickendon",
+   "description": "Imperfectly drained soils on alluvium above Tertiary clays on flat to gently undulating (0-3%) higher level river terraces",
+   "orders": [
+    "Sodosol",
+    "Chromosol",
+    "Kurosol"
+   ],
+   "profile": null,
+   "color": "#da666c",
+   "ha": 719.2,
+   "polygons": 3,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Mq-Ps": {
+   "name": "Macquarie Association with Panshanger soils on sandy rises",
+   "description": "Imperfectly drained soils on alluvium above Tertiary clays on flat to gently undulating (0-3%) higher level river terraces, with sandy rises",
+   "orders": [
+    "Sodosol",
+    "Chromosol",
+    "Tenosol"
+   ],
+   "profile": null,
+   "color": "#da666c",
+   "ha": 1969.9,
+   "polygons": 5,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ne": {
+   "name": "Newham Association",
+   "description": "Soils on undulating and rolling (3-32%) drop-off slopes or terrace scarps.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Newham SPC",
+   "color": "#8e5a3a",
+   "ha": 5033.9,
+   "polygons": 8,
+   "sheets": [
+    "longford",
+    "south-esk"
+   ]
+  },
+  "Ne-Ps": {
+   "name": "Newham Association with Panshanger soils on sand dunes",
+   "description": "As for Newham and Panshanger associations.",
+   "orders": [
+    "Chromosol",
+    "Tenosol"
+   ],
+   "profile": null,
+   "color": "#8e5a3a",
+   "ha": 157.6,
+   "polygons": 1,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Nl": {
+   "name": "Nile Association",
+   "description": "Soils developed on gently sloping (3-10%) alluvial fans.",
+   "orders": [
+    "Vertosol"
+   ],
+   "profile": null,
+   "color": "#717f2a",
+   "ha": 1928.5,
+   "polygons": 11,
+   "sheets": [
+    "longford"
+   ]
+  },
+  "Nr": {
+   "name": "Norton Association",
+   "description": "Soils developed from Cambrian and Ordovician slates, sandstones & siltstones on low gently rolling to rolling land",
+   "orders": [
+    "Kandosol"
+   ],
+   "profile": null,
+   "color": "#b2bfb3",
+   "ha": 1366.4,
+   "polygons": 6,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Nt": {
+   "name": "Natone Association",
+   "description": "Soils developed on Devonian granite bedrock and colluvium on undulating to steep (3-56%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#b5bfb4",
+   "ha": 5905.5,
+   "polygons": 3,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "On": {
+   "name": "Oonah Association",
+   "description": "Soils developed on Tertiary basalt bedrock and colluvium on undulating (3-10%) plateau residuals approximately 14-17km inland. Generally occurs at altitudes above 400m and where annual rainfall is…",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Oonah SPC",
+   "color": "#853c11",
+   "ha": 11358.3,
+   "polygons": 11,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Pcs": {
+   "name": "Podzols on cover sands",
+   "description": "Undefined soils developed on Quaternary wind blown sand on gently undulating to rolling (3-32%) dolerite, sandstone and mudstone hillslopes.",
+   "orders": [
+    "Podosol"
+   ],
+   "profile": null,
+   "color": "#7c9c77",
+   "ha": 6433.4,
+   "polygons": 18,
+   "sheets": [
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Pcs-Pd1": {
+   "name": "Podzols on cover sands with podzolic soils on dolerite 1",
+   "description": "As for Pcs with Pd1 soils on Jurassic dolerite bedrock and colluvium.",
+   "orders": [
+    "Podosol"
+   ],
+   "profile": null,
+   "color": "#91a59d",
+   "ha": 77.9,
+   "polygons": 1,
+   "sheets": [
+    "sorell"
+   ]
+  },
+  "Pd1": {
+   "name": "Podzolic soils on dolerite 1",
+   "description": "Imperfectly drained texture contrast soils developed on Jurassic dolerite bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#888ca5",
+   "ha": 158737.7,
+   "polygons": 77,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "ellendale",
+    "hobart",
+    "oatlands",
+    "sorell"
+   ]
+  },
+  "Pd1-Bd1": {
+   "name": "Podzolic soils on dolerite 1 with brown soils on dolerite 1",
+   "description": "As for Pd1 soils with moderately well drained brown soils in drier areas (<635mm).",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#888ca5",
+   "ha": 736.5,
+   "polygons": 1,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Pd1-Bld1": {
+   "name": "Podzolic Soils on Dolerite 1 –Black Soils on Dolerite 1 Complex",
+   "description": "Imperfectly drained texture contrast soils developed on Jurassic dolerite bedrock and colluvium on the lower undulating (3-10%) slopes",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#888ca5",
+   "ha": 412.0,
+   "polygons": 2,
+   "sheets": [
+    "sorell"
+   ]
+  },
+  "Pd1-Pcs": {
+   "name": "Podzolic soils on dolerite 1 with podzols on cover sands",
+   "description": "As for Pd1 with Pcs on sand dunes and sandsheets.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#888ca5",
+   "ha": 52.0,
+   "polygons": 1,
+   "sheets": [
+    "sorell"
+   ]
+  },
+  "Pd1-Pss": {
+   "name": "Podzolic soils on Dolerite 1 with podzolic soils on siliceous sandstone",
+   "description": "As for Pd1 soils with texture contrast soils and deep sands on Triassic siliceouus sandstone.",
+   "orders": [
+    "Chromosol"
+   ],
+   "profile": "Eastfield SPC",
+   "color": "#888ca5",
+   "ha": 21.5,
+   "polygons": 1,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Pd2": {
+   "name": "Podzolic soils on dolerite 2",
+   "description": "Undefined soils developed on cover sands, Jurassic dolerite and Permian mudstone on rolling to steep (10-56%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#6a638c",
+   "ha": 14238.2,
+   "polygons": 1,
+   "sheets": [
+    "sorell"
+   ]
+  },
+  "Pm": {
+   "name": "Podzolic soils on mudstone",
+   "description": "Soils developed on Permian siltstone bedrock, colluvium and alluvium on undulating to rolling (3-32%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#f6b47a",
+   "ha": 3878.9,
+   "polygons": 15,
+   "sheets": [
+    "buckland",
+    "oatlands"
+   ]
+  },
+  "Pm1": {
+   "name": "Podzolic soils on mudstone 1",
+   "description": "Poor to imperfectly drained grey brown texture contrast soils developed on Permian siltstone bedrock and colluvium on undulating to rolling (3-32%) land. Rainfall <750mm.",
+   "orders": [
+    "Kurosol"
+   ],
+   "profile": "Forcette SPC",
+   "color": "#f7963b",
+   "ha": 30802.2,
+   "polygons": 72,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "ellendale",
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Pm2": {
+   "name": "Podzolic soils on mudstone 2",
+   "description": "Undefined soils developed on siltstone interbedded with mudstone, sandstone and shale in areas of >750mm rainfall.",
+   "orders": [],
+   "profile": null,
+   "color": "#f67f13",
+   "ha": 6547.2,
+   "polygons": 27,
+   "sheets": [
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Pm2-Pd1": {
+   "name": "Podzolic soils on mudstone 2 with podzolic soils on dolerite 1 complex",
+   "description": "As for Pm2 with Pd1 soils on Jurassic dolerite bedrock and colluvium.",
+   "orders": [],
+   "profile": null,
+   "color": "#f67f13",
+   "ha": 87.5,
+   "polygons": 1,
+   "sheets": [
+    "sorell"
+   ]
+  },
+  "Pm3": {
+   "name": "Podzolic soils on mudstone 3",
+   "description": "Undefined soils developed on Permian glacial deposits on undulating (3-10%) land in areas of < 750mm rainfall.",
+   "orders": [],
+   "profile": null,
+   "color": "#f67f13",
+   "ha": 268.1,
+   "polygons": 2,
+   "sheets": [
+    "buckland"
+   ]
+  },
+  "Ps": {
+   "name": "Panshanger Association",
+   "description": "Soils on loose, windblown sand on gently undulating to rolling (3-32%) dunes and flanks of dolerite hill slopes.",
+   "orders": [
+    "Tenosol"
+   ],
+   "profile": "Panshanger SPC",
+   "color": "#3d5577",
+   "ha": 6949.4,
+   "polygons": 98,
+   "sheets": [
+    "longford",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Ps-Bo": {
+   "name": "Panshanger with Bloomfield soils on dolerite bedrock",
+   "description": "Soils on loose, windblown sand on gently undulating to rolling (3-32%) dunes and flanks and outcrops of dolerite hill slopes",
+   "orders": [
+    "Tenosol",
+    "Chromosol"
+   ],
+   "profile": "Panshanger SPC",
+   "color": "#3d5577",
+   "ha": 3214.9,
+   "polygons": 3,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ps-Ca": {
+   "name": "Panshanger with Canola soils on flood plains",
+   "description": "Soils on loose, windblown sand on gently undulating to rolling (3-32%) dunes and flanks of dolerite hill slopes, with black cracking clays in depressions",
+   "orders": [
+    "Tenosol",
+    "Vertosol"
+   ],
+   "profile": "Panshanger SPC",
+   "color": "#3d5577",
+   "ha": 1272.8,
+   "polygons": 8,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ps-Ea": {
+   "name": "Panshanger with Eastfield soils on dolerite bedrock",
+   "description": "Soils on loose, windblown sand on gently undulating to rolling (3-32%) dunes and flanks of dolerite hill slopes, with texture contrast soils on dolerite rises.",
+   "orders": [
+    "Tenosol",
+    "Chromosol",
+    "Sodosol"
+   ],
+   "profile": "Panshanger SPC",
+   "color": "#3d5577",
+   "ha": 3444.0,
+   "polygons": 7,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ps-Mq": {
+   "name": "Panshanger with Macquarie soils on flat terraces",
+   "description": "Soils on loose, windblown sand on gently undulating to rolling (3-32%) dunes and flanks of dolerite hill slopes, with texture contrast soils on rises.",
+   "orders": [
+    "Tenosol",
+    "Sodosol",
+    "Chromosol"
+   ],
+   "profile": "Panshanger SPC",
+   "color": "#3d5577",
+   "ha": 526.9,
+   "polygons": 1,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Ps-Wk": {
+   "name": "Panshanger with Woodstock soils",
+   "description": "Soils on loose, windblown sand on gently undulating to rolling (3-32%) dunes and flanks of dolerite hill slopes, with texture contrast soils on terraced rises.",
+   "orders": [
+    "Tenosol",
+    "Kurosol",
+    "Sodosol"
+   ],
+   "profile": "Panshanger SPC",
+   "color": "#3d5577",
+   "ha": 655.0,
+   "polygons": 2,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Pss": {
+   "name": "Podzol and podzolic soils on sandstone",
+   "description": "Undefined soil developed on Triassic sandstone bedrock and colluvium on undulating to rolling (3-32%) land",
+   "orders": [],
+   "profile": null,
+   "color": "#597d71",
+   "ha": 112532.7,
+   "polygons": 215,
+   "sheets": [
+    "brighton",
+    "buckland",
+    "ellendale",
+    "hobart",
+    "oatlands",
+    "sorell"
+   ]
+  },
+  "Pss(F)": {
+   "name": "Podzolic soils on feldspathic sandstone",
+   "description": "Undefined soils developed on feldspathic sandstone bedrock and colluvium on undulating (3-32%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#597d71",
+   "ha": 79.1,
+   "polygons": 1,
+   "sheets": [
+    "buckland"
+   ]
+  },
+  "Pss1": {
+   "name": "Podzol and podzolic soils on sandstone 1",
+   "description": "Imperfectly drained texture contrast soils and well drained deep sands developed on Triassic sandstone bedrock and colluvium on undulating to rolling (3-32%) land.",
+   "orders": [
+    "Kurosol",
+    "Podosol"
+   ],
+   "profile": "Ellendale SPC & Dunrobin SPC",
+   "color": "#597d71",
+   "ha": 25127.7,
+   "polygons": 40,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Qu": {
+   "name": "Quamby Association",
+   "description": "Soils on Permian mudstone on rolling to steep (10-56%) land",
+   "orders": [
+    "Dermosol"
+   ],
+   "profile": "Quamby SPC",
+   "color": "#4e6e09",
+   "ha": 13771.2,
+   "polygons": 24,
+   "sheets": [
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Qu-Bl": {
+   "name": "Quamby with Blessington soils",
+   "description": "Soils on Permian mudstone and sandstone on rolling to steep (10-56%) land.",
+   "orders": [
+    "Dermosol",
+    "Sodosol"
+   ],
+   "profile": "Quamby SPC",
+   "color": "#ce899c",
+   "ha": 5507.9,
+   "polygons": 13,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "RBb": {
+   "name": "Red Brown soils on Basalt 1",
+   "description": "Undefined soils developed on Teriary basalt bedrock and colluvium on undulating to rolling (3-32%) land.",
+   "orders": [],
+   "profile": null,
+   "color": "#d83174",
+   "ha": 9.8,
+   "polygons": 1,
+   "sheets": [
+    "hobart"
+   ]
+  },
+  "RBb1": {
+   "name": "Red brown soils on basalt 1",
+   "description": "Well drained shallow red brown friable soils developed on Tertiary basalt bedrock and colluvium on the gentle (3-10%) slopes of ridge tops.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Stoneleigh SPC",
+   "color": "#a65657",
+   "ha": 1274.0,
+   "polygons": 19,
+   "sheets": [
+    "buckland",
+    "sorell"
+   ]
+  },
+  "Rb": {
+   "name": "Relbia Association",
+   "description": "Soils developed on deeply dissected Tertiary sediments of the Launceston Basin.",
+   "orders": [],
+   "profile": null,
+   "color": "#fe9798",
+   "ha": 3898.6,
+   "polygons": 2,
+   "sheets": [
+    "longford"
+   ]
+  },
+  "RbLv": {
+   "name": "Relbia Lateritic variant",
+   "description": "Deeply weathered soils of the Rb Association.",
+   "orders": [],
+   "profile": null,
+   "color": "#fe9798",
+   "ha": 88.5,
+   "polygons": 3,
+   "sheets": [
+    "longford"
+   ]
+  },
+  "Ri": {
+   "name": "Rubigana Association",
+   "description": "Soils developed from Pleistocene and recent marine sediments on marine benches at 3-5m, 9m and 12-15m above sea level. Some superimposed low sand dunes in places",
+   "orders": [
+    "Podosol"
+   ],
+   "profile": null,
+   "color": "#6a8540",
+   "ha": 3457.0,
+   "polygons": 12,
+   "sheets": [
+    "beaconsfield",
+    "burnie"
+   ]
+  },
+  "Ro": {
+   "name": "Rotherwood Association",
+   "description": "Soils developed on flat to gently undulating (0-3%) river terraces.",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": "Rotherwood SPC",
+   "color": "#ac44e6",
+   "ha": 3259.8,
+   "polygons": 25,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Ro-Dw": {
+   "name": "Rotherwood Association - Derwent Association complex",
+   "description": "As for Ro with black soils along drainage lines.",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": "Rotherwood SPC",
+   "color": "#ac44e6",
+   "ha": 120.6,
+   "polygons": 1,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Ro-Pss1": {
+   "name": "Rotherwood Association - podzolic & podzol soils on sandstone 1 complex",
+   "description": "As for Ro with Pss1 soils on undulating to rolling (3-32%) sandstone slopes.",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": "Rotherwood SPC",
+   "color": "#ac44e6",
+   "ha": 133.4,
+   "polygons": 1,
+   "sheets": [
+    "ellendale"
+   ]
+  },
+  "Rs": {
+   "name": "Soils of recent sands & shell beds",
+   "description": "Undefined soils developed on Quaternary sands of coastal beaches.",
+   "orders": [
+    "Rudosol",
+    "Tenosol"
+   ],
+   "profile": null,
+   "color": "#a7ea83",
+   "ha": 2735.9,
+   "polygons": 16,
+   "sheets": [
+    "buckland",
+    "hobart",
+    "sorell"
+   ]
+  },
+  "Rv": {
+   "name": "Rosevears Association",
+   "description": "Soils developed from mixed Tertiary clays and basalt on rolling to hilly land with frequent slump benches and some steep rocky scarps.",
+   "orders": [
+    "Chromosol",
+    "Ferrosol",
+    "Dermosol"
+   ],
+   "profile": null,
+   "color": "#e67278",
+   "ha": 433.8,
+   "polygons": 2,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Rw": {
+   "name": "Rowella Association",
+   "description": "Soils developed from Tertiary sands and clays on easy rolling to rolling low Tertiary basalt plateaus with steep edges. Some basalt soils.",
+   "orders": [
+    "Chromosol",
+    "Podosol",
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#ce875d",
+   "ha": 415.0,
+   "polygons": 3,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Sh": {
+   "name": "Sisters Hill Association",
+   "description": "Soils developed on Precambrain quartzites bedrock and colluvium on rolling to steep (10-56%) land.",
+   "orders": [
+    "Rudosol"
+   ],
+   "profile": "Sister Hills SPC",
+   "color": "#1d761e",
+   "ha": 7009.2,
+   "polygons": 6,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Sp": {
+   "name": "Stockport Association",
+   "description": "Soils developed from Pleistocene or recent swamp deposits on lagoon floors with small area of super-imposed sand dunes.",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": null,
+   "color": "#4bfc66",
+   "ha": 343.5,
+   "polygons": 2,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Su": {
+   "name": "Supply Association",
+   "description": "Soils developed from recent alluvium on present-day floodplains . Includes some older terrace remnants.",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": null,
+   "color": "#5e8400",
+   "ha": 1571.7,
+   "polygons": 17,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Tm": {
+   "name": "Tamar Association",
+   "description": "Soils developed from recent estuarine deposits on low-lying waterlogged flats less than 2m above High Water Mark.",
+   "orders": [
+    "Hydrosol"
+   ],
+   "profile": null,
+   "color": "#4b4e0f",
+   "ha": 462.2,
+   "polygons": 4,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Tt": {
+   "name": "Tatana Association",
+   "description": "Soils developed from Permian and Triassic siliceous sandstones on very gently undulating to gently rolling land with occasional cliffs.",
+   "orders": [
+    "Podosol"
+   ],
+   "profile": null,
+   "color": "#b26c06",
+   "ha": 6459.6,
+   "polygons": 13,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Vl": {
+   "name": "Vulcan Association",
+   "description": "Soil developed from Cambrian ultrabasic rocks from gently rolling to rolling land. Much ironstone gravel on surface, a few strong outcrops of iron ore capping low…",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": null,
+   "color": "#523d04",
+   "ha": 1086.7,
+   "polygons": 2,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Wa": {
+   "name": "Warrina Association",
+   "description": "Soils developed from Permian mudstone, siltstone on very gently undulating to rolling or hilly land below 150m.",
+   "orders": [
+    "Kurosol"
+   ],
+   "profile": "Warrina SPC",
+   "color": "#f68e2b",
+   "ha": 8228.6,
+   "polygons": 10,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Wbs": {
+   "name": "Undifferentiated wind blown sands",
+   "description": "Undifferentiated soils developed on windblown sand.",
+   "orders": [],
+   "profile": null,
+   "color": "#00a64c",
+   "ha": 388.6,
+   "polygons": 4,
+   "sheets": [
+    "oatlands"
+   ]
+  },
+  "Wk": {
+   "name": "Woodstock Association",
+   "description": "Soils above Tertiary sediments on flat to undulating (0-10%) relic lake beds or terraces",
+   "orders": [
+    "Kurosol"
+   ],
+   "profile": "Woodstock SPC",
+   "color": "#7d8748",
+   "ha": 16072.1,
+   "polygons": 71,
+   "sheets": [
+    "longford",
+    "quamby",
+    "south-esk"
+   ]
+  },
+  "Wk-Ps": {
+   "name": "Woodstock with Panshanger soils on sandy rises",
+   "description": "Soils above Tertiary sediments on flat to undulating (0-10%) relic lake beds or terraces, with sandy rises",
+   "orders": [
+    "Kurosol",
+    "Tenosol"
+   ],
+   "profile": "Woodstock SPC",
+   "color": "#7d8748",
+   "ha": 8688.7,
+   "polygons": 4,
+   "sheets": [
+    "south-esk"
+   ]
+  },
+  "Wr": {
+   "name": "West Ridgley Association",
+   "description": "Soils developed on Tertiary basalt bedrock and colluvium on undulating to rolling (3-32%) land. With poorly drained soils in depressions.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "West Ridgely SPC",
+   "color": "#b64e58",
+   "ha": 3095.0,
+   "polygons": 2,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "Wy": {
+   "name": "Wynyard Association",
+   "description": "Soils developed on Quaternary sandy marine &/or estuarine deposits on level to gently undulating (<1-3%) plains.",
+   "orders": [
+    "Podosol"
+   ],
+   "profile": "Woolnorth SPC",
+   "color": "#cecb72",
+   "ha": 1496.2,
+   "polygons": 6,
+   "sheets": [
+    "burnie"
+   ]
+  },
+  "YT": {
+   "name": "York Town Association",
+   "description": "Soils developed from Tertiary clays and gravels on gently undulating to gently rolling plains.",
+   "orders": [
+    "Chromosol",
+    "Podosol"
+   ],
+   "profile": null,
+   "color": "#04e388",
+   "ha": 3923.7,
+   "polygons": 2,
+   "sheets": [
+    "beaconsfield"
+   ]
+  },
+  "Yo": {
+   "name": "Yolla Association",
+   "description": "Soils developed on Tertiary basalt bedrock and colluvium on rolling to steep (10-56%) land approximately 13km inland. Generally occurring above 300m altitude and between 1300mm and 1500mm rainfall.",
+   "orders": [
+    "Ferrosol"
+   ],
+   "profile": "Yolla SPC",
+   "color": "#a57c5a",
+   "ha": 16688.6,
+   "polygons": 8,
+   "sheets": [
+    "burnie"
+   ]
+  }
+ },
+ "sheets": {
+  "beaconsfield": {
+   "name": "Beaconsfield",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Beaconsfield_report.pdf",
+   "bytes": 1828536,
+   "ha": 81971.1,
+   "bbox": [
+    146.6423,
+    -41.4587,
+    147.1239,
+    -40.9983
+   ]
+  },
+  "brighton": {
+   "name": "Brighton",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Brighton_report.pdf",
+   "bytes": 652914,
+   "ha": 113246.6,
+   "bbox": [
+    147.0014,
+    -42.7504,
+    147.5015,
+    -42.4985
+   ]
+  },
+  "buckland": {
+   "name": "Buckland",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Buckland_report.pdf",
+   "bytes": 278044,
+   "ha": 99649.4,
+   "bbox": [
+    147.5014,
+    -42.7487,
+    148.0014,
+    -42.4985
+   ]
+  },
+  "burnie": {
+   "name": "Burnie",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Burnie_report.pdf",
+   "bytes": 1526772,
+   "ha": 122792.7,
+   "bbox": [
+    145.5001,
+    -41.2483,
+    146.0004,
+    -40.8511
+   ]
+  },
+  "ellendale": {
+   "name": "Ellendale",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Ellendale_report.pdf",
+   "bytes": 339316,
+   "ha": 113843.8,
+   "bbox": [
+    146.5013,
+    -42.7488,
+    147.0014,
+    -42.4985
+   ]
+  },
+  "hobart": {
+   "name": "Hobart",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Hobart_report.pdf",
+   "bytes": 207726,
+   "ha": 98103.0,
+   "bbox": [
+    147.0014,
+    -42.9988,
+    147.5014,
+    -42.7482
+   ]
+  },
+  "longford": {
+   "name": "Longford",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Longford_report.pdf",
+   "bytes": 1149476,
+   "ha": 113973.2,
+   "bbox": [
+    147.0014,
+    -41.7482,
+    147.5013,
+    -41.4985
+   ]
+  },
+  "oatlands": {
+   "name": "Oatlands",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Oatlands_report.pdf",
+   "bytes": 642888,
+   "ha": 113099.5,
+   "bbox": [
+    147.0013,
+    -42.4988,
+    147.5014,
+    -42.2485
+   ]
+  },
+  "quamby": {
+   "name": "Quamby",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Quamby_report.pdf",
+   "bytes": 2178828,
+   "ha": 116606.7,
+   "bbox": [
+    146.5013,
+    -41.7487,
+    147.01,
+    -41.4985
+   ]
+  },
+  "sorell": {
+   "name": "Sorell",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Sorell_report.pdf",
+   "bytes": 828683,
+   "ha": 60300.2,
+   "bbox": [
+    147.5013,
+    -42.9988,
+    147.9999,
+    -42.7485
+   ]
+  },
+  "south-esk": {
+   "name": "South Esk",
+   "url": "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/South_Esk_report.pdf",
+   "bytes": 20150978,
+   "ha": 115564.4,
+   "bbox": [
+    147.0013,
+    -41.9988,
+    147.5013,
+    -41.7471
+   ]
+  }
+ },
+ "orders": {
+  "Calcarosol": {
+   "gloss": "Soils that are calcareous (contain lime, often as soft or nodular carbonate) throughout or from close below the topsoil, without a clear increase in clay into the subsoil."
+  },
+  "Chromosol": {
+   "gloss": "Soils with a clear or abrupt increase in clay from topsoil to subsoil (texture contrast), where the upper subsoil is neither strongly acid nor sodic."
+  },
+  "Dermosol": {
+   "gloss": "Soils with a well-structured subsoil (it breaks into distinct peds) but no clear texture contrast, and not as iron-rich as a Ferrosol."
+  },
+  "Ferrosol": {
+   "gloss": "Iron-rich soils without a clear texture contrast: typically deep, red or brown, friable, well-structured clays formed on basalt (the old 'krasnozems')."
+  },
+  "Hydrosol": {
+   "gloss": "Seasonally or permanently wet soils: most of the profile is saturated for at least two to three months in most years, often with grey or mottled subsoil."
+  },
+  "Kandosol": {
+   "gloss": "Soils with a massive or only weakly structured subsoil of at least 15 % clay and no clear texture contrast (the old red, yellow and brown earths)."
+  },
+  "Kurosol": {
+   "gloss": "Soils with a clear or abrupt increase in clay from topsoil to subsoil (texture contrast), where the upper subsoil is strongly acid (pH below 5.5)."
+  },
+  "Organosol": {
+   "gloss": "Peat soils: made largely of organic matter, either a thick layer (more than 40 cm in the top 80 cm) or a shallower one resting directly on rock."
+  },
+  "Podosol": {
+   "gloss": "Sandy soils with a subsoil layer where organic matter, aluminium and/or iron washed down from above have accumulated, often a bleached sand over a dark or rusty pan."
+  },
+  "Rudosol": {
+   "gloss": "Barely formed soils: hardly any soil development beyond a minimal topsoil, so little more than the raw parent material, such as fresh sand, alluvium or stony rubble."
+  },
+  "Sodosol": {
+   "gloss": "Soils with a clear or abrupt increase in clay from topsoil to subsoil (texture contrast), where the upper subsoil is sodic (exchangeable sodium 6 % or more) and not strongly acid; such subsoils typically disperse when wet, set hard when dry and drain poorly."
+  },
+  "Tenosol": {
+   "gloss": "Weakly developed soils: a developed topsoil but little or no subsoil development, often sandy or gravelly."
+  },
+  "Vertosol": {
+   "gloss": "Cracking clay soils (35 % clay or more) that shrink and swell, opening deep cracks when dry."
+  }
+ }
+}

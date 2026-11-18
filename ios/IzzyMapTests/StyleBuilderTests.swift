@@ -16,7 +16,8 @@ struct StyleBuilderTests {
     nonisolated static let bundled: MapTables = {
         guard let data = BundledData.inBundle() else { return .empty }
         return MapTables(communities: (try? data.communities()) ?? [:], geology: (try? data.geologyUnits()) ?? [:],
-                         pre1750: (try? data.pre1750Units()) ?? [:], trees: try? data.trees())
+                         pre1750: (try? data.pre1750Units()) ?? [:], trees: try? data.trees(),
+                         soils: try? data.soilUnits(), soilsArchive: data.soilsArchive)
     }()
 
     nonisolated static func location(_ archives: [Archive]) -> DataLocation {
@@ -74,7 +75,7 @@ struct StyleBuilderTests {
         let s = style(plain)
         let sources = Set((s["sources"] as? [String: Any])?.keys.map { $0 } ?? [])
         #expect(sources == ["topo", "topo-live", "tasveg", "highlight", "selected"])
-        for hidden in ["aerial", "tasmap", "geology", "pre1750", "relief", "trees-points", "season-2026"] {
+        for hidden in ["aerial", "tasmap", "geology", "pre1750", "soils", "relief", "trees-points", "season-2026"] {
             #expect(!sources.contains(hidden))
         }
     }
@@ -351,7 +352,7 @@ struct StyleBuilderTests {
         // the id outline starts where the source polygons do (TASVEG z11;
         // geology and pre-1750 carry ids at every zoom)
         #expect(layer(style(), "selected-feature")?["minzoom"] as? Int == 11)
-        for overlay in [Overlay.geology, .pre1750] {
+        for overlay in [Overlay.geology, .pre1750, .soils] {
             var state = LayerState.default
             state.overlay = overlay
             #expect(layer(style(state), "selected-feature")?["minzoom"] as? Int == 0, "\(overlay)")
@@ -441,6 +442,10 @@ struct StyleBuilderTests {
         #expect(Attribution.geology.line == "Geology from Mineral Resources Tasmania © State of Tasmania (CC BY 3.0 AU)")
         #expect(Attribution.pre1750.line == "Pre-1750 vegetation: NVIS V7.0 © Commonwealth of Australia, DCCEEW (CC BY 4.0)")
         #expect(Attribution.trees.line == "Significant trees: City of Hobart (CC BY 4.0)")
+        // the dataset's attribution line, in the other LIST credits' order
+        // (holder, then licence: the file has "(CC BY 3.0 AU) © State of Tasmania")
+        #expect(Self.bundled.soils?.source.attribution.hasPrefix(Attribution.soils.title) == true)
+        #expect(Attribution.soils.line == "Soil types: Correlated Reconnaissance Soils from theLIST © State of Tasmania (CC BY 3.0 AU)")
         #expect(Attribution.aerial.terms == Attribution.unalteredTerms)
         #expect(Attribution.seasons.terms == Attribution.unalteredTerms)
         #expect(Attribution.hillshade.terms?.contains("relief shading") == true)
@@ -470,6 +475,121 @@ struct StyleBuilderTests {
         #expect(Self.bundled.geology.count >= 100)
         #expect(Self.bundled.pre1750.count >= 30)
         #expect(Self.bundled.trees?.points.isEmpty == false)
+        #expect(Self.bundled.soils?.units.count == 163)
+        #expect(Self.bundled.soilsArchive?.lastPathComponent == "soils.pmtiles")
+    }
+
+    // MARK: Soils (tiles bundled with the app, no pack)
+
+    private func soilsState(_ strength: Strength = .light, base: BaseMap = .topo, relief: Bool = true,
+                            trees: Bool = false) -> LayerState {
+        var state = LayerState.default
+        state.overlay = .soils
+        state.strength = strength
+        state.base = base
+        state.relief = relief
+        state.trees = trees
+        return state
+    }
+
+    /// fill → relief → unit lines → the mapped area's edge → codes → trees
+    /// → selection; and it draws with NO pack installed.
+    @Test func soilsStackOrder() throws {
+        let ids = layerIDs(style(soilsState(trees: true), .none))
+        let soils = ["soils-fill", "relief", "soils-boundary", "soils-extent-casing", "soils-extent", "soils-label",
+                     "soils-label-10", "soils-label-11", "soils-label-12", "soils-label-13", "soils-label-14"]
+        let trees = ["trees-area-fill", "trees-area-line", "trees-cluster", "trees-cluster-count", "trees-point", "trees-label"]
+        // relief needs its pack: without packs the soils layers still all draw
+        #expect(ids.filter { $0.hasPrefix("soils") } == soils.filter { $0 != "relief" })
+        let all = layerIDs(style(soilsState(trees: true)))
+        let indices = soils.compactMap { all.firstIndex(of: $0) }
+        #expect(indices.count == soils.count && indices == indices.sorted(), "\(all)")
+        #expect(Array(all.suffix(trees.count + Self.selection.count)) == trees + Self.selection)
+        #expect(!all.contains("tasveg-fill") && !all.contains("soils-band"))
+        let source = try #require(source(style(soilsState(), .none), "soils"))
+        #expect(source["url"] as? String == StyleBuilder.pmtilesURL(try #require(Self.bundled.soilsArchive)))
+        // no archive in the tables (bundle without it): nothing drawn, nothing broken
+        let bare = layerIDs(style(soilsState(), .none, tables: StyleBuilderTests.tables))
+        #expect(!bare.contains { $0.hasPrefix("soils") })
+        #expect(!bare.contains("selected-feature"))
+    }
+
+    @Test func soilsLinesAndCodes() throws {
+        let s = style(soilsState())
+        #expect(opacity(s, "soils-fill") == 0.30)
+        // no antialiasing: it would stroke the same-unit seams back in
+        #expect((layer(s, "soils-fill")?["paint"] as? [String: Any])?["fill-antialias"] as? Bool == false)
+        let boundary = try #require(layer(s, "soils-boundary"))
+        // only edges between different units: no same-unit seams at sheet edges
+        #expect(boundary["source-layer"] as? String == "soils_boundaries")
+        #expect(boundary["minzoom"] as? Int == 9)
+        for id in ["soils-extent", "soils-extent-casing"] {
+            let extent = try #require(layer(s, id))
+            #expect(extent["source-layer"] as? String == "soils_extent")
+            #expect(extent["minzoom"] == nil, "the mapped area's edge shows at every zoom")
+            let colour = (extent["paint"] as? [String: Any])?["line-color"] as? String
+            #expect(colour != StyleBuilder.selectionRed)
+        }
+        let label = try #require(layer(s, "soils-label"))
+        #expect(label["source-layer"] as? String == "soils_labels")
+        #expect(((label["layout"] as? [String: Any])?["text-field"] as? [String]) == ["get", "CODE"])
+        #expect(label["minzoom"] as? Int == 9 && label["maxzoom"] as? Int == 10)
+        #expect(layer(s, "soils-label-14")?["maxzoom"] == nil)
+        // the fit threshold halves per zoom band, code length included
+        func scale(_ id: String) throws -> Double {
+            let filter = try #require(layer(s, id)?["filter"] as? [Any])
+            return try #require((filter.last as? [Any])?[1] as? Double)
+        }
+        #expect(abs(try scale("soils-label-10") * 2 - scale("soils-label")) < 1e-9)
+        #expect(abs(try scale("soils-label-14") - StyleBuilder.metresPerPointZ0 / 16384) < 1e-9)
+        // Outlines: no fill, no band — the unit lines, the edge and the codes
+        let outlines = style(soilsState(.outlines))
+        #expect(soilsState(.outlines).effectiveStrength == .outlines)
+        #expect(opacity(outlines, "soils-fill") == 0)
+        #expect(layer(outlines, "soils-band") == nil)
+        #expect((layer(outlines, "soils-boundary")?["paint"] as? [String: Any])?["line-color"] as? String == "rgba(0,0,0,0.45)")
+        #expect(layer(outlines, "soils-extent") != nil && layer(outlines, "soils-label") != nil)
+        // over photos: white lines
+        let photo = style(soilsState(base: .aerial))
+        #expect((layer(photo, "soils-boundary")?["paint"] as? [String: Any])?["line-color"] as? String == StyleBuilder.paper)
+    }
+
+    /// An empty tap with Soils on: the note only off every sheet's frame,
+    /// never mid-search, and a second empty tap dismisses it.
+    @Test func soilsEmptyTapDecision() throws {
+        let soils = try #require(Self.bundled.soils)
+        func note(_ lon: Double, _ lat: Double, search: Bool = false, showing: Bool = false) -> Bool {
+            MapCoordinator.soilsNoteOnEmptyTap(soils, longitude: lon, latitude: lat, searchActive: search, noteShowing: showing)
+        }
+        let cradle = (145.95, -41.68), derwent = (147.30, -42.85), bassStrait = (146.5, -40.5)
+        #expect(note(cradle.0, cradle.1))
+        #expect(note(bassStrait.0, bassStrait.1))
+        #expect(!note(derwent.0, derwent.1), "water inside the Hobart frame: an ordinary empty tap")
+        #expect(!note(cradle.0, cradle.1, search: true), "a search is up: an empty tap clears, nothing more")
+        #expect(!note(cradle.0, cradle.1, showing: true), "a second empty tap dismisses the note")
+    }
+
+    /// The tapped polygon's red line draws from the bundled archive too.
+    @Test func soilsSelectionOutline() throws {
+        let s = StyleBuilder.style(state: soilsState(), data: .none, tables: Self.bundled,
+                                   selection: SelectionStyle(featureID: 77))
+        let feature = try #require(layer(s, "selected-feature"))
+        #expect(feature["source-layer"] as? String == "soils")
+        #expect(feature["minzoom"] as? Int == 0)
+        #expect((feature["filter"] as? [Any])?.last as? UInt64 == 77)
+        #expect(source(s, "highlight")?["url"] as? String == source(s, "soils")?["url"] as? String)
+        #expect(StyleBuilder.overlayURL(.soils, data: Self.all, tables: Self.bundled) == Self.bundled.soilsArchive)
+        #expect(StyleBuilder.overlayURL(.geology, data: Self.all, tables: Self.bundled)?.lastPathComponent == "geology.pmtiles")
+        #expect(StyleBuilder.overlayURL(.none, data: Self.all, tables: Self.bundled) == nil)
+        // a soil card dies with the overlay; the unmapped card too
+        let model = AppModel(data: .none, tables: Self.bundled, layers: soilsState())
+        model.select(.soils(SoilSelection(code: "BL", sheet: "longford")))
+        model.layers.overlay = .geology
+        #expect(model.selection == nil)
+        model.layers.overlay = .soils
+        model.select(.soilsUnmapped)
+        model.layers.overlay = .vegetation
+        #expect(model.selection == nil)
     }
 }
 
@@ -547,6 +667,19 @@ struct LayerThumbnailTests {
         #expect(a.contains(LayerThumbnails.buildIdentity))
         let packs = thumbs.key(.base(.topo), state: .default, data: StyleBuilderTests.all, scale: 3)
         #expect(packs != a)
+    }
+
+    /// The soils tile is framed on its sheets (Mt Arthur is off them), and
+    /// the bundled soils files are part of every key.
+    @Test func soilsTileSitsOnAMappedSheet() throws {
+        let place = ThumbnailSubject.overlay(.soils).camera
+        let sheets = try #require(StyleBuilderTests.bundled.soils?.sheets.values)
+        #expect(sheets.contains { s in
+            (s.bounds.west ... s.bounds.east).contains(place.longitude) && (s.bounds.south ... s.bounds.north).contains(place.latitude)
+        })
+        #expect(ThumbnailSubject.overlay(.geology).camera == ThumbnailSubject.place)
+        #expect(ThumbnailSubject.overlay(.soils).requiredArchive == nil, "bundled: never a placeholder")
+        #expect(LayerThumbnails.buildIdentity.contains("soil_units.json=") && LayerThumbnails.buildIdentity.contains("soils.pmtiles="))
     }
 }
 

@@ -96,6 +96,9 @@ struct KeyBox: View {
     var width: CGFloat = 28
     /// nil: spans the rows beside it (a run of codes sharing the fill).
     var height: CGFloat? = 18
+    /// Outlines with no band on the map (soils): the map's grey unit line
+    /// instead — round the plate and once across it, "lines only".
+    var band = true
 
     var body: some View {
         let official = hex.flatMap(Color.init(hex:)) ?? Color(.systemGray4)
@@ -103,9 +106,14 @@ struct KeyBox: View {
             Rectangle().fill(DesignColor.keyPlate)
             if opacity > 0 {
                 Rectangle().fill(composited ?? official)
-            } else {
+            } else if band {
                 // the Outlines band: a ribbon inside the edge, as the map draws it
-                Rectangle().strokeBorder(band.opacity(StyleBuilder.bandOpacity), lineWidth: 3)
+                Rectangle().strokeBorder(bandColor.opacity(StyleBuilder.bandOpacity), lineWidth: 3)
+            } else {
+                // two units and the boundary between them, in the map's ink
+                let ink = Color.black.opacity(StyleBuilder.soilsOutlinesInkAlpha)
+                Rectangle().strokeBorder(ink, lineWidth: 1)
+                Rectangle().fill(ink).frame(width: 1)
             }
         }
         .frame(width: width)
@@ -115,7 +123,7 @@ struct KeyBox: View {
     }
 
     /// The map's band colour (same darkness cap); grey for an unknown hex.
-    private var band: Color {
+    private var bandColor: Color {
         hex.flatMap { Color(hex: StyleBuilder.bandColor($0)) } ?? Color(.systemGray4)
     }
 

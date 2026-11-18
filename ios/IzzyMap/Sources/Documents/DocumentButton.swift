@@ -1,7 +1,8 @@
 import IzzyKit
 import SwiftUI
 
-/// "Read the description" (F2F) and "Open the data sheet" (tree card): a
+/// "Read the description" (F2F), "Open the data sheet" (tree card) and a
+/// soil card's "Soil report · Hobart sheet": a
 /// button whose caption says where the document will come from, and —
 /// once it is on the device — a thumbnail of the page it opens at.
 /// A tap opens it from disk, else fetches it once and opens the reader if
@@ -15,6 +16,8 @@ struct DocumentButton: View {
     let symbol: String
     /// Who publishes it ("From Forest to Fjaeldmark", "City of Hobart").
     let publisher: String
+    /// The size of all of this document's family (the offline message
+    /// points to getting them all in Storage).
     var sheetsTotal: Int?
 
     /// The window's opener (WindowContent puts it in the environment);
@@ -57,7 +60,7 @@ struct DocumentButton: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.highlight)
-        .accessibilityIdentifier(doc.kind == .f2f ? "read-description" : "open-sheet")
+        .accessibilityIdentifier(doc.identifier)
         .accessibilityHint(caption)
         .task(id: Refresh(doc: doc, revision: opener?.revision ?? 0, fetching: fetching)) { await refresh() }
         .onAppear { if windowOpener == nil, ownOpener == nil { ownOpener = DocumentOpener() } }
@@ -128,9 +131,21 @@ private struct OwnReader: ViewModifier {
 }
 
 extension DocumentRef {
-    /// "0.6 MB" for a sheet (one decimal: they run 0.1–7 MB).
+    /// "0.6 MB" for a sheet (one decimal: they run 0.1–7 MB), "20 MB" for
+    /// the South Esk soil report — shown before the first tap fetches it.
     var sizeText: String? {
-        if case let .sheet(_, _, bytes?) = self { return ExtrasText.megabytes(bytes) }
-        return nil
+        switch self {
+        case let .sheet(_, _, bytes?), let .soilReport(_, _, _, bytes?): ExtrasText.megabytes(bytes)
+        default: nil
+        }
+    }
+
+    /// The button's accessibility identifier (UI tests).
+    var identifier: String {
+        switch self {
+        case .f2f: "read-description"
+        case .sheet: "open-sheet"
+        case .soilReport: "open-soil-report"
+        }
     }
 }

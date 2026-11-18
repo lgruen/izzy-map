@@ -747,13 +747,14 @@ private struct SeasonStack: View {
 // MARK: - Extras
 
 extension ExtraKind {
-    static let displayOrder: [ExtraKind] = [.f2f, .photos, .sheets]
+    static let displayOrder: [ExtraKind] = [.f2f, .photos, .sheets, .soilReports]
 
     var storageTitle: String {
         switch self {
         case .f2f: "Community descriptions"
         case .photos: "Plant photos"
         case .sheets: "Tree data sheets"
+        case .soilReports: "Soil reports"
         }
     }
 
@@ -762,6 +763,7 @@ extension ExtraKind {
         case .f2f: "From Forest to Fjaeldmark, NRE Tasmania"
         case .photos: "Understorey Network photographers"
         case .sheets: "City of Hobart"
+        case .soilReports: "Reconnaissance soil maps, NRE Tasmania"
         }
     }
 
@@ -770,6 +772,8 @@ extension ExtraKind {
         case .f2f: "book.pages"
         case .photos: "photo.on.rectangle"
         case .sheets: "doc.text"
+        // a bound survey report (Layers owns the stacked layers)
+        case .soilReports: "book.closed"
         }
     }
 
@@ -778,6 +782,7 @@ extension ExtraKind {
         case .f2f: "chapter"
         case .photos: "photo"
         case .sheets: "sheet"
+        case .soilReports: "report"
         }
     }
 

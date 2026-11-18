@@ -1,15 +1,20 @@
 import Foundation
 
 // The licensed extras (docs/LICENSING.md §2, NATIVE_PLAN.md §2): F2F
-// chapters, Understorey Network photos and City of Hobart tree data
-// sheets. All rights reserved upstream — the DEVICE fetches them from the
-// publisher for private use; never bundled, committed or hosted by us.
+// chapters, Understorey Network photos, City of Hobart tree data sheets
+// and NRE's reconnaissance soil map reports. All rights reserved (or no
+// licence stated) upstream — the DEVICE fetches them from the publisher
+// for private use; never bundled, committed or hosted by us.
 // These are the pure rules (what counts as done, gone, a captive portal);
 // the app's network layer applies them.
 
-/// The three kinds of extra.
+/// The kinds of extra. The raw value is persisted (task descriptions,
+/// gone-mark files), the folder names the files on the device: never
+/// rename either.
 public enum ExtraKind: String, Codable, Sendable, CaseIterable, Hashable {
     case f2f, photos, sheets
+    /// The 11 reconnaissance soil map sheets' reports (soil_units.json).
+    case soilReports = "soil-reports"
 
     /// Folder under the extras root.
     public var folder: String {
@@ -17,6 +22,7 @@ public enum ExtraKind: String, Codable, Sendable, CaseIterable, Hashable {
         case .f2f: "f2f"
         case .photos: "plants"
         case .sheets: "trees"
+        case .soilReports: "soil-reports"
         }
     }
 
@@ -39,6 +45,11 @@ public enum ExtraKind: String, Codable, Sendable, CaseIterable, Hashable {
         // portal or a 403 wall
         case .sheets: ExtrasPolicy(concurrency: 2, goneStatuses: .allClientErrors, goneStreakLimit: 5,
                                    wrongTypeIsGone: true, retries: 2)
+        // 11 reports from NRE's data library, F2F's rules: a missing file
+        // is a plain 404 there (checked 2026-11-18); three in a row is the
+        // site or a login wall, not withdrawals
+        case .soilReports: ExtrasPolicy(concurrency: 1, goneStatuses: .allClientErrors, goneStreakLimit: 3,
+                                        wrongTypeIsGone: false, retries: 2)
         }
     }
 }
@@ -224,6 +235,38 @@ public enum ExtrasCatalog {
 
     public static func sheetFileName(_ itemID: String) -> String { itemID + ".pdf" }
 
+    /// The 11 soil reports, one per map sheet, sorted by sheet key — only
+    /// from the bundled table (key → url, bytes), only https on NRE's data
+    /// library (29.8 MB in all, 2026-11-18).
+    public static func soilReports(_ soils: SoilsFile) -> [ExtraItem] {
+        soils.sheets.keys.sorted().compactMap { key in
+            guard let sheet = soils.sheets[key], let url = soilReportURL(key: key, url: sheet.url) else { return nil }
+            return ExtraItem(id: soilReportFileName(key), url: url, bytes: sheet.bytes)
+        }
+    }
+
+    /// A sheet's report URL as the table gives it, if it may be fetched:
+    /// a plain sheet key ("south-esk": lower-case letters, digits, hyphens
+    /// — it names the stored file) and an https URL on the publisher.
+    public static func soilReportURL(key: String, url: URL) -> URL? {
+        guard isSoilSheetKey(key), url.scheme?.lowercased() == "https",
+              allows(host: url.host(), for: .soilReports) else { return nil }
+        return url
+    }
+
+    /// A sheet key that may name a stored file ("south-esk"): never a path.
+    public static func isSoilSheetKey(_ key: String) -> Bool {
+        !key.isEmpty && key.first != "-"
+            && key.unicodeScalars.allSatisfy { ("a" ... "z").contains($0) || ("0" ... "9").contains($0) || $0 == "-" }
+    }
+
+    /// "hobart.pdf".
+    public static func soilReportFileName(_ sheetKey: String) -> String { sheetKey + ".pdf" }
+
+    /// NRE's data library, under its current name and the old one (the
+    /// dataset's REPORT links use the old host, which 301s to the new).
+    public static let soilReportHosts: Set<String> = ["nrmdatalibrary.nre.tas.gov.au", "nrmdatalibrary.dpipwe.tas.gov.au"]
+
     /// Hosts a final URL may end on. ArcGIS redirects to signed S3; F2F and
     /// photos are fetched straight from the publisher, redirects off it are
     /// never stored.
@@ -234,6 +277,7 @@ public enum ExtrasCatalog {
         case .photos: return host == PlantPhoto.host
         case .sheets:
             return host == "www.arcgis.com" || host.hasSuffix(".amazonaws.com") || host.hasSuffix(".arcgis.com")
+        case .soilReports: return soilReportHosts.contains(host)
         }
     }
 
@@ -422,6 +466,7 @@ extension ExtraKind {
         case .f2f: "chapter"
         case .photos: "photo"
         case .sheets: "sheet"
+        case .soilReports: "report"
         }
     }
     var unit: String { noun }
@@ -431,8 +476,39 @@ extension ExtraKind {
         switch self {
         case .f2f: return "\(n) \(s) no longer published"
         case .photos: return "\(n) no longer on the Understorey Network site"
-        case .sheets: return "\(n) \(s) no longer published"
+        case .sheets, .soilReports: return "\(n) \(s) no longer published"
         }
+    }
+}
+
+/// How long one file's whole transfer may take on an ordinary (foreground)
+/// session. It is a BACKSTOP: the idle limit (no byte for 30 s) already
+/// catches a stall; this ceiling only ends a transfer that keeps trickling.
+/// It is sized so ONE slowest link finishes every file: 11.1 kB/s is the
+/// rate at which the largest F2F chapter (6.62 MB) just fits the old
+/// 10 min floor, so nothing that worked before gets less time, and a big
+/// file gets proportionally more (the 20.2 MB South Esk report ≈ 30 min).
+///
+/// URLSession sets this limit per SESSION, not per task, so the app keeps
+/// one ordinary session per ceiling. The ceiling is therefore rounded UP
+/// to a short ladder (600, 1,200, 2,400, 4,800 s, …): the bundled tables
+/// need only three steps, and a slightly bigger file never mints a new
+/// session.
+public enum ExtrasTimeouts {
+    /// Every file gets at least this (the first rung; today's ceiling for
+    /// every file up to 6.6 MB).
+    public static let resourceFloor: TimeInterval = 600
+    /// The one slowest link every declared size is allowed for, bytes per
+    /// second (6,621,252 B ÷ 600 s = 11,035 B/s, rounded up a little).
+    public static let slowestRate: Double = 11_100
+
+    /// The whole-transfer ceiling for a file of `bytes` (unknown: the
+    /// floor): the first rung of 600 × 2ⁿ s that covers bytes ÷ rate.
+    public static func resourceCeiling(bytes: Int?) -> TimeInterval {
+        let needed = Double(bytes ?? 0) / slowestRate
+        var rung = resourceFloor
+        while rung < needed { rung *= 2 }
+        return rung
     }
 }
 

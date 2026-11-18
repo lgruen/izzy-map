@@ -5,7 +5,7 @@ import os
 import UIKit
 
 /// The one-tap extras: every F2F chapter, every plant photo, every tree
-/// data sheet. One job per kind, independent of any screen (the Storage
+/// data sheet, every soil report. One job per kind, independent of any screen (the Storage
 /// screen of milestone 5 shows them; reopening it finds the running job).
 /// The rules are IzzyKit's `ExtrasBatch`; this applies them to what the
 /// transport delivers and keeps the files.
@@ -120,6 +120,7 @@ final class ExtrasDownloads {
         case .f2f: (try? data?.f2fIndex()).map(ExtrasCatalog.f2f) ?? []
         case .photos: catalog.map { ExtrasCatalog.photos($0.plants) } ?? []
         case .sheets: trees.map(ExtrasCatalog.sheets) ?? []
+        case .soilReports: (try? data?.soilUnits()).map(ExtrasCatalog.soilReports) ?? []
         }
     }
 

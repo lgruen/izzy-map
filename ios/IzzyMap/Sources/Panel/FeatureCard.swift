@@ -18,6 +18,10 @@ struct FeatureCard: View {
             if case let .community(c) = selection.feature {
                 PlantFaces(model: model, state: plants, context: context(c))
             }
+            if case .soilsUnmapped = selection.feature {
+                // part of the glance: the one thing this card offers
+                ShowMappedAreasButton(model: model)
+            }
             // the bottom of the glance: the compact sheet's resting height
             Color.clear.frame(height: 0)
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(PanelContent.space)).minY } action: {
@@ -57,6 +61,17 @@ struct FeatureCard: View {
                 PlantsSection(model: model, code: c.code, state: plants, context: context(c))
             }
             .padding(.top, 8)
+        case let .soils(s):
+            // the report of the sheet that mapped THIS polygon (from the
+            // tapped feature — sheet frames overlap, never a bbox lookup)
+            if let soils = model.tables.soils, let key = s.sheet, let sheet = soils.sheets[key],
+               let doc = DocumentRef.soilReport(key: key, sheet: sheet) {
+                DocumentButton(doc: doc,
+                               title: "Soil report · \(sheet.name) sheet", symbol: ExtraKind.soilReports.symbol,
+                               publisher: "NRE Tasmania",
+                               sheetsTotal: soils.sheets.values.reduce(0) { $0 + $1.bytes })
+                    .padding(.top, 8)
+            }
         case let .tree(t):
             if let trees = model.tables.trees, let id = sheetID(t, trees) {
                 let ref = trees.refs[t.ref]
@@ -110,6 +125,10 @@ struct FeatureCard: View {
             KeyBox(hex: model.tables.geology[symb]?.color, opacity: 1)
         case let .pre1750(mvs):
             KeyBox(hex: model.tables.pre1750[mvs]?.color, opacity: 1)
+        case let .soils(s):
+            KeyBox(hex: model.tables.soils?.units[s.code]?.color, opacity: 1)
+        case .soilsUnmapped:
+            SoilExtentMark()
         case .tree:
             // the map's disc on a key box's white plate: treeGreen stays
             // 9:1 against white in dark mode too (on #1C1C1E it's ~2:1)
@@ -129,6 +148,12 @@ struct FeatureCard: View {
         case let .community(c): CodeText(code: c.code)
         case let .geology(symb): CodeText(code: symb, smallCaps: false)
         case let .pre1750(mvs): CodeText(code: "MVS \(mvs)")
+        // the code as published: case is meaning (BL ≠ Bl)
+        case let .soils(s): CodeText(code: s.code, smallCaps: false)
+        case .soilsUnmapped:
+            Text("Soils")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(DesignColor.secondaryInk)
         case let .tree(t):
             Text(t.isArea ? "Hobart significant trees" : "Hobart significant tree")
                 .font(.footnote.weight(.semibold))
@@ -146,6 +171,19 @@ struct FeatureCard: View {
                 .foregroundStyle(DesignColor.ink)
         case let .pre1750(mvs):
             NameText(BotanicalNames.attributed(model.tables.pre1750[mvs].map { DisplayText.corrected($0.name) } ?? "Unknown class"))
+        case let .soils(s):
+            Text(model.tables.soils?.units[s.code]?.name ?? "Unknown unit")
+                .font(.headline)
+                .foregroundStyle(DesignColor.ink)
+        case .soilsUnmapped:
+            VStack(alignment: .leading, spacing: 3) {
+                Text("No soil mapping here")
+                    .font(.headline)
+                    .foregroundStyle(DesignColor.ink)
+                Text(Self.unmappedSoilsNote)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignColor.secondaryInk)
+            }
         case let .tree(t):
             let ref = model.tables.trees?.refs[t.ref]
             VStack(alignment: .leading, spacing: 1) {
@@ -167,6 +205,8 @@ struct FeatureCard: View {
         case let .community(c): "Vegetation community \(c.code), \(c.name)"
         case let .geology(symb): "Geology unit \(symb), \(model.tables.geology[symb].map { DisplayText.unitTitle($0.description) } ?? "")"
         case let .pre1750(mvs): "Pre-1750 vegetation, \(model.tables.pre1750[mvs].map { DisplayText.corrected($0.name) } ?? mvs)"
+        case let .soils(s): "Soil unit \(s.code), \(model.tables.soils?.units[s.code]?.name ?? "")"
+        case .soilsUnmapped: "No soil mapping here. \(Self.unmappedSoilsNote)"
         case let .tree(t):
             "Hobart significant tree, \(model.tables.trees?.refs[t.ref].map { [$0.common, $0.name].filter { !$0.isEmpty }.joined(separator: ", ") } ?? t.ref)"
         }
@@ -174,7 +214,19 @@ struct FeatureCard: View {
 
     // MARK: Facts
 
+    /// Why a tap found no soil: the maps' coverage, in one sentence (the
+    /// note shows only off every sheet's frame, `soilsNoteOnEmptyTap`).
+    static let unmappedSoilsNote = "Soils are mapped only on 11 reconnaissance map sheets — the outlined areas."
+
     @ViewBuilder private var facts: some View {
+        if case let .soils(s) = selection.feature {
+            SoilFacts(soils: model.tables.soils, selection: s)
+        } else {
+            plainFacts
+        }
+    }
+
+    @ViewBuilder private var plainFacts: some View {
         let rows = factRows
         if !rows.isEmpty || note != nil || link != nil {
             VStack(alignment: .leading, spacing: 10) {
@@ -241,6 +293,9 @@ struct FeatureCard: View {
             let ref = trees?.refs[t.ref]
             return rows([("Address", ref?.address), ("Trees", ref?.trees.map { "\($0)" }),
                          ("Register", t.ref), ("Position", DisplayText.treePosition(code: t.accuracy))])
+        case .soils, .soilsUnmapped:
+            // SoilFacts; the unmapped card says it all in its header
+            return []
         }
     }
 

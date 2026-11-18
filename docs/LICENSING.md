@@ -51,6 +51,30 @@ this document over-read it; verified 2026-09-10.
   Attribution: "Place and street names from theLIST © State of Tasmania" /
   "Street addresses from theLIST © State of Tasmania" (search panel footer,
   About screen).
+- **Correlated Reconnaissance Soils (Soil Types)** — the LISTdata zip
+  `LIST_CORRELATED_RECONNAISSANCE_SOILS_SOIL_TYPES_STATEWIDE.zip` (custodian
+  NRE Tas, Natural and Cultural Heritage Division — not Land Tasmania) and
+  everything derived from it: `ios/IzzyMap/Resources/Data/soils.pmtiles`
+  (polygons with CODE/colour/sheet, label points, the mapped-area outline,
+  the lines between different units)
+  and `soil_units.json` (per-unit name, short description, Australian Soil
+  Classification orders, soil profile class, areas, map sheets), both
+  COMMITTED and bundled in the app. Licence evidence (verified 2026-11-18;
+  the MapServer's own copyrightText is only "the LIST State of Tasmania"):
+  the zip's `readme.txt` — "Data is supplied under Creative Commons
+  Attribution 3.0 Australia (CC BY 3.0 AU)" — and the LISTdata open-data
+  catalogue (`opendata/resources/opendata.js`), which lists the file with
+  licence code `ccNotLT` = the CC BY 3.0 AU badge. `pipeline/build_soils.py`
+  re-reads both on every run and aborts if either changes. The unit
+  descriptions are the dataset's own short attribute values (part of the
+  CC BY data, unlike F2F prose; the 8 that are cut off upstream ship
+  shortened to the last whole word plus "…", nothing added); the fill colours are LIST's
+  published renderer for the layer (`Public/GeologicalAndSoils/MapServer/19`),
+  plus six documented aliases for codes it leaves uncoloured. The ASC order
+  glosses are our own sentences. Attribution: "Soil types: Correlated
+  Reconnaissance Soils from theLIST (CC BY 3.0 AU) © State of Tasmania"
+  (in `soil_units.json` `source.attribution` and the archive metadata).
+  The soil REPORT PDFs the dataset links to are NOT covered — see §2.
 
 Required attribution format (from the Land Tasmania attribution guidelines):
 `<dataset/service name> from theLIST © State of Tasmania` + CC BY 3.0 AU
@@ -202,6 +226,27 @@ badge/link. The app shows this on the About screen and map attribution.
   significance" prose or any other text; the pipeline downloads at most
   ~65 sheets for that (asserts ≤ 100) into the gitignored
   `pipeline/cache/trees/`.
+- **Reconnaissance soil map reports (no stated licence):** the 11
+  per-sheet PDFs the soils dataset's REPORT field links to
+  (`nrmdatalibrary.dpipwe.tas.gov.au/FactSheets/WfW/SoilReports/<Sheet>_report.pdf`,
+  which redirects to `nrmdatalibrary.nre.tas.gov.au`; South Esk, Longford,
+  Quamby, Oatlands, Hobart, Brighton, Ellendale, Sorell, Beaconsfield,
+  Burnie, Buckland; 0.2–20 MB each, ~30 MB together). The CC BY grant in the zip's readme covers the
+  data, not these publications, and neither the dataset nor LISTdata
+  states a licence for them. The PDFs themselves were inspected on
+  2026-11-18 (text of all 11 extracted on a development simulator after a
+  device fetch; nothing kept in the repo): none states a licence; the
+  Hobart report's title page credits the Department of Primary
+  Industries, Water and Environment (2000, a revised edition of CSIRO
+  Divisional Report 13/50, Loveday 1955) and the Natural Heritage Trust;
+  South Esk carries "© Copyright 1993", published by the Department of
+  Primary Industry and Fisheries, Tasmania — so, unchanged, the F2F
+  posture: never committed, never
+  put in a pack or the app bundle, never downloaded by the pipeline
+  (`build_soils.py` only sends HEAD requests for their byte sizes). The
+  device fetches a report straight from the publisher (`soil_units.json`
+  `sheets.<key>.url`) and keeps it in its own app storage for private use;
+  nothing of ours sits in between. No text from them enters the repo.
 
 ## 3. CC BY-NC-ND 3.0 AU — usable as verbatim, attributed, non-commercial collections
 

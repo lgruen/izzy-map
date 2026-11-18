@@ -94,8 +94,10 @@ nonisolated final class SessionTransport: NSObject, ExtrasTransport, URLSessionD
     private let sink: AsyncStream<TransportCompletion>.Continuation
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Extras")
 
+    /// Includes the session: task identifiers are unique only per session,
+    /// and the foreground lane has several (one per whole-transfer ceiling).
     private struct StagingKey: Hashable {
-        let lane: TransportLane
+        let session: ObjectIdentifier
         let task: Int
     }
 
@@ -126,17 +128,29 @@ nonisolated final class SessionTransport: NSObject, ExtrasTransport, URLSessionD
         }
     }
 
-    private let foregroundBox = OSAllocatedUnfairLock<URLSession?>(initialState: nil)
+    /// The ordinary sessions, one per whole-transfer ceiling rung
+    /// (`ExtrasTimeouts`: three for today's tables — 10, 20 and 40 min).
+    /// A URLSession's resource timeout is per session, not per task.
+    private let foregroundBox = OSAllocatedUnfairLock<[TimeInterval: URLSession]>(initialState: [:])
 
-    /// The ordinary session (created on first use: it needs `self` as delegate).
-    private var foreground: URLSession {
-        foregroundBox.withLock { box in
-            if let box { return box }
-            let config = ExtrasNetwork.configuration(timeout: Self.foregroundTimeout)
+    /// The ordinary session for `item` (created on first use: it needs
+    /// `self` as delegate): its ceiling follows the item's declared size.
+    func foreground(for item: ExtraItem) -> URLSession {
+        let ceiling = ExtrasTimeouts.resourceCeiling(bytes: item.bytes)
+        return foregroundBox.withLock { box in
+            if let s = box[ceiling] { return s }
+            let config = Self.foregroundConfiguration(for: item)
             let s = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-            box = s
+            box[ceiling] = s
             return s
         }
+    }
+
+    /// A foreground session's configuration for `item`: 30 s idle, and a
+    /// whole-transfer ceiling from its declared size (`ExtrasTimeouts`).
+    static func foregroundConfiguration(for item: ExtraItem) -> URLSessionConfiguration {
+        ExtrasNetwork.configuration(timeout: foregroundTimeout,
+                                    resourceTimeout: ExtrasTimeouts.resourceCeiling(bytes: item.bytes))
     }
 
     private let backgroundBox = OSAllocatedUnfairLock<URLSession?>(initialState: nil)
@@ -207,7 +221,7 @@ nonisolated final class SessionTransport: NSObject, ExtrasTransport, URLSessionD
             sink.yield(TransportCompletion(tag: tag, lane: lane, result: .offline, file: nil))
             return
         }
-        let session = lane == .foreground ? foreground : background
+        let session = lane == .foreground ? foreground(for: item) : background
         let task = session.downloadTask(with: URLRequest(url: item.url))
         task.taskDescription = tag.description
         if let bytes = item.bytes { task.countOfBytesClientExpectsToReceive = Int64(bytes) }
@@ -215,7 +229,7 @@ nonisolated final class SessionTransport: NSObject, ExtrasTransport, URLSessionD
     }
 
     private func sessions() -> [(URLSession, TransportLane)] {
-        [(foreground, .foreground), (background, .background)]
+        foregroundBox.withLock { $0.values.map { ($0, TransportLane.foreground) } } + [(background, .background)]
     }
 
     func live() async -> [TransportTask] {
@@ -286,14 +300,14 @@ nonisolated final class SessionTransport: NSObject, ExtrasTransport, URLSessionD
             (result, file) = ExtrasNetwork.checked(.response(status: status, head: fileHead(staged), allowedHost: allowed),
                                                    file: staged, kind: tag.kind)
         }
-        let key = StagingKey(lane: lane(of: session), task: downloadTask.taskIdentifier)
+        let key = StagingKey(session: ObjectIdentifier(session), task: downloadTask.taskIdentifier)
         lock.withLock { $0.staged[key] = (file, result) }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
         guard let tag = TransportTag(task.taskDescription) else { return }
         let lane = lane(of: session)
-        let key = StagingKey(lane: lane, task: task.taskIdentifier)
+        let key = StagingKey(session: ObjectIdentifier(session), task: task.taskIdentifier)
         let staged = lock.withLock { $0.staged.removeValue(forKey: key) }
         let completion: TransportCompletion
         if let error {

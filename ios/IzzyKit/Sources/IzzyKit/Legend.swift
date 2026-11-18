@@ -7,7 +7,7 @@ import Foundation
 public enum Legend {
     /// One code in the key.
     public struct Row: Sendable, Hashable, Identifiable {
-        /// VEGCODE, SYMB or MVS number (string).
+        /// VEGCODE, SYMB, MVS number (string) or soil CODE (case-sensitive).
         public var code: String
         /// Display name without any "(XXX) " prefix.
         public var name: String
@@ -145,6 +145,52 @@ public enum Legend {
             let codes = groups[g]!.sorted { table[$0]!.order < table[$1]!.order }
             let rows = codes.map { Row(code: $0, name: table[$0]!.name, color: table[$0]!.color.lowercased()) }
             return Section(title: g, shortTitle: short(g, pre1750ShortNames), runs: rows.map { Run(color: $0.color, rows: [$0]) })
+        }
+    }
+
+    /// The Australian Soil Classification orders in the order of its key
+    /// (Isbell), each with its official two-letter code — the section
+    /// index's label, as narrow as vegetation's letters.
+    public static let soilOrderKey: [(name: String, code: String)] = [
+        ("Anthroposol", "AN"), ("Organosol", "OR"), ("Podosol", "PO"), ("Vertosol", "VE"), ("Hydrosol", "HY"),
+        ("Kurosol", "KU"), ("Sodosol", "SO"), ("Chromosol", "CH"), ("Calcarosol", "CA"), ("Ferrosol", "FE"),
+        ("Dermosol", "DE"), ("Kandosol", "KA"), ("Rudosol", "RU"), ("Tenosol", "TE"),
+    ]
+    /// The last section: units the source gives no order ("Insufficient Data").
+    public static let unclassifiedSoilsTitle = "Not classified in the source"
+    public static let unclassifiedSoilsShort = "–"
+
+    /// Soils: one section per unit's MAIN order (`orders[0]`) in the ASC
+    /// key's order, titled in the plural as the ASC writes it
+    /// ("Ferrosols"); unclassified units last. Inside a section, codes A–Z
+    /// (case only breaks ties — `BL` and `Bl` stay two rows), then codes
+    /// sharing a fill brought together: 163 units share 100 colours, and the
+    /// key should say which ones the map can't tell apart.
+    public static func soils(_ file: SoilsFile) -> [Section] {
+        let groups = Dictionary(grouping: file.units.keys) { file.units[$0]!.orders.first ?? "" }
+        let keyIndex = Dictionary(uniqueKeysWithValues: soilOrderKey.enumerated().map { ($1.name, $0) })
+        let order = groups.keys.sorted { a, b in
+            if a.isEmpty || b.isEmpty { return b.isEmpty && !a.isEmpty }
+            let (ia, ib) = (keyIndex[a] ?? .max, keyIndex[b] ?? .max)
+            return ia != ib ? ia < ib : a < b
+        }
+        return order.map { o in
+            let codes = groups[o]!.sorted(by: codeOrder)
+            let rows = codes.map { Row(code: $0, name: file.units[$0]!.name, color: file.units[$0]!.color.lowercased()) }
+            let title = o.isEmpty ? unclassifiedSoilsTitle : (o.hasSuffix("sol") ? o + "s" : o)
+            let short = o.isEmpty ? unclassifiedSoilsShort
+                : soilOrderKey.first { $0.name == o }?.code ?? String(o.prefix(2)).uppercased()
+            return Section(title: title, shortTitle: short, runs: runsSharingFill(rows))
+        }
+    }
+
+    /// Soil codes as a key lists them: alphabetical, digits as numbers
+    /// ("Pd2" before "Pd10"), case only as the tie-break.
+    static func codeOrder(_ a: String, _ b: String) -> Bool {
+        switch a.compare(b, options: [.caseInsensitive, .numeric]) {
+        case .orderedAscending: true
+        case .orderedDescending: false
+        case .orderedSame: a < b
         }
     }
 

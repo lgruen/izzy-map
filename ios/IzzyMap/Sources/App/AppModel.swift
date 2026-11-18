@@ -32,6 +32,15 @@ nonisolated struct TreeSelection: Equatable, Sendable {
     let index: Int
 }
 
+/// A tapped soil polygon: its unit and the reconnaissance sheet that
+/// mapped this polygon (a unit can span several sheets).
+nonisolated struct SoilSelection: Equatable, Sendable {
+    /// Unit code, case-sensitive ("BL" ≠ "Bl").
+    let code: String
+    /// Sheet key ("hobart"), from the tapped feature.
+    let sheet: String?
+}
+
 /// What the tapped map feature is, for the panel's card.
 nonisolated enum SelectedFeature: Equatable, Sendable {
     case community(CommunitySelection)
@@ -39,6 +48,10 @@ nonisolated enum SelectedFeature: Equatable, Sendable {
     case geology(String)
     /// A pre-1750 class, by MVS number.
     case pre1750(String)
+    case soils(SoilSelection)
+    /// The Soils overlay is on and the tap found no soil polygon: the
+    /// card says the maps cover 11 sheets only (no outline to draw).
+    case soilsUnmapped
     case tree(TreeSelection)
 }
 
@@ -100,6 +113,9 @@ nonisolated struct AppData: Sendable {
             tables.geology = load("geology") { try data.geologyUnits() } ?? [:]
             tables.pre1750 = load("pre1750") { try data.pre1750Units() } ?? [:]
             tables.trees = load("trees") { try data.trees() }
+            tables.soils = load("soils") { try data.soilUnits() }
+            tables.soilsArchive = data.soilsArchive
+            if tables.soilsArchive == nil { logger.fault("soils archive missing from the bundle") }
             tables.outline = load("outline") { try data.tasmaniaOutline() }
         } else {
             logger.fault("bundled data folder missing")

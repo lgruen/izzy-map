@@ -59,6 +59,10 @@ nonisolated enum Attribution {
     static let pre1750 = Credit(id: "pre1750", title: "Pre-1750 vegetation: NVIS V7.0",
                                 holder: "© Commonwealth of Australia, DCCEEW", licence: .ccBy4,
                                 source: URL(string: "https://www.dcceew.gov.au/environment/environment-information-australia/national-vegetation-information-system"))
+    /// The dataset's own attribution line (soil_units.json `source`), in the
+    /// other LIST credits' form.
+    static let soils = Credit(id: "soils", title: "Soil types: Correlated Reconnaissance Soils from theLIST",
+                              holder: state, licence: .ccBy3AU, source: theLIST)
     static let trees = Credit(id: "trees", title: "Significant trees: City of Hobart", holder: "",
                               licence: .ccBy4,
                               source: URL(string: "https://www.hobartcity.com.au/Environment-and-Sustainability/Trees/Significant-trees"))
@@ -73,7 +77,7 @@ nonisolated enum Attribution {
             S.aerial: aerial, S.aerialLive: aerial,
             S.tasmap: tasmap, S.tasmapLive: tasmap,
             S.seasonLive: seasons,
-            S.tasveg: tasveg, S.geology: geology, S.pre1750: pre1750,
+            S.tasveg: tasveg, S.geology: geology, S.pre1750: pre1750, S.soils: soils,
             S.relief: hillshade,
             S.treePoints: trees, S.treeAreas: trees,
         ]

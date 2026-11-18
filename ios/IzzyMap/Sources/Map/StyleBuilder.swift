@@ -7,6 +7,10 @@ nonisolated struct MapTables: Sendable {
     var geology: GeologyTable = [:]
     var pre1750: Pre1750Table = [:]
     var trees: TreesData?
+    /// Reconnaissance soils and their bundled archive (no pack: nil only
+    /// when the app bundle lacks the file — the overlay then draws nothing).
+    var soils: SoilsFile?
+    var soilsArchive: URL?
     /// Tasmania's coastline (the mini-maps' silhouette): the calm stand-in
     /// for the topo map while it isn't on the device and there is no network.
     var outline: TasmaniaOutline?
@@ -44,8 +48,9 @@ nonisolated struct SelectionStyle: Equatable, Sendable {
 /// background → base rasters (topo underlay, Tasmap, aerial, seasons oldest →
 /// newest; each pack z ≤ 15 stretched natively above, plus its live LIST
 /// source z16+, plus the detailed areas of that layer right above them) →
-/// overlay fill → relief → overlay boundaries / edge band →
-/// same-community dashes → TASVEG codes → Hobart trees → selection.
+/// overlay fill → relief → overlay boundaries / edge band (soils: + the
+/// mapped area's edge) → same-community dashes → TASVEG / soil codes →
+/// detailed-area frames → Hobart trees → selection.
 nonisolated enum StyleBuilder {
     enum LayerID {
         static let background = "bg"
@@ -61,11 +66,17 @@ nonisolated enum StyleBuilder {
         static let tasvegFill = "tasveg-fill"
         static let geologyFill = "geology-fill"
         static let pre1750Fill = "pre1750-fill"
+        static let soilsFill = "soils-fill"
         static let relief = "relief"
         static let tasvegBand = "tasveg-band"
         static let tasvegBoundary = "tasveg-boundary"
         static let geologyBand = "geology-band"
         static let geologyBoundary = "geology-boundary"
+        static let soilsBoundary = "soils-boundary"
+        /// The edge of the mapped area (11 reconnaissance sheets).
+        static let soilsExtentCasing = "soils-extent-casing"
+        static let soilsExtent = "soils-extent"
+        static let soilsLabel = "soils-label"
         static let sameCommunity = "same-community"
         static let outlineBandPrefix = "-band"
         static let tasvegLabel = "tasveg-label"
@@ -81,7 +92,7 @@ nonisolated enum StyleBuilder {
         static let selectionPoint = "selected-point"
 
         /// The overlay fills a tap consults.
-        static let overlayFills = [tasvegFill, geologyFill, pre1750Fill]
+        static let overlayFills = [tasvegFill, geologyFill, pre1750Fill, soilsFill]
         /// Tree layers a tap consults, topmost first.
         static let treePoints = [treesPoint, treesCluster]
         /// Everything that must stay last (after the trees), in order.
@@ -121,6 +132,8 @@ nonisolated enum StyleBuilder {
         static let tasveg = "tasveg"
         static let geology = "geology"
         static let pre1750 = "pre1750"
+        /// = its polygon layer's name (the `fill` helper reads it as both).
+        static let soils = "soils"
         static let relief = "relief"
         static let treePoints = "trees-points"
         static let treeAreas = "trees-areas"
@@ -189,6 +202,15 @@ nonisolated enum StyleBuilder {
     /// TASVEG tiles carry the source polygons (with stable feature ids) from
     /// z11; below are generalised dominant-class bands.
     static let idMinZoom = 11
+    /// The soil unit lines' ink in Outlines (black at this alpha); the
+    /// key's Outlines box draws its line in the same ink.
+    static let soilsOutlinesInkAlpha = 0.45
+    /// Soil code label bands: z9 … z14+ (the archive stops at z12; above it
+    /// the label points are overzoomed and the threshold keeps halving).
+    static let soilsLabelZooms = [9, 10, 11, 12, 13, 14]
+    /// Metres per point at z0 around Tasmania: 78,271.5 m per 512 pt tile
+    /// × cos 41.5°. (TASVEG's 43 m at z14 for 12 pt is the same scale.)
+    static let metresPerPointZ0 = 58_600.0
     /// The packs stop at z15; MapLibre stretches z15 natively above.
     static let packMaxZoom = 15
 
@@ -299,7 +321,7 @@ nonisolated enum StyleBuilder {
     /// The zoom from which a tapped polygon's id outlines it. TASVEG tiles
     /// carry the source polygons (stable ids) from z11; below they hold
     /// dominant-class bands, so the card answers without an outline.
-    /// Geology and pre-1750 carry stable ids at every zoom (pre-1750: per
+    /// Geology, soils and pre-1750 carry stable ids at every zoom (pre-1750: per
     /// zoom band — the coordinator re-resolves the id when the band changes).
     static func idMinZoom(_ overlay: Overlay) -> Int {
         overlay == .vegetation ? idMinZoom : 0
@@ -461,6 +483,19 @@ nonisolated enum StyleBuilder {
                 // the official MRT unit colour ships per feature in the tiles
                 layers.append(fill(LayerID.geologyFill, source: SourceID.geology, color: featureColor, opacity: opacity))
             }
+        case .soils:
+            if let url = overlayURL(.soils, data: data, tables: tables) {
+                sources[SourceID.soils] = ["type": "vector", "url": pmtilesURL(url)] as [String: Any]
+                // The official LIST unit colour ships per feature in the
+                // tiles. No antialiasing (pre-1750's reason): its 1 px edge
+                // stroke paints every polygon's ring twice where two meet —
+                // a faint seam along each sheet edge a unit runs across,
+                // the very line `soils_boundaries` leaves out. Every edge
+                // that should show has its own line on top.
+                var soilsFill = fill(LayerID.soilsFill, source: SourceID.soils, color: featureColor, opacity: opacity)
+                soilsFill["paint"] = ["fill-color": featureColor, "fill-opacity": opacity, "fill-antialias": false] as [String: Any]
+                layers.append(soilsFill)
+            }
         case .pre1750:
             if let url = data.url(for: .pre1750) {
                 sources[SourceID.pre1750] = ["type": "vector", "url": pmtilesURL(url)] as [String: Any]
@@ -545,6 +580,9 @@ nonisolated enum StyleBuilder {
             layers.append(boundaryLine(LayerID.geologyBoundary, source: SourceID.geology, color: boundary,
                                        outlines: strength == .outlines, from: 9))
         }
+        if state.overlay == .soils, sources[SourceID.soils] != nil {
+            addSoilsLines(state: state, strength: strength, boundary: boundary, layers: &layers)
+        }
 
         // Where detail ends: each finished area's frame, a fine dashed line
         // from where the statewide packs stop (tile z15, map zoom 14.5 at
@@ -578,8 +616,7 @@ nonisolated enum StyleBuilder {
         // Selection, always last. The tapped overlay polygon by id, a red
         // line over its own vector tiles (never a copy of one tile's
         // clipped geometry) …
-        if let overlaySource = overlaySource(state.overlay), let archive = state.overlay.archive,
-           let url = data.url(for: archive) {
+        if let overlaySource = overlaySource(state.overlay), let url = overlayURL(state.overlay, data: data, tables: tables) {
             let source = highlightSource(overlaySource.id)
             if sources[source] == nil {
                 sources[source] = ["type": "vector", "url": pmtilesURL(url)] as [String: Any]
@@ -630,8 +667,17 @@ nonisolated enum StyleBuilder {
         case .vegetation: (SourceID.tasveg, "tasveg")
         case .geology: (SourceID.geology, "geology")
         case .pre1750: (SourceID.pre1750, "pre1750")
+        case .soils: (SourceID.soils, "soils")
         case .none: nil
         }
+    }
+
+    /// The overlay's vector archive: its pack, or — soils — the copy
+    /// bundled with the app. The fill and the selection outline both ask
+    /// here, so they can never draw from two different files.
+    static func overlayURL(_ overlay: Overlay, data: DataLocation, tables: MapTables) -> URL? {
+        if overlay == .soils { return tables.soilsArchive }
+        return overlay.archive.flatMap { data.url(for: $0) }
     }
 
     // MARK: Layer pieces
@@ -711,6 +757,83 @@ nonisolated enum StyleBuilder {
         }
         expression.append(featureColor)
         return expression.count > 3 ? expression : featureColor
+    }
+
+    /// Soils over its fill and relief: unit boundaries, the edge of the
+    /// mapped area, then the unit codes.
+    ///
+    /// - Boundaries are not optional here: 163 units share 100 colours, and
+    ///   34 pairs of neighbouring units have the same fill (LIST's own map
+    ///   draws thin grey unit lines for that). They come from their own
+    ///   tile layer, `soils_boundaries` — only edges between DIFFERENT
+    ///   codes. Outlining every polygon (geology's way) would also draw
+    ///   ~209 km of same-unit seams, dead straight along the sheet edges
+    ///   where a unit runs on into the next sheet. A little firmer than
+    ///   geology's graphite (judged on the simulator at z11, 2026-11-18:
+    ///   0.2 ink at 0.4 pt vanished into the topo where two units share a
+    ///   fill — the one place these lines must read): 32 % ink, 0.35 pt at
+    ///   z9 → 1 pt at z15; in Outlines (no fill to tell units apart) 45 %.
+    /// - No Outlines band: a band runs inside every polygon's ring, so it
+    ///   would paint those seams back in. Outlines = boundaries + extent +
+    ///   codes.
+    /// - The extent: the survey's limit as a printed map marks it, a
+    ///   dash-dot line on a soft casing, at every zoom and every strength —
+    ///   without it, unmapped ground reads as "no soil there". Ink, never
+    ///   red (red is the selection); white over photos.
+    /// - Codes on polygons, as on the reconnaissance sheets, from the
+    ///   largest-inscribed-circle points (`soils_labels`, z9–12): a code
+    ///   shows when the circle holds it — r ≥ max(8, 4 × characters) pt
+    ///   (TASVEG's 12 pt for three letters), at each band's own scale.
+    private static func addSoilsLines(state: LayerState, strength: Strength, boundary: String,
+                                      layers: inout [[String: Any]]) {
+        let source = SourceID.soils
+        let outlines = strength == .outlines
+        let ink = boundary == paper ? paper : "rgba(0,0,0,\(outlines ? soilsOutlinesInkAlpha : 0.32))"
+        layers.append([
+            "id": LayerID.soilsBoundary, "type": "line", "source": source, "source-layer": "soils_boundaries",
+            "minzoom": 9, "layout": ["line-join": "round"],
+            "paint": ["line-color": ink,
+                      "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.35, 11, 0.6, 13, 0.8, 15, 1.0] as [Any]]
+                as [String: Any],
+        ])
+        let photo = state.base.isPhoto
+        layers.append([
+            "id": LayerID.soilsExtentCasing, "type": "line", "source": source, "source-layer": "soils_extent",
+            "layout": ["line-join": "round"],
+            "paint": ["line-color": photo ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.75)",
+                      "line-width": ["interpolate", ["linear"], ["zoom"], 6, 2.5, 12, 3.5] as [Any]] as [String: Any],
+        ])
+        layers.append([
+            "id": LayerID.soilsExtent, "type": "line", "source": source, "source-layer": "soils_extent",
+            "layout": ["line-join": "round"],
+            "paint": ["line-color": photo ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.6)",
+                      "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1.0, 12, 1.4] as [Any],
+                      // dash · dot, in line widths
+                      "line-dasharray": [5, 1.5, 1, 1.5]] as [String: Any],
+        ])
+        let characters: [Any] = ["length", ["to-string", ["get", "CODE"]]]
+        let fitPoints: [Any] = ["max", 8, ["*", 4, characters]]
+        for (index, zoom) in soilsLabelZooms.enumerated() {
+            let metresPerPoint = metresPerPointZ0 / Double(1 << zoom)
+            var label: [String: Any] = [
+                "id": index == 0 ? LayerID.soilsLabel : "\(LayerID.soilsLabel)-\(zoom)",
+                "type": "symbol", "source": source, "source-layer": "soils_labels", "minzoom": zoom,
+                "filter": [">=", ["coalesce", ["get", "r"], 0], ["*", metresPerPoint, fitPoints]] as [Any],
+                "layout": [
+                    // the code as published: case matters (BL ≠ Bl)
+                    "text-field": ["get", "CODE"],
+                    "text-font": boldFont,
+                    "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 12, 11, 15, 12] as [Any],
+                    "text-letter-spacing": 0.05,
+                    "text-padding": 4,
+                    // roomier polygons win label collisions
+                    "symbol-sort-key": ["-", 0, ["coalesce", ["get", "r"], 0]] as [Any],
+                ] as [String: Any],
+                "paint": ["text-color": "rgba(0,0,0,0.85)", "text-halo-color": mapHalo, "text-halo-width": 1.5] as [String: Any],
+            ]
+            if index + 1 < soilsLabelZooms.count { label["maxzoom"] = soilsLabelZooms[index + 1] }
+            layers.append(label)
+        }
     }
 
     private static func addTrees(_ trees: TreesData, sources: inout [String: Any], layers: inout [[String: Any]]) {

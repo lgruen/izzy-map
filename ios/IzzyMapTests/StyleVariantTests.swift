@@ -231,7 +231,7 @@ import UIKit
             for base in BaseMap.allCases {
                 for overlay in Overlay.allCases {
                     for strength in Strength.allCases {
-                        // 5 is coprime to 16: the 48 combinations walk all 16 toggle sets
+                        // 5 is coprime to 16: the 60 combinations (4 × 5 × 3) walk all 16 toggle sets
                         let t = (combo * 5) % 16
                         combo += 1
                         var state = LayerState.default

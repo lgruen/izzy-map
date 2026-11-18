@@ -41,6 +41,26 @@ import Testing
         #expect(FetchVerdict.of(Self.ok(Self.jpeg), kind: .photos) == .store)
         #expect(FetchVerdict.of(Self.ok(Self.pdf), kind: .f2f) == .store)
         #expect(FetchVerdict.of(.offline, kind: .f2f) == .offline)
+        // soil reports: F2F's rules — any 4xx gone, a 200 that isn't a PDF
+        // or ends off the publisher is a login page, 5xx skips
+        #expect(FetchVerdict.of(.response(status: 404, head: Self.html, allowedHost: true), kind: .soilReports) == .gone)
+        #expect(FetchVerdict.of(.response(status: 403, head: Self.html, allowedHost: true), kind: .soilReports) == .gone)
+        #expect(FetchVerdict.of(.response(status: 500, head: Data(), allowedHost: true), kind: .soilReports) == .skip(status: 500))
+        #expect(FetchVerdict.of(Self.ok(Self.html), kind: .soilReports) == .captivePortal)
+        #expect(FetchVerdict.of(.response(status: 200, head: Self.pdf, allowedHost: false), kind: .soilReports) == .captivePortal)
+        #expect(FetchVerdict.of(Self.ok(Self.pdf), kind: .soilReports) == .store)
+    }
+
+    @Test func soilReportsFollowF2FsPolicy() {
+        let soil = ExtraKind.soilReports.policy, f2f = ExtraKind.f2f.policy
+        #expect(soil == f2f)
+        #expect(soil.concurrency == 1 && soil.goneStreakLimit == 3 && soil.goneStatuses == .allClientErrors)
+        #expect(!soil.wrongTypeIsGone)
+        #expect(ExtraKind.soilReports.expected == .pdf)
+        // persisted names: task descriptions, gone-mark files, the folder
+        #expect(ExtraKind.soilReports.rawValue == "soil-reports" && ExtraKind.soilReports.folder == "soil-reports")
+        #expect(ExtraKind(rawValue: "soil-reports") == .soilReports)
+        #expect(Set(ExtraKind.allCases.map(\.folder)).count == ExtraKind.allCases.count)
     }
 
     @Test func hostsAllowed() {
@@ -52,6 +72,25 @@ import Testing
         #expect(ExtrasCatalog.allows(host: "www.arcgis.com", for: .sheets))
         #expect(ExtrasCatalog.sheetURL("ab12")?.absoluteString == "https://www.arcgis.com/sharing/rest/content/items/ab12/data")
         #expect(ExtrasCatalog.sheetURL("../etc") == nil)
+        // soil reports: NRE's data library, new and old names, nothing else
+        #expect(ExtrasCatalog.allows(host: "nrmdatalibrary.nre.tas.gov.au", for: .soilReports))
+        #expect(ExtrasCatalog.allows(host: "NRMDataLibrary.dpipwe.tas.gov.au", for: .soilReports))
+        #expect(!ExtrasCatalog.allows(host: "nre.tas.gov.au", for: .soilReports))
+        #expect(!ExtrasCatalog.allows(host: "evil.nrmdatalibrary.nre.tas.gov.au", for: .soilReports))
+        #expect(!ExtrasCatalog.allows(host: "nrmdatalibrary.nre.tas.gov.au.evil.example", for: .soilReports))
+        #expect(!ExtrasCatalog.allows(host: nil, for: .soilReports))
+        // and their hosts open nothing else
+        #expect(!ExtrasCatalog.allows(host: "nrmdatalibrary.nre.tas.gov.au", for: .f2f))
+        #expect(!ExtrasCatalog.allows(host: "nrmdatalibrary.nre.tas.gov.au", for: .sheets))
+        let report = URL(string: "https://nrmdatalibrary.nre.tas.gov.au/FactSheets/WfW/SoilReports/Hobart_report.pdf")!
+        #expect(ExtrasCatalog.soilReportURL(key: "hobart", url: report) == report)
+        #expect(ExtrasCatalog.soilReportURL(key: "south-esk", url: report) == report)
+        #expect(ExtrasCatalog.soilReportURL(key: "../hobart", url: report) == nil)
+        #expect(ExtrasCatalog.soilReportURL(key: "Hobart", url: report) == nil)
+        #expect(ExtrasCatalog.soilReportURL(key: "", url: report) == nil)
+        #expect(ExtrasCatalog.soilReportURL(key: "hobart", url: URL(string: "http://nrmdatalibrary.nre.tas.gov.au/x.pdf")!) == nil)
+        #expect(ExtrasCatalog.soilReportURL(key: "hobart", url: URL(string: "https://evil.example/Hobart_report.pdf")!) == nil)
+        #expect(ExtrasCatalog.soilReportFileName("south-esk") == "south-esk.pdf")
     }
 
     @Test func resumeSkipsPresentGoneAndSkippedFiles() {
@@ -83,7 +122,7 @@ import Testing
         #expect(again.gone.contains("f0"))
     }
 
-    @Test(arguments: [(ExtraKind.sheets, 5), (.photos, 10), (.f2f, 3)])
+    @Test(arguments: [(ExtraKind.sheets, 5), (.photos, 10), (.f2f, 3), (.soilReports, 3)])
     func aGoneStreakIsACaptivePortal(kind: ExtraKind, limit: Int) {
         var b = ExtrasBatch(kind: kind, items: Self.items(limit + 3), present: [], gone: GoneMarks())
         // one stored breaks a streak
@@ -131,6 +170,11 @@ import Testing
         c.cancel()
         #expect(c.phase == .stopped(.cancelled))
         #expect(c.statusText == "0.0\u{00A0}MB of 0.0\u{00A0}MB on this device")
+        var reports = ExtrasBatch(kind: .soilReports, items: Self.items(3), present: [], gone: GoneMarks())
+        reports.record("f0", .response(status: 404, head: Self.html, allowedHost: true))
+        reports.record("f1", Self.ok(Self.pdf))
+        reports.record("f2", Self.ok(Self.pdf))
+        #expect(reports.statusText == "✓ downloaded · 1 report no longer published")
     }
 
     @Test func spacePreflight() {
@@ -169,9 +213,24 @@ import Testing
         let f2f = ExtrasCatalog.f2f(try TestData.data.f2fIndex())
         #expect(f2f.count == 11)
         #expect(f2f.allSatisfy { $0.url.host() == "nre.tas.gov.au" })
+        // soil reports: one per map sheet, straight from soil_units.json
+        let soils = try TestData.data.soilUnits()
+        let reports = ExtrasCatalog.soilReports(soils)
+        #expect(reports.count == 11 && soils.sheets.count == 11)
+        #expect(Set(reports.map(\.id)).count == reports.count)
+        #expect(Set(reports.map(\.id)) == Set(soils.sheets.keys.map { "\($0).pdf" }))
+        #expect(reports.allSatisfy { ExtrasCatalog.allows(host: $0.url.host(), for: .soilReports) && $0.url.scheme == "https" })
+        #expect(reports.allSatisfy { ($0.bytes ?? 0) > 100_000 })
+        let reportBytes = soils.sheets.values.reduce(0) { $0 + $1.bytes }
+        #expect(ExtrasCatalog.totalBytes(reports) == reportBytes)
+        #expect(reportBytes > 25_000_000 && reportBytes < 40_000_000)  // 29.8 MB on 2026-11-18
+        let southEsk = try #require(reports.first { $0.id == "south-esk.pdf" })
+        #expect(southEsk.url.lastPathComponent == "South_Esk_report.pdf")
+        let batch = ExtrasBatch(kind: .soilReports, items: reports, present: [], gone: GoneMarks())
+        #expect(batch.statusText == "report 1 of 11 · 0.0\u{00A0}MB of 30\u{00A0}MB")
     }
 
-    @Test(arguments: [(ExtraKind.f2f, 1), (.photos, 4), (.sheets, 2)])
+    @Test(arguments: [(ExtraKind.f2f, 1), (.photos, 4), (.sheets, 2), (.soilReports, 1)])
     func windowsOfTheKindsConcurrency(kind: ExtraKind, window: Int) {
         var b = ExtrasBatch(kind: kind, items: Self.items(10), present: [], gone: GoneMarks())
         var started: [String] = []
@@ -248,6 +307,35 @@ import Testing
         let decoded = try JSONDecoder().decode(F2FIndex.self, from: Data(old.utf8))
         #expect(decoded.sizes == nil)
         #expect(ExtrasCatalog.f2f(decoded).first?.bytes == nil)
+    }
+
+    @Test func wholeTransferCeilingFollowsTheDeclaredSize() throws {
+        #expect(ExtrasTimeouts.resourceCeiling(bytes: nil) == 600)
+        #expect(ExtrasTimeouts.resourceCeiling(bytes: 0) == 600)
+        // the ladder: rounded up to 600 × 2ⁿ
+        #expect(ExtrasTimeouts.resourceCeiling(bytes: 6_660_000) == 600)
+        #expect(ExtrasTimeouts.resourceCeiling(bytes: 6_670_000) == 1_200)
+        #expect(ExtrasTimeouts.resourceCeiling(bytes: 60_000_000) == 9_600)
+        // every F2F chapter (largest 6.62 MB) and every plant photo: 600 s
+        let f2f = ExtrasCatalog.f2f(try TestData.data.f2fIndex())
+        let largestChapter = try #require(f2f.compactMap(\.bytes).max())
+        #expect(largestChapter > 6_000_000 && largestChapter < 6_660_000)
+        #expect(f2f.allSatisfy { ExtrasTimeouts.resourceCeiling(bytes: $0.bytes) == 600 })
+        let photos = ExtrasCatalog.photos(try TestData.catalog().plants)
+        #expect(photos.allSatisfy { ExtrasTimeouts.resourceCeiling(bytes: $0.bytes) == 600 })
+        // the largest tree sheet (7.11 MB ≈ 640 s at 11.1 kB/s) is on the 1,200 s rung
+        let sheets = ExtrasCatalog.sheets(try TestData.data.trees())
+        let largestSheet = try #require(sheets.max { ($0.bytes ?? 0) < ($1.bytes ?? 0) })
+        #expect(ExtrasTimeouts.resourceCeiling(bytes: largestSheet.bytes) == 1_200)
+        // the 20.2 MB South Esk report (≈ 1,815 s) is on the 2,400 s rung
+        let reports = ExtrasCatalog.soilReports(try TestData.data.soilUnits())
+        let southEsk = try #require(reports.first { $0.id == "south-esk.pdf" })
+        #expect(ExtrasTimeouts.resourceCeiling(bytes: southEsk.bytes) == 2_400)
+        // one foreground session per distinct ceiling: three for today's
+        // tables — a table change that mints another session shows up here
+        let all = f2f + photos + sheets + reports
+        let ceilings = Set(all.map { ExtrasTimeouts.resourceCeiling(bytes: $0.bytes) })
+        #expect(ceilings == [600, 1_200, 2_400])
     }
 
     @Test func goneMarksRoundTrip() throws {

@@ -45,6 +45,10 @@ public struct BundledData: Sendable {
         public static let f2f = "f2f_index.json"
         public static let nearby = "nearby.bin"
         public static let acknowledgements = "acknowledgements.json"
+        /// Reconnaissance soils: the table and its vector tiles, both
+        /// bundled (17 % of the state, 3 MB — no pack).
+        public static let soils = "soil_units.json"
+        public static let soilsArchive = "soils.pmtiles"
     }
 
     public func communities() throws -> CommunityTable { try decode(File.communities) }
@@ -55,6 +59,13 @@ public struct BundledData: Sendable {
     public func plants() throws -> PlantsFile { try decodeVersioned(File.plants, supported: PlantsFile.supportedVersion) }
     public func records() throws -> RecordsFile { try decodeVersioned(File.records, supported: RecordsFile.supportedVersion) }
     public func nearbyGrid() throws -> NearbyGrid { try NearbyGrid(data: data(File.nearby)) }
+    public func soilUnits() throws -> SoilsFile { try decodeVersioned(File.soils, supported: SoilsFile.supportedVersion) }
+
+    /// The bundled soils archive, nil when it isn't there or can't be read.
+    public var soilsArchive: URL? {
+        let url = root.appending(path: File.soilsArchive)
+        return FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) ? url : nil
+    }
 
     /// plants.json + records.json + nearby.bin, indexed for the three plant lists.
     public func plantCatalog() throws -> PlantCatalog {

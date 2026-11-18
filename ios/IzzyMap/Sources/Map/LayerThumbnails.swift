@@ -43,10 +43,12 @@ nonisolated enum ThumbnailSubject: Hashable, Sendable {
     }
 
     /// One fixed place for every tile, so the differences read; trees need
-    /// Hobart's CBD instead.
+    /// Hobart's CBD instead, soils a place on its 11 sheets (Mt Arthur is
+    /// off them).
     var camera: (latitude: Double, longitude: Double, zoom: Double) {
         switch self {
         case .trees: ThumbnailSubject.treesPlace
+        case .overlay(.soils): ThumbnailSubject.soilsPlace
         default: ThumbnailSubject.place
         }
     }
@@ -63,6 +65,12 @@ nonisolated enum ThumbnailSubject: Hashable, Sendable {
     /// The densest run of register trees (the Queens Domain), at z15.3:
     /// single discs (clusters end at z15), not a count.
     static let treesPlace = debugPlace("thumbnailTreesPlace") ?? (latitude: -42.8674, longitude: 147.3333, zoom: 15.3)
+    /// Picked from six candidates on the Hobart and Longford sheets
+    /// (2026-11-18): south of Longford at z10.5 — Panshanger blue-grey,
+    /// Eastfield and Wickford greens, pinks and a purple with their codes,
+    /// all inside the mapped area. Soil units are kilometres across: at
+    /// the other tiles' z12 the frame (1.7 km) holds one or two.
+    static let soilsPlace = debugPlace("thumbnailSoilsPlace") ?? (latitude: -41.70, longitude: 147.40, zoom: 10.5)
 
     /// DEBUG `-thumbnailPlace "lat,lon,zoom"`: try another framing.
     private static func debugPlace(_ key: String) -> (latitude: Double, longitude: Double, zoom: Double)? {
@@ -102,7 +110,7 @@ final class LayerThumbnails {
     /// Rendered size in points (4:3).
     nonisolated static let size = CGSize(width: 120, height: 90)
     /// Bump to re-render every cached thumbnail after a style change.
-    nonisolated static let renderVersion = 5
+    nonisolated static let renderVersion = 6
     nonisolated static let memoryLimit = 40
 
     private(set) var images: [String: UIImage] = [:]
@@ -460,7 +468,8 @@ final class LayerThumbnails {
         var parts = ["\(info["CFBundleShortVersionString"] ?? "")-\(info["CFBundleVersion"] ?? "")"]
         var files = [Bundle.main.executableURL].compactMap { $0 }
         if let data = Bundle.main.url(forResource: "Data", withExtension: nil) {
-            files += ["tasveg_communities.json", "geology_units.json", "pre1750_units.json", "trees.json"]
+            files += ["tasveg_communities.json", "geology_units.json", "pre1750_units.json", "trees.json",
+                      "soil_units.json", "soils.pmtiles"]
                 .map { data.appending(path: $0) }
         }
         for file in files {

@@ -337,6 +337,21 @@ final class MapCoordinator: NSObject {
 
         let hits = map.visibleFeatures(at: point, styleLayerIdentifiers: Set(L.overlayFills))
         guard let feature = hits.first, let (overlay, key) = Self.overlayClass(feature) else {
+            // Soils covers 11 map sheets: off them a silent nothing would
+            // read as "the app is broken" — the card says why instead
+            // (`soilsNoteOnEmptyTap`: only off every sheet, never mid-search,
+            // and a second empty tap dismisses it like any card)
+            let at = map.convert(point, toCoordinateFrom: map)
+            if model.layers.overlay == .soils, style.layer(withIdentifier: L.soilsFill) != nil,
+               let soils = model.tables.soils,
+               Self.soilsNoteOnEmptyTap(soils, longitude: at.longitude, latitude: at.latitude,
+                                        searchActive: model.search.isActive,
+                                        noteShowing: model.selection?.feature == .soilsUnmapped) {
+                anchor = nil
+                model.select(.soilsUnmapped)
+                showSelection(featureID: nil, shape: nil)
+                return
+            }
             // an empty spot: everything highlighted goes (a soloed
             // community too, the camera staying where she is)
             model.endSpotlight()
@@ -353,6 +368,7 @@ final class MapCoordinator: NSObject {
                                   at: map.convert(point, toCoordinateFrom: map))
         case .geology: model.select(.geology(key))
         case .pre1750: model.select(.pre1750(key))
+        case .soils: model.select(.soils(SoilSelection(code: key, sheet: Self.text(feature, "sheet"))))
         case .none: return
         }
         let coordinate = map.convert(point, toCoordinateFrom: map)
@@ -369,11 +385,23 @@ final class MapCoordinator: NSObject {
         showSelection(featureID: featureID, shape: tapRing(for: featureID, overlay: overlay, at: coordinate, in: map))
     }
 
-    /// The overlay and class key (VEGCODE / SYMB / MVS) of a fill feature.
+    /// A tap that hit no soil polygon shows the "No soil mapping here" note
+    /// only when it is OFF every sheet's frame: inside one, a miss is water,
+    /// a polygon too small for the zoom or a tile not drawn yet — an
+    /// ordinary empty tap. Never while a search is up (an empty tap there
+    /// clears, as on every overlay), and not over the note itself: a second
+    /// empty tap dismisses it, so the map still closes a card by a tap.
+    nonisolated static func soilsNoteOnEmptyTap(_ soils: SoilsFile, longitude: Double, latitude: Double,
+                                                searchActive: Bool, noteShowing: Bool) -> Bool {
+        !searchActive && !noteShowing && !soils.anySheetContains(longitude: longitude, latitude: latitude)
+    }
+
+    /// The overlay and class key (VEGCODE / SYMB / MVS / soil CODE) of a fill feature.
     static func overlayClass(_ feature: any MLNFeature) -> (Overlay, String)? {
         if let code = text(feature, "VEGCODE") { return (.vegetation, code) }
         if let symb = text(feature, "SYMB") { return (.geology, symb) }
         if let mvs = text(feature, "MVS") { return (.pre1750, mvs) }
+        if let code = text(feature, "CODE") { return (.soils, code) }
         return nil
     }
 
@@ -409,6 +437,7 @@ final class MapCoordinator: NSObject {
         case .vegetation: StyleBuilder.LayerID.tasvegFill
         case .geology: StyleBuilder.LayerID.geologyFill
         case .pre1750: StyleBuilder.LayerID.pre1750Fill
+        case .soils: StyleBuilder.LayerID.soilsFill
         case .none: nil
         }
     }

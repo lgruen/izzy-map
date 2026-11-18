@@ -248,6 +248,80 @@ milestones, map-proof results); the design brief and language is
   Geography sanity-checked by rendered mini-maps (DOB east/north, DMO
   Hobart, HHE/HSE/RPP Central Plateau + Ben Lomond, DKW/SSZ King Island —
   211 of SSZ's 252 polygons really are there — DVF Flinders, SCH coasts).
+- Soils (verified 2026-11-18; `pipeline/build_soils.py`; CC BY 3.0 AU ©
+  State of Tasmania, custodian NRE Tas Natural & Cultural Heritage, not
+  Land Tasmania): LISTdata zip
+  `.../opendata/data/LIST_CORRELATED_RECONNAISSANCE_SOILS_SOIL_TYPES_STATEWIDE.zip`
+  (11.26 MB, Last-Modified 2025-07-17; shapefile + FGDB + MapInfo, MGA55,
+  NO symbology inside — LISTdata's separate `LIST_LAYER_FILES.zip` has
+  binary .lyr only; the FGDB copy is identical row for row, OBJECTID =
+  shapefile FID + 1). Same data as REST `Public/GeologicalAndSoils/
+  MapServer/19` (copyrightText just "the LIST State of Tasmania"; licence
+  evidence = the zip's readme.txt + opendata.js code `ccNotLT`). 2,478
+  plain Polygons (5 self-intersecting rings → make_valid, area ±0), no
+  overlaps, shared edges vertex-identical (pairwise boundary intersections
+  = (Σ perimeters − outline) / 2 within 0.01 %), 12,337 km² over 11
+  reconnaissance 1:100,000 sheets (145.5–148.0° E, 40.85–43.0° S). Nine
+  sit on a 0.5° × 0.25° grid offset by ≈ +0.0014° (an AGD66 graticule):
+  Quamby (overruns east to 147.0100° E), Longford, South Esk, Oatlands,
+  Brighton, Ellendale, Hobart, Sorell, Buckland; Beaconsfield is off-grid
+  (146.64–147.12° E, 41.00–41.46° S) and Burnie spans 0.5° × 0.40°. 23 kept
+  polygons (~450 ha) lie mostly inside a NEIGHBOURING sheet's frame while
+  carrying another sheet's REPORT (16 Quamby + 4 South Esk in Longford's,
+  2 Brighton in Hobart's, 1 South Esk in Quamby's) and the Quamby/Longford
+  bboxes overlap → take a polygon's report from its `sheet` tile property,
+  never from a bbox lookup. 10 polygons are CODE 'Water'/'water' (845.6
+  km²; Frederick Henry/Norfolk Bay 688 km² and the Derwent estuary 143 km²
+  with REPORT null, plus inland lakes ≤ 10 km²) — LIST's renderer has no
+  entry, so dropped → 2,468 polygons, 163 units, 11,491.5 km² (area
+  p10/50/90 = 9 / 74 / 936 ha; slivers down to 8 m²). Fields CODE,
+  MAP_UNIT_N (name; one en dash), MAP_UNIT_C (description, one to a few
+  sentences), AUSTRALIAN (ASC order list; 'Insufficient Data', blank, typo
+  'Chrmosol'), SOIL_PROF (soil profile class or 'Insufficient Data'/'No
+  data available'), REPORT (one of 11 sheet PDFs,
+  `nrmdatalibrary.dpipwe.tas.gov.au/FactSheets/WfW/SoilReports/<Sheet>_report.pdf`
+  → 301 to `nrmdatalibrary.nre.tas.gov.au`; 0.2–20 MB, no stated licence —
+  device-fetched only, LICENSING.md §2). TRUNCATED UPSTREAM (DBF/REST/FGDB
+  widths MAP_UNIT_C 200, SOIL_PROF 58): descriptions of Bu, On, Ca-Ta (at
+  200), Bgb "…rolling (", Lw "…depressions/", Vl "…low h", K "…With poorly
+  drained soil" (judgement — no full stop, not mid-word), Lw's profile
+  "…Solifluction Depo" (at 58) → pinned `TRUNCATED` table, shipped cut to
+  the last whole word + "…"; the detector (field width, dangling
+  punctuation/lone letter/function word) flags all but K, plus Bms1-Pss's
+  NAME (exactly width 83, "…siliceous sands" — maybe "sandstone",
+  ambiguous, left verbatim); anything new fails. Attributes are a function
+  of CODE (asserted; Br-Ta lists its 3 orders in two sequences); 38 units
+  span several sheets with identical attributes. CASE MATTERS: 'BL' (Brown
+  soils on limestone) and 'Bl' (Blessington Association) are different
+  units. Colours: LIST's renderer (uniqueValue on CODE, 162 solid fills,
+  100 distinct colours, no default; colours by unit FAMILY) misses 6 data
+  codes — LIST draws them uncoloured — and has 5 no polygon uses;
+  `ALIASES`: Bde/Bde-Ps/BdeKp → BD/BD-Ps/BDKp (Breadalbane; #d6a7a8 is
+  also the six southern Bd* "Brown soils on dolerite" units' colour — they
+  never touch), Ea+K → Ea-F (all Eastfield codes share #7a9e9c), Mq-Bk →
+  Mq+Bk, and OUR choice Blb1-Bb1 → Blb1 (50 of 52 renderer compounds take
+  their first component's colour). Shared edges 12,832 km: 12,618 km
+  between different units (4,904 polygon pairs), of which 211.8 km between
+  34 unit pairs of the SAME colour (90 polygon pairs), and 213.8 km of
+  same-unit seams (147 polygon pairs, mostly straight sheet edges). Archive
+  (bundled in the app, 3.52 MB, 492 tiles, deterministic): `soils` z0–12
+  (CODE, color, sheet; id = FID + 1 = FGDB OBJECTID — stable within a
+  release, NOT guaranteed across republishes), `soils_labels` z9–12
+  (max-inscribed-circle point, CODE, r in m; r p10/50/90 = 106/284/892 m;
+  r ≥ 20 pt fits 19 polygons at z9, 143 at z10, 540 at z11, 1,248 at
+  z12), `soils_extent` z0–12 (the mapped FRAME = kept polygons ∪ the 10
+  dropped water polygons, holes < 1 ha filled — 5 digitising gaps of < 1 m²
+  in all: 5 parts, no holes; so the line runs along sheet frames straight
+  across the bays and only follows a shore where LIST mapped no water, e.g.
+  the Tamar on Beaconsfield, the coast at Burnie),
+  `soils_boundaries` z8–12 (property-free lines, ONLY different-CODE
+  shared edges: same-colour neighbours stay distinguishable without
+  outlining the same-unit seams; never the frame (`soils_extent`) nor a
+  shoreline against dropped water (the base map draws those); 12,628 km at
+  z12 = source + 0.08 %). LIST's own export
+  of the same frames matches our decoded tiles in 100 % (Hobart) / 99.8 %
+  (Longford) of interior pixels; the rest is LIST's 1-px outlines
+  (including the same-unit seams we deliberately leave out).
 
 
 ## Architecture
@@ -279,7 +353,11 @@ milestones, map-proof results); the design brief and language is
   `geology_units.json`, `pre1750_units.json`, `trees.json`, `plants.json`
   (1.45 MB), `records.json`, `nearby.bin` (NBY1 grid, 2.31 MB),
   `f2f_index.json`, `search/gazetteer.json` + `search/addresses.json`
-  (~6 MB). `ios/IzzyMap/Resources/glyphs/` = `Noto Sans {Regular,Bold}/
+  (~6 MB), `soil_units.json` + `soils.pmtiles` (3.5 MB — the ONE PMTiles
+  archive that ships in the app bundle rather than a pack: tiles and unit
+  table stay in lock-step and a refresh costs no pack re-download; its URL
+  lives in `MapTables.soilsArchive`, not `Archive`/`Pack`; `.gitignore`
+  has an explicit exception). `ios/IzzyMap/Resources/glyphs/` = `Noto Sans {Regular,Bold}/
   0-255.pbf` (`asset://glyphs/{fontstack}/{range}.pbf`). All committed,
   written by the pipeline (facts only — LICENSING.md §1).
 - **Packs (milestone 5, NATIVE_PLAN §2)** — Apple-hosted Background Assets:
@@ -291,7 +369,7 @@ milestones, map-proof results); the design brief and language is
   `-dataDir` (DEBUG only);
   `Sources/Data/Archive.swift` mirrors the pipeline's file names by hand.
 - Licensed extras (F2F chapters ~37 MB, plant photos ~152 MB, tree sheets
-  ~446 MB) — one-tap background `URLSession` downloads straight from the
+  ~446 MB, soil reports ~30 MB in 11 PDFs) — one-tap background `URLSession` downloads straight from the
   publisher (no CORS natively → no relay), into Application Support
   (excluded from backup).
 - `pipeline/` — data prep (bash/python via uv; tippecanoe/gdal/pmtiles
@@ -375,6 +453,13 @@ milestones, map-proof results); the design brief and language is
   (TASVEG is the template). Tiny datasets (trees is the template) skip
   PMTiles and ship as a bundled GeoJSON-ish table; their layers go at the
   END of the style, before the selection highlight. Map text Latin-1 only.
+  The soils variant (2026-11-18): archive bundled (`StyleBuilder.overlayURL`
+  serves fill and selection outline from `MapTables.soilsArchive`); unit
+  lines from the `soils_boundaries` tile layer, not polygon outlines (no
+  same-unit seams; no Outlines band, no fill antialiasing for the same
+  reason); a dash-dot `soils_extent` frame at every zoom and strength; an
+  empty tap shows "No soil mapping here" only OFF every sheet bbox
+  (`MapCoordinator.soilsNoteOnEmptyTap`).
 - **Extend topo coverage (e.g. z16):** bump `maxzoom` in `packs.json`,
   re-run `build_raster.py --pack topo` (disk cache makes it incremental)
   → `build_packs.py topo` → `upload_packs.sh topo`. Re-validate the ocean-prune threshold first (the topo `size<1000@13`
@@ -433,6 +518,48 @@ milestones, map-proof results); the design brief and language is
   sea in Bass Strait/off Maria Island, file 50 KB–1.5 MB, both ≤ 2 MB,
   byte round-trip through the reference parser. A grid change = bump
   `version` (the Swift reader must check it).
+- **Refresh soils (when LISTdata republishes the zip; the build prints a
+  NOTE when its Last-Modified changed):** `uv run --with geopandas --with
+  pyogrio --with shapely --with pyproj --with numpy --with
+  mapbox-vector-tile python3 -I pipeline/build_soils.py --fresh` (cache
+  `pipeline/cache/soils/`: zip read in place via `/vsizip/`, renderer
+  `layer19.json`; work files `pipeline/work/soils/`; 2026-11-18: ~14 s
+  cold, ~12 s warm, `--tiles-only` ~3 s; two runs give byte-identical
+  outputs on the same day — `built` is the date). Writes
+  `ios/IzzyMap/Resources/Data/soils.pmtiles` (bundled in the app — NOT a
+  pack; a copy in `data/`; `.gitignore` has a `!` exception for it) +
+  `soil_units.json` (`version: 1`; a breaking shape change bumps it with
+  the Swift decoder in the same commit). Every full run re-reads the
+  zip's readme.txt licence paragraph and the live LISTdata catalogue entry
+  (`ccNotLT`) and aborts on any change, and fetches LIST's renderer (~55
+  KB) and diffs it against the cache minus `authoringInfo`: a changed
+  colour that the map uses FAILS (colours are data — rerun with `--fresh`
+  to accept after review), other changes are a NOTE and update the cache.
+  `--tiles-only` refuses when cached feature/table colours disagree with
+  `ALIASES` + the cached renderer. Tripwires (pinned to the 2025-07 zip —
+  they catch truncation, widen them for growth): 2,400–2,560 polygons,
+  155–175 codes, 12,200–12,450 km² incl. water, 11 sheets, null/empty CODE
+  → clean fail, every data code coloured by LIST's renderer or an
+  `ALIASES` entry (a NEW uncoloured code fails; so does a stale alias once
+  LIST colours it directly, a renderer `defaultSymbol`, or Breadalbane
+  touching a same-colour Bd* unit), unknown ASC order → fail (add a gloss
+  to `ASC_ORDERS`), a new spelling of water → fail, attributes not a
+  function of CODE → fail, cut-looking text not in `TRUNCATED` (or a
+  stale entry) → fail, ASCII CODEs, report URLs answer HEAD with a PDF
+  (never downloaded), shared edges = implied internal length ± 0.1 % (else
+  the coverage needs noding), no boundary line on the frame outline nor on
+  a kept/water shoreline, the frame has no hole ≥ 1 ha and water doesn't
+  overlap the kept polygons. On
+  the FINAL joined archive: `vector_layers` exactly soils/soils_labels/
+  soils_extent/soils_boundaries with their zooms and fields, only
+  `tiny_polygons` may fire, every polygon id at z12, every label at z9–12,
+  tile codes == table codes, boundary length at z12 within 1 % of the
+  source (+0.08 % today), PMTiles tile count == checked mbtiles, bounds
+  inside Tasmania, archive ≤ 12 MB, no local path in the metadata.
+  Verification pattern: decode z12 tiles for a sheet and diff against
+  LIST's `MapServer/export` of layer 19 with `dynamicLayers` `showLabels:
+  false` (same 3857 frame) — expect ~100 % of interior pixels equal; LIST
+  leaves Bde/BdeKp/Bde-Ps/Ea+K/Mq-Bk/Blb1-Bb1 transparent.
 - **Claude runs pack uploads (2026-11-07)** through Remote Control on
   Leo's Mac, never from the cloud container or CI (altool is macOS-only and
   the packs live in `data/`). Credentials: a dedicated App Store Connect
@@ -688,6 +815,11 @@ milestones, map-proof results); the design brief and language is
 - Paint order: overlay fills → relief → outlines/labels → trees layers →
   selection highlight (red ring) last, so a selected tree area isn't
   overpainted.
+- Soils: an empty tap with Soils on shows the "No soil mapping here" note
+  only outside every sheet's bbox, never while a search is up, and a
+  second empty tap dismisses it; inside a frame a miss (water, a dropped
+  sliver, a tile not drawn yet) is an ordinary empty tap. Unit codes are
+  case-sensitive (`BL` ≠ `Bl`): never fold, upper- or small-cap them.
 - Location: only a permission denial ends following; a temporary "no fix"
   never does. One honest message per session ("Wi-Fi-only iPads have no
   GPS"). Idle timer disabled only while following in the foreground.
@@ -886,6 +1018,27 @@ tree data sheets are fetched by the device straight from their publishers
 
 ## Status log
 
+- 2026-11-18: Soils overlay — LIST Correlated Reconnaissance Soils (CC BY
+  3.0 AU), 163 units / 2,468 polygons on 11 reconnaissance sheets ≈ 17 %
+  of the state (Hobart–Sorell–Buckland–Brighton–Ellendale–Oatlands, the
+  northern Midlands, Beaconsfield, Burnie). Bundled in the app (3.5 MB,
+  `soils.pmtiles` + `soil_units.json`): too small for a pack, and table +
+  tiles must change together. Unit lines from a `soils_boundaries` layer
+  (different-CODE edges only) because 34 neighbouring unit pairs share a
+  fill (212 km of edge) while outlining polygons would also draw 209 km of
+  same-unit seams along sheet edges. Seven descriptions and one profile
+  cut off mid-word upstream end in "…". Colours from LIST's renderer with
+  `ALIASES` for the 6 codes it misses — Blb1-Bb1 → Blb1 is OUR choice.
+  Card: code in its own case, description, ASC orders with glosses on a
+  tap, profile class, the tapped polygon's sheet, mapped extent; key
+  sectioned by main ASC order with two-letter order codes as the index.
+  Sheet reports (~30 MB, 11 PDFs, no stated licence) are device-fetched
+  extras (DocumentButton + Storage row). Review rounds caught: shoreline
+  tracing by the extent (now the mapped frame), sheet-edge seams from fill
+  antialiasing, boundaries too faint to split same-colour units, the
+  unmapped note firing inside frames / mid-search / undismissable, a key
+  note that hid colours recurring across sections, a bare-white Outlines
+  swatch, and the report icon duplicating Layers' glyph.
 - 2026-11-07/08: Plant ID r2 for rare species (pack `plantid@04548a8cd13f`,
   model `final-mpA01-adaptive-r2`). Encoder pilot (notes/encoder_pilot.md):
   DINOv3-L/H+ and Perception Encoder L, alone 7–13 pt worse per species than
