@@ -207,6 +207,13 @@ sync code.
   CI secret and an untracked local xcconfig, like the signing values.
 - Failures: sign-in cancelled or revoked → sign in again; offline, Drive
   full, conversion refused or file over 50 MB → say so and offer the file.
+- *As built (2026-11-24):* the coordinates are two plain meta lines (lat/lon,
+  MGA55) followed by one "Open in Google Maps" link (a Maps search URL that
+  works on any device), not a link on the coordinates themselves; pins run
+  oldest first, photos in the order added; a photo whose original isn't on
+  the device yet (still arriving from iCloud) is left out and the sheet says
+  how many. A token left in the Keychain by an earlier install is deleted on
+  an install's first run (Keychain items outlive the app).
 - **[U] — spike before building the Google half**: that images inside a
   .docx survive Drive's conversion with their sizes, and how headings and
   the two-across photo layout come out. If the spike fails, the file route

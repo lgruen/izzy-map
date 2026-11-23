@@ -140,6 +140,12 @@ nonisolated struct AppData: Sendable {
         } else {
             logger.fault("bundled data folder missing")
         }
+        // the pins export's temporary .docx files from earlier sessions
+        // and a Google token an earlier install left in the Keychain
+        if Features.pins {
+            PinExportFiles.cleanUp()
+            GoogleInstallCheck.run()
+        }
         return AppData(packs: PackStore.launch(), tables: tables, areas: .shared, pins: PinStore.launch(enabled: Features.pins))
     }
 }

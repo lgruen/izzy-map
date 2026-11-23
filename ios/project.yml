@@ -46,6 +46,8 @@ targets:
     # needs the same configFiles entry and CODE_SIGN_IDENTITY line, so its
     # profile and build number follow along (IzzyMapAssets has both).
     configFiles:
+      # Debug: only the gitignored Google OAuth client id (Config/Debug.xcconfig)
+      Debug: Config/Debug.xcconfig
       Release: Config/Release.xcconfig
     sources:
       - path: IzzyMap/Sources

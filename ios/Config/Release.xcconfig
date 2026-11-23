@@ -12,3 +12,7 @@
 // but never touches the Swift package targets (IzzyKit, MapLibre), which a
 // command-line PROVISIONING_PROFILE_SPECIFIER would break.
 #include? "CI.generated.xcconfig"
+
+// The Google OAuth client id (gitignored; see Debug.xcconfig). In CI the
+// TestFlight workflow writes it from the GOOGLE_OAUTH_CLIENT_ID secret.
+#include? "Google.xcconfig"

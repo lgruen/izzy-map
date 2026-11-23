@@ -17,6 +17,13 @@
 	     org.gruenschloss.izzymap.areas.<n> (Areas/AreaBackgroundTask.swift);
 	     pack queues ("Get all", 1 GB+ packs) submit
 	     org.gruenschloss.izzymap.packs.<n> (Data/PackStore.swift). -->
+	<!-- Pins export to Google Docs (docs/PINS_PLAN.md §6): the iOS OAuth
+	     client id from the gitignored Config/Google.xcconfig (empty without
+	     it: then the app offers only "Share file"). No CFBundleURLTypes:
+	     ASWebAuthenticationSession catches the reversed-client-id redirect
+	     itself (its callback scheme). -->
+	<key>GoogleOAuthClientID</key>
+	<string>$(GOOGLE_OAUTH_CLIENT_ID)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>org.gruenschloss.izzymap.areas.*</string>

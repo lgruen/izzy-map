@@ -98,6 +98,22 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: bundle exec fastlane certs
 
+      # The Google OAuth client id for the pins export (docs/PINS_PLAN.md
+      # §6): the repository SECRET GOOGLE_OAUTH_CLIENT_ID (not a variable:
+      # variables are printed unmasked in this public repo's logs), written
+      # to the gitignored xcconfig that Config/Release.xcconfig includes.
+      # Absent: the build simply offers no "Google Docs" (Share file stays).
+      - name: Google OAuth client id
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          if printf '%s' "$GOOGLE_OAUTH_CLIENT_ID" | grep -Eq '^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$'; then
+            printf 'GOOGLE_OAUTH_CLIENT_ID = %s\n' "$GOOGLE_OAUTH_CLIENT_ID" > ios/Config/Google.xcconfig
+            echo "Google OAuth client id set."
+          else
+            echo "::notice::GOOGLE_OAUTH_CLIENT_ID is not set (or malformed): this build offers no Google Docs export."
+          fi
+
       - name: Build and upload (fastlane build)
         working-directory: ios
         env:

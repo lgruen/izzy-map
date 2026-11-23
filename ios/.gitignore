@@ -12,6 +12,8 @@ xcuserdata/
 vendor/bundle/
 .bundle/
 Config/CI.generated.xcconfig
+# the Google OAuth client id (Config/write-google-xcconfig.sh; CI writes it)
+Config/Google.xcconfig
 fastlane/README.md
 fastlane/report.xml
 fastlane/test_output/

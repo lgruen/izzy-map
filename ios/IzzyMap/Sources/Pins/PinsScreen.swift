@@ -21,6 +21,12 @@ struct PinsScreen: View {
     @State private var path: [PinsRoute] = []
     @State private var editor: ProjectEditor.Mode?
     @State private var showsArchived = false
+    /// Export: the sheet's target; picking pins for it (nil: not picking).
+    @State private var export: PinExportTarget?
+    @State private var selection: Set<UUID>?
+    /// Escape while the export sheet is up: the sheet decides (Cancel while
+    /// it works, else close).
+    @State private var exportEscape = 0
     #if DEBUG
     @State private var debugOpened = false
     #endif
@@ -30,14 +36,20 @@ struct PinsScreen: View {
             PinsHome(model: model, store: store, showsArchived: $showsArchived) { editor = .new }
                 .navigationDestination(for: PinsRoute.self) { route in
                     switch route {
-                    case let .project(id): ProjectPage(model: model, store: store, project: id) { editor = .edit(id) }
-                    case .unfiled: ProjectPage(model: model, store: store, project: nil) {}
+                    case let .project(id):
+                        ProjectPage(model: model, store: store, project: id, selection: $selection, export: { export = $0 }) { editor = .edit(id) }
+                    case .unfiled: ProjectPage(model: model, store: store, project: nil, selection: $selection, export: { export = $0 }) {}
                     case .deleted: RecentlyDeletedPage(model: model, store: store)
                     }
                 }
         }
-        .modalEscape(model, depth: path.count + (editor == nil ? 0 : 1)) {
-            if editor != nil { editor = nil } else if !path.isEmpty { path.removeLast() }
+        .modalEscape(model, depth: path.count + (editor == nil && export == nil ? 0 : 1) + (selection == nil ? 0 : 1)) {
+            if export != nil { exportEscape += 1 } else if editor != nil { editor = nil } else if selection != nil { selection = nil } else if !path.isEmpty { path.removeLast() }
+        }
+        .onChange(of: path) { selection = nil }
+        .sheet(item: $export) { target in
+            PinExportSheet(store: store, target: target, escapeRequest: exportEscape) { export = nil }
+                .projectEditorPresentation()
         }
         .sheet(item: $editor) { mode in
             ProjectEditor(model: model, store: store, mode: mode, deleted: {
@@ -67,6 +79,20 @@ struct PinsScreen: View {
                 path = [.project(p.id)]
             } else if args.bool(forKey: "openPinsDeleted") {
                 path = [.deleted]
+            }
+            // `-openPinsSelect N`: selecting, the first N pins ticked
+            if args.object(forKey: "openPinsSelect") != nil, let last = path.last {
+                // after the push (a path change ends selecting)
+                try? await Task.sleep(for: .milliseconds(500))
+                let project: PinProject? = if case let .project(id) = last { store.project(id) } else { nil }
+                selection = Set(store.pins(in: project).prefix(args.integer(forKey: "openPinsSelect")).map(\.id))
+            }
+            if args.bool(forKey: "openPinsExport"), let last = path.last {
+                switch last {
+                case let .project(id): export = PinExportTarget(project: id, pins: nil)
+                case .unfiled: export = PinExportTarget(project: nil, pins: nil)
+                case .deleted: break
+                }
             }
             if args.bool(forKey: "openPinsEditor") { editor = path.last.flatMap { if case let .project(id) = $0 { .edit(id) } else { nil } } ?? .new }
         }
@@ -294,6 +320,9 @@ private struct ProjectPage: View {
     let store: PinStore
     /// nil: Unfiled.
     let project: UUID?
+    /// Picking pins to export (nil: not picking).
+    @Binding var selection: Set<UUID>?
+    let export: (PinExportTarget) -> Void
     let edit: () -> Void
     /// The header (with the name) is on screen: the bar stays empty until
     /// it scrolls away, so the name is never shown twice.
@@ -317,17 +346,40 @@ private struct ProjectPage: View {
                             .padding(.vertical, 4)
                     }
                     ForEach(list) { pin in
-                        PinRow(store: store, pin: pin, enabled: pin.isOnMap) { model.showPin(pin.id) }
+                        if let chosen = selection {
+                            PinRow(store: store, pin: pin, enabled: true, selected: chosen.contains(pin.id)) {
+                                if chosen.contains(pin.id) { selection?.remove(pin.id) } else { selection?.insert(pin.id) }
+                            }
+                        } else {
+                            PinRow(store: store, pin: pin, enabled: pin.isOnMap) { model.showPin(pin.id) }
+                        }
                     }
                 } header: {
-                    if !list.isEmpty { Text("Pins").panelHeader() }
+                    if !list.isEmpty { PinsSectionHeader(count: list.count, selection: $selection, all: list.map(\.id)) }
                 }
                 .panelRows()
             }
         }
         .navigationTitle(headerVisible ? "" : record.map { PinText.projectName($0.name) } ?? "Unfiled")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { DoneItem(model: model) }
+        .toolbar {
+            DoneItem(model: model)
+            if selection != nil {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", systemImage: "xmark") { withAnimation(.snappy) { selection = nil } }
+                        .accessibilityIdentifier("pins-select-cancel")
+                }
+            }
+        }
+        .navigationBarBackButtonHidden(selection != nil)
+        .safeAreaInset(edge: .bottom) {
+            if let chosen = selection {
+                ExportSelectionBar(count: chosen.count) {
+                    export(PinExportTarget(project: project, pins: chosen))
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
     }
 
     private func header(_ record: PinProject?, pins: [SavedPin]) -> some View {
@@ -377,6 +429,14 @@ private struct ProjectPage: View {
                     .opacity(pins.isEmpty ? 0.4 : 1)
                     .accessibilityIdentifier("project-show")
                 }
+                Button { export(PinExportTarget(project: project, pins: nil)) } label: {
+                    ActionLabel(title: "Export", symbol: "square.and.arrow.up")
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .disabled(pins.isEmpty)
+                .opacity(pins.isEmpty ? 0.4 : 1)
+                .accessibilityIdentifier("project-export")
                 if record != nil {
                     Button(action: edit) {
                         ActionLabel(title: "Edit", symbol: "pencil")
@@ -397,6 +457,8 @@ private struct PinRow: View {
     let pin: SavedPin
     /// Off the map (an archived project): shown, not a way to the map.
     let enabled: Bool
+    /// Picking pins to export: the row's checkmark (nil: not picking).
+    var selected: Bool? = nil
     let show: () -> Void
 
     var body: some View {
@@ -434,6 +496,7 @@ private struct PinRow: View {
                             .lineLimit(1)
                     }
                 }
+                if let selected { SelectionMark(on: selected) }
             }
             .frame(minHeight: 36)
             .contentShape(.rect)
@@ -441,6 +504,7 @@ private struct PinRow: View {
         .buttonStyle(.plain)
         .hoverEffect(.highlight)
         .disabled(!enabled)
+        .accessibilityAddTraits(selected == true ? .isSelected : [])
         .accessibilityIdentifier("pin-row-\(title)")
     }
 }

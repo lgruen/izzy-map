@@ -1,0 +1,9 @@
+// Debug configuration of the IzzyMap target (project.yml `configFiles`).
+//
+// The Google OAuth client id for the pins export (docs/PINS_PLAN.md §6)
+// comes from Google.xcconfig, which is gitignored: the id is not a secret,
+// but it stays out of the public repo. Write it on a Mac with
+//   ios/Config/write-google-xcconfig.sh
+// (reads ~/.config/izzymap/google.env). Without the file the setting is
+// empty and the app simply doesn't offer "Google Docs" (Share file stays).
+#include? "Google.xcconfig"

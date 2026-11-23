@@ -62,6 +62,26 @@ match has run, so xcodegen and xcodebuild never see them. The derived git
 auth header is masked in the logs as well, because the repo and its Actions
 logs are public.
 
+### The Google OAuth client id (pins export)
+
+The pins export's Google sign-in (docs/PINS_PLAN.md §6) needs the iOS OAuth
+client id. It isn't a secret, but it stays out of the public repo and its
+logs, so it travels like the signing values:
+
+- **CI:** the repository **secret** `GOOGLE_OAUTH_CLIENT_ID` (a secret, not
+  a variable: variables print unmasked in the step's `env:` header). The
+  TestFlight workflow's "Google OAuth client id" step writes it to
+  `ios/Config/Google.xcconfig` (gitignored), which `Config/Release.xcconfig`
+  includes. Missing or malformed: a notice, and the build simply offers no
+  "Google Docs" (Share file stays). Settings → Secrets and variables →
+  Actions → New repository secret.
+- **Locally:** `ios/Config/write-google-xcconfig.sh` writes the same file
+  from `~/.config/izzymap/google.env` (`GOOGLE_OAUTH_CLIENT_ID=…`), once
+  per checkout or worktree; `Config/Debug.xcconfig` includes it too. It
+  reaches the app as Info.plist `GoogleOAuthClientID = $(GOOGLE_OAUTH_CLIENT_ID)`.
+  There is no `CFBundleURLTypes` entry: ASWebAuthenticationSession takes
+  the reversed client id as its callback scheme itself.
+
 ## Steps for Leo
 
 0. Commit and push these files to `main`. GitHub only offers "Run workflow"
