@@ -36,8 +36,8 @@ extension AppModel {
     /// for yet → iOS asks (and the notice says to wait or long-press).
     func pinCurrentLocation() {
         guard let pins else { return }
-        guard let fix = fixForPin() else { return }
-        if notice == .noFixForPin { dismissNotice() }
+        guard let fix = fixForPin(placing: true) else { return }
+        if notice?.isPinNotice == true { dismissNotice() }
         let pin = pins.addPin(latitude: fix.coordinate.latitude, longitude: fix.coordinate.longitude, placedBy: .gps,
                               accuracy: fix.horizontalAccuracy,
                               altitude: fix.verticalAccuracy > 0 ? fix.altitude : nil)
@@ -47,23 +47,34 @@ extension AppModel {
         focusPin(latitude: pin.lat, longitude: pin.lon)
     }
 
-    /// The usable fix, or nil after saying why there is none.
-    private func fixForPin() -> CLLocation? {
+    /// The usable fix, or nil after saying why there is none
+    /// (`pinNotice`). `placing`: the pin button (its notices name the
+    /// long-press), not "Move to my location".
+    private func fixForPin(placing: Bool) -> CLLocation? {
         if isLocationDenied {
-            showLocationDenied()
+            show(pinNotice(placing: placing))
             return nil
         }
-        guard let fix = usableFix else {
-            if authorization == .notDetermined { requestLocation() }
-            showNoFixForPin()
-            return nil
-        }
-        return fix
+        if let fix = usableFix { return fix }
+        if authorization == .notDetermined { requestLocation() }
+        show(pinNotice(placing: placing))
+        return nil
+    }
+
+    /// Why there is no fix, in words that say what to do: location off →
+    /// Settings (and, from the pin button, the long-press); iOS still
+    /// asking, or no fix yet since it was allowed → wait (or long-press);
+    /// otherwise (fixes came, none recent or close enough) → long-press.
+    func pinNotice(placing: Bool) -> LocationNotice {
+        if isLocationDenied { return placing ? .deniedForPin : .denied }
+        if authorization == .notDetermined || (lastLocation == nil && systemLocation() == nil) { return .waitingForPin }
+        return .noFixForPin
     }
 
     // MARK: Move
 
-    /// "Tap the map at the new spot": the next map tap moves the selected pin.
+    /// "Move on map": the next map tap moves the selected pin ("Tap the
+    /// new spot" says the bar).
     func startMovingPin() {
         guard let id = selection?.pinID else { return }
         movingPin = id
@@ -71,25 +82,41 @@ extension AppModel {
 
     func cancelPinMove() { movingPin = nil }
 
-    /// The map tap while moving: the pin goes there, placed by hand.
+    /// The map tap while moving: the pin goes there, placed by hand; the
+    /// pill offers Undo (a slip of the finger must not move a survey point
+    /// for good).
     func movePin(to coordinate: CLLocationCoordinate2D) {
-        guard let id = movingPin, let pin = pins?.pin(id) else {
+        guard let id = movingPin, let pins, let pin = pins.pin(id) else {
             movingPin = nil
             return
         }
         movingPin = nil
-        pins?.move(pin, latitude: coordinate.latitude, longitude: coordinate.longitude, placedBy: .map)
+        let from = Self.spot(pin)
+        pins.move(pin, latitude: coordinate.latitude, longitude: coordinate.longitude, placedBy: .map)
+        offerMoveUndo(pin, from: from)
         if selection?.pinID != id { selectPin(id) }
     }
 
-    /// "To my location": the freshest usable fix, or the honest notice.
+    /// "Move to my location": the freshest usable fix, or the honest
+    /// notice; Undo as for a move on the map.
     func movePinToMyLocation() {
         guard let pins, let pin = selectedPin else { return }
         movingPin = nil
-        guard let fix = fixForPin() else { return }
+        guard let fix = fixForPin(placing: false) else { return }
+        let from = Self.spot(pin)
         pins.move(pin, latitude: fix.coordinate.latitude, longitude: fix.coordinate.longitude, placedBy: .gps,
                   accuracy: fix.horizontalAccuracy, altitude: fix.verticalAccuracy > 0 ? fix.altitude : nil)
+        offerMoveUndo(pin, from: from)
         focusPin(latitude: pin.lat, longitude: pin.lon)
+    }
+
+    private static func spot(_ pin: SavedPin) -> PinSpot {
+        PinSpot(latitude: pin.lat, longitude: pin.lon, placedBy: pin.placedBy, accuracy: pin.accuracy, altitude: pin.altitude)
+    }
+
+    private func offerMoveUndo(_ pin: SavedPin, from: PinSpot) {
+        setPinUndo(PinUndo(pin: pin.id, title: PinText.name(title: pin.title, note: "") ?? "", movedFrom: from,
+                           serial: (pinUndo?.serial ?? 0) + 1))
     }
 
     // MARK: Delete
@@ -117,6 +144,10 @@ extension AppModel {
                            serial: (pinUndo?.serial ?? 0) + 1))
     }
 
+    /// The Undo pill on the map — not while the Pins screen is up (it
+    /// shows the pill at its own foot).
+    var mapPinUndo: PinUndo? { modal?.presentation == .pins ? nil : pinUndo }
+
     /// Undo: the pin is back, its card open again — or the project is back
     /// with the pins that went with it (the Pins screen shows it again).
     func undoPinDelete() {
@@ -128,6 +159,17 @@ extension AppModel {
             return
         }
         guard let id = undo.pin, let pin = pins.anyPin(id) else { return }
+        if let from = undo.movedFrom {
+            // a move: back to where it was, as it was placed (its card stays
+            // or opens; the camera brings it into view)
+            guard pin.deletedAt == nil else { return }
+            pins.move(pin, latitude: from.latitude, longitude: from.longitude,
+                      placedBy: SavedPin.Placement(rawValue: from.placedBy) ?? .map,
+                      accuracy: from.accuracy, altitude: from.altitude)
+            if selection?.pinID != id { selectPin(id) }
+            focusPin(latitude: from.latitude, longitude: from.longitude)
+            return
+        }
         pins.restore(pin)
         selectPin(pin.id)
     }

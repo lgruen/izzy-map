@@ -42,8 +42,8 @@ final class PinsTests: XCTestCase {
         XCTAssertFalse(card(app).exists)
         app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "a long-press opens the new pin's card")
-        // (the facts row reads as one element: "<date>, On the map")
-        XCTAssertTrue(app.staticTexts["pin-source"].firstMatch.label.hasSuffix("On the map"))
+        // (the facts row reads as one element: "<date>, Placed by hand on the map")
+        XCTAssertTrue(app.staticTexts["pin-source"].firstMatch.label.hasSuffix("Placed by hand on the map"))
         // the title field is ready: typing goes straight into it
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus }, "title focused")
         app.typeText("Seep below the track")
@@ -85,6 +85,19 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists }, "the card closes")
         let undo = app.buttons["pin-undo"]
         XCTAssertTrue(undo.waitForExistence(timeout: patience(3)))
+        // the sheet drops to its glance (never a blank raised sheet) and, on
+        // a phone held upright, the pill sits above it — not in the top
+        // slot a raised sheet covers
+        let banner = app.descendants(matching: .any)["pin-undo-banner"].firstMatch
+        let search = app.textFields["search-field"]
+        let window = app.windows.firstMatch
+        if window.horizontalSizeClass == .compact, window.verticalSizeClass == .regular {
+            XCTAssertTrue(eventually(patience(3)) {
+                search.exists && search.frame.minY > window.frame.height * 0.6
+            }, "the sheet back at its glance")
+            XCTAssertTrue(eventually(patience(3)) { banner.frame.maxY <= search.frame.minY }, "the pill above the sheet")
+        }
+        XCTAssertTrue(undo.isHittable)
         undo.tap()
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "Undo brings the pin and its card back")
         XCTAssertEqual(title(app).value as? String, "Gate")

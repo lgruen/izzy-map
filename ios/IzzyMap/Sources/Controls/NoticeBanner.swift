@@ -18,7 +18,7 @@ struct NoticeBanner: View {
                 Text(notice.message)
                     .font(.subheadline)
                     .fixedSize(horizontal: false, vertical: true)
-                if notice == .denied, let url = URL(string: UIApplication.openSettingsURLString) {
+                if notice.offersSettings, let url = URL(string: UIApplication.openSettingsURLString) {
                     Button("Open Settings") { openURL(url) }
                         .font(.subheadline.weight(.semibold))
                         .buttonStyle(.glassProminent)

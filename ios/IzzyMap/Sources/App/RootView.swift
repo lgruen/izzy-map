@@ -116,6 +116,20 @@ struct RootView: View {
                 .padding(.bottom, bottomOrnamentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
 
+            // "Pin deleted · Undo" on a phone held upright: just above the
+            // sheet and its ornaments, where her eye is (the card she
+            // tapped Delete on was there) — never in the top slot, which a
+            // raised sheet covers
+            if usesSheet, let undo = model.mapPinUndo {
+                PinUndoBanner(undo: undo) { model.undoPinDelete() } onDismiss: { model.setPinUndo(nil) }
+                    .reportFrame(.undo, into: $chromeFrames)
+                    .padding(.leading, ornamentInsets.leading)
+                    .padding(.trailing, ornamentInsets.trailing)
+                    .padding(.bottom, bottomOrnamentInset + max(pillHeight, 44) + Self.ornamentGap)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            }
+
             // "Show on map": what is soloed, previous / next, ×
             if let spotlight = model.spotlight {
                 SpotlightPill(model: model, spotlight: spotlight)
@@ -155,7 +169,7 @@ struct RootView: View {
             // card and the controls
             MapStatusStack(model: model, reduceMotion: reduceMotion,
                            showsModeBar: model.spotlight != nil || model.isFraming || model.movingPin != nil,
-                           frames: $chromeFrames)
+                           frames: $chromeFrames, showsUndo: !usesSheet)
                 .frame(maxWidth: 440)
                 .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
                 .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
@@ -167,6 +181,7 @@ struct RootView: View {
         .animation(.snappy, value: showsSetupCard)
         .animation(.snappy, value: model.spotlight?.code)
         .animation(.snappy, value: model.movingPin)
+        .animation(.snappy, value: model.pinUndo)
         // a pin placed (long-press, the pin button): a light tap
         .sensoryFeedback(.impact(weight: .light), trigger: model.pinPlacedCount)
         // card layout: modals hang off the root (the sheet layout's are on the panel sheet)
@@ -255,6 +270,7 @@ struct RootView: View {
             compassTop: Self.margin + controlsHeight + 12,
             controlsCentreFromTrailing: Self.margin + MapControls.buttonSize / 2,
             framingInsets: framingInsets,
+            visibleInsets: uncoveredInsets(collapsing: true),
             areaFrame: model.isFraming && !showsSetupCard ? areaFrame : nil,
             areaDraft: showsSetupCard ? model.areaDraft : nil
         )
@@ -282,7 +298,11 @@ struct RootView: View {
     /// The map area no chrome covers, from the measured frames: the map is
     /// full-window, so its bounds are the safe-area frame grown by the
     /// safe insets.
-    private var framingInsets: UIEdgeInsets {
+    private var framingInsets: UIEdgeInsets { uncoveredInsets(collapsing: false) ?? .zero }
+
+    /// `collapsing`: nil when the chrome covers the whole map (else the
+    /// whole map is returned, for flights that need an aim).
+    private func uncoveredInsets(collapsing: Bool) -> UIEdgeInsets? {
         let safe = UIEdgeInsets(top: screen.safe.top, left: screen.safe.leading,
                                 bottom: screen.safe.bottom, right: screen.safe.trailing)
         let window = screen.frame.inset(by: UIEdgeInsets(top: -safe.top, left: -safe.left,
@@ -295,13 +315,15 @@ struct RootView: View {
                                  width: sheetFrame.width, height: max(0, window.maxY - sheetFrame.minY)))
         }
         let local = pieces.map { $0.offsetBy(dx: -window.minX, dy: -window.minY) }
-        return MapFraming.insets(bounds: CGRect(origin: .zero, size: window.size), safe: safe, obstructions: local)
+        let bounds = CGRect(origin: .zero, size: window.size)
+        return collapsing ? MapFraming.visibleInsets(bounds: bounds, safe: safe, obstructions: local)
+            : MapFraming.insets(bounds: bounds, safe: safe, obstructions: local)
     }
 }
 
 /// Floating chrome whose frame the framing keeps clear of.
 nonisolated enum ChromePiece: Hashable, Sendable {
-    case card, controls, gridPill, attribution, spotlightPill, notice, framingBar, setupCard
+    case card, controls, gridPill, attribution, spotlightPill, notice, framingBar, setupCard, undo
 }
 
 extension View {

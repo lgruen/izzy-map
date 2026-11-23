@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Moving a pin: the one-shot mode's bar at the top ("Tap the map at the
-/// new spot", Cancel) — the framing bar's form. Escape cancels too.
+/// Moving a pin: the one-shot mode's bar at the top ("Tap the new spot",
+/// Cancel) — the framing bar's form. Escape cancels too.
 struct PinMoveBar: View {
     let model: AppModel
 
@@ -22,7 +22,7 @@ struct PinMoveBar: View {
             if let pin = model.movingPin.flatMap({ model.pins?.pin($0) }) {
                 PinMark(hex: PinColour.hex(forName: pin.effectiveColourName))
             }
-            Text("Tap the map at the new spot")
+            Text("Tap the new spot")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(DesignColor.ink)
                 .lineLimit(2)
@@ -39,9 +39,10 @@ struct PinMoveBar: View {
     }
 }
 
-/// "Pin deleted · Undo" (or "Project deleted"), for a few seconds after a
-/// delete (the notice banner's form, in the same top slot — or at the foot
-/// of the Pins screen while that is up).
+/// "Pin deleted · Undo" (or "Project deleted", "Pin moved"), for a few
+/// seconds after a delete or a move (the notice banner's form: above the
+/// sheet on a phone held upright, in the top slot beside the card, at the
+/// foot of the Pins screen while that is up).
 struct PinUndoBanner: View {
     let undo: AppModel.PinUndo
     /// Over the map (light chrome, `mapChrome`), or inside the Pins screen
@@ -51,14 +52,19 @@ struct PinUndoBanner: View {
     let onUndo: () -> Void
     let onDismiss: () -> Void
 
+    static func headline(_ undo: AppModel.PinUndo) -> String {
+        if undo.movedFrom != nil { return "Pin moved" }
+        return undo.project == nil ? "Pin deleted" : "Project deleted"
+    }
+
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "trash")
+            Image(systemName: undo.movedFrom == nil ? "trash" : "arrow.up.and.down.and.arrow.left.and.right")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(DesignColor.secondaryInk)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
-                Text(undo.project == nil ? "Pin deleted" : "Project deleted")
+                Text(Self.headline(undo))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DesignColor.ink)
                 if !undo.title.isEmpty {

@@ -242,10 +242,9 @@ private func freshDefaults() -> UserDefaults {
         let s = store()
         let pin = s.addPin(latitude: -42.9, longitude: 147.3, placedBy: .map)
         var r = s.revision
-        // untitled, the note's first line is its label (`PinText.title`)
+        // a note is never a label (I-20)
         s.setNote(pin, "a note the map never shows")
-        #expect(s.revision > r)
-        r = s.revision
+        #expect(s.revision == r)
         s.setTitle(pin, "Gate")
         #expect(s.revision > r)
         r = s.revision
@@ -346,10 +345,15 @@ private func freshDefaults() -> UserDefaults {
             let L = StyleBuilder.LayerID.self
             let trees = try #require(ids.lastIndex(of: L.treesLabel), "\(when): trees")
             let first = try #require(ids.firstIndex(of: L.pinsHalo), "\(when): pins")
-            let selection = try #require(ids.firstIndex { L.selection.contains($0) }, "\(when): selection")
+            let ring = try #require(ids.firstIndex(of: L.selectionPoint), "\(when): selection ring")
             #expect(trees < first, "\(when): \(ids)")
-            #expect(ids[first ..< first + 3] == ArraySlice(L.pins), "\(when): \(ids)")
-            #expect(first + 3 == selection, "\(when): \(ids)")
+            #expect(ids[first ..< first + L.pins.count] == ArraySlice(L.pins), "\(when): \(ids)")
+            // the ring (a selected pin's, a tree's) stays on top; a selected
+            // polygon's (or tree area's) red line runs under the pins (I-21)
+            #expect(first + L.pins.count == ring, "\(when): \(ids)")
+            for line in [L.selectedFeature, L.selectionOutline] {
+                if let i = ids.firstIndex(of: line) { #expect(i < first, "\(when): \(line) under the pins: \(ids)") }
+            }
             #expect(map.style?.source(withIdentifier: StyleBuilder.SourceID.pins) is MLNShapeSource, "\(when)")
         }
 
@@ -522,13 +526,15 @@ private func freshDefaults() -> UserDefaults {
         m.systemLocation = { system }
         m.authorization = .authorizedWhenInUse
         m.pinCurrentLocation()
-        #expect(m.pins?.pins.isEmpty == true && m.notice == .noFixForPin)
+        // allowed, but no fix has come yet: wait — or long-press
+        #expect(m.pins?.pins.isEmpty == true && m.notice == .waitingForPin)
+        #expect(LocationNotice.waitingForPin.message.contains("long-press"))
         #expect(LocationNotice.noFixForPin.message.contains("long-press"))
 
-        // a fix too coarse to pin
+        // a fix too coarse to pin: fixes came, none usable — long-press
         m.locationUpdated(Self.fix(accuracy: 3000, at: now))
         m.pinCurrentLocation()
-        #expect(m.pins?.pins.isEmpty == true)
+        #expect(m.pins?.pins.isEmpty == true && m.notice == .noFixForPin)
 
         // a good one: pinned with its accuracy and altitude, the camera told
         m.locationUpdated(Self.fix(accuracy: 6, altitude: 412, at: now))
@@ -607,13 +613,78 @@ private func freshDefaults() -> UserDefaults {
 
     @Test func thePinButtonAsksWhenLocationWasNeverAllowed() {
         let m = model()
+        m.systemLocation = { nil }
         m.authorization = .notDetermined
         let asked = m.locationRequest
         m.pinCurrentLocation()
-        #expect(m.locationRequest == asked + 1 && m.notice == .noFixForPin)
+        // iOS is asking: "Waiting for a location fix — or long-press …"
+        #expect(m.locationRequest == asked + 1 && m.notice == .waitingForPin)
         m.authorization = .denied
         m.pinCurrentLocation()
-        #expect(m.notice == .denied && m.pins!.pins.isEmpty)
+        // the pin button's denied notice names the long-press, then Settings
+        #expect(m.notice == .deniedForPin && m.pins!.pins.isEmpty)
+        #expect(LocationNotice.deniedForPin.offersSettings && LocationNotice.denied.offersSettings)
+        #expect(LocationNotice.deniedForPin.message.contains("long-press"))
+        // "Move to my location" keeps the plain denied notice
+        m.dropPin(at: Self.here)
+        m.movePinToMyLocation()
+        #expect(m.notice == .denied)
+    }
+
+    /// The waiting notice goes once a fix comes (it no longer holds).
+    @Test func theWaitingNoticeGoesWithTheFirstFix() {
+        let m = model()
+        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        m.wallClock = { now }
+        m.systemLocation = { nil }
+        m.authorization = .authorizedWhenInUse
+        m.pinCurrentLocation()
+        #expect(m.notice == .waitingForPin)
+        m.locationUpdated(Self.fix(accuracy: 5, at: now))
+        #expect(m.notice == nil)
+    }
+
+    /// Move offers Undo, which puts the pin back where — and as — it was.
+    @Test func moveOffersUndoWhichPutsThePinBack() throws {
+        let m = model()
+        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        m.wallClock = { now }
+        m.systemLocation = { nil }
+        m.authorization = .authorizedWhenInUse
+        m.locationUpdated(Self.fix(accuracy: 6, altitude: 412, at: now))
+        m.pinCurrentLocation()
+        let pin = try #require(m.selectedPin)
+        #expect(pin.placement == .gps)
+        m.startMovingPin()
+        m.movePin(to: CLLocationCoordinate2D(latitude: -42.95, longitude: 147.35))
+        #expect(pin.lat == -42.95 && pin.placement == .map && pin.accuracy == nil)
+        let undo = try #require(m.pinUndo)
+        #expect(undo.movedFrom != nil && PinUndoBanner.headline(undo) == "Pin moved")
+        m.undoPinDelete()
+        #expect(m.pinUndo == nil)
+        #expect(pin.lat == Self.here.latitude && pin.lon == Self.here.longitude)
+        #expect(pin.placement == .gps && pin.accuracy == 6 && pin.altitude == 412)
+        #expect(m.selection?.pinID == pin.id && pin.deletedAt == nil)
+        // a delete's pill says so
+        m.deletePin(pin.id)
+        #expect(m.pinUndo.map(PinUndoBanner.headline) == "Pin deleted")
+    }
+
+    /// The card's words: the source line and the colour reset button.
+    @Test func theCardSaysHowAPinWasPlacedAndWhatItsColourResetsTo() throws {
+        let m = model()
+        m.dropPin(at: Self.here)
+        let pin = try #require(m.selectedPin)
+        #expect(PinCard.source(pin) == "Placed by hand on the map")
+        // the colour in effect, no override: no reset button
+        #expect(PinCard.resetTitle(pin) == nil)
+        m.pins!.setColour(pin, PinColour.teal.rawValue)
+        #expect(PinCard.resetTitle(pin) == "Use standard colour")
+        let site = m.pins!.addProject(name: "Knocklofty", colour: .violet)
+        m.pins!.setProject(pin, site)
+        #expect(PinCard.resetTitle(pin) == "Use project colour")
+        m.pins!.setColour(pin, nil)
+        #expect(PinCard.resetTitle(pin) == nil && pin.effectiveColourName == PinColour.violet.rawValue)
     }
 }
 

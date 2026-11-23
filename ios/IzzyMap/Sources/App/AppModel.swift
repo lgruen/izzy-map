@@ -675,7 +675,7 @@ final class AppModel {
     /// location was ever allowed: the map turns its dot on, iOS asks).
     private(set) var locationRequest = 0
     /// How long the Undo banner stays up.
-    static let pinUndoDuration: Duration = .seconds(6)
+    static let pinUndoDuration: Duration = .seconds(8)
     /// A fix less accurate than this is no place for a pin.
     static let pinMaxAccuracy: Double = 500
 
@@ -690,7 +690,7 @@ final class AppModel {
     }
 
     /// What the Undo banner brings back: a pin, or a project with the pins
-    /// that went with it.
+    /// that went with it — or a moved pin's old spot (`movedFrom`).
     nonisolated struct PinUndo: Equatable, Sendable {
         let pin: UUID?
         var project: UUID? = nil
@@ -698,7 +698,19 @@ final class AppModel {
         let title: String
         /// A project's pins that went with it.
         var pinCount = 0
+        /// A move, not a delete: where the pin was, and how it was placed.
+        var movedFrom: PinSpot? = nil
         let serial: Int
+    }
+
+    /// A pin's position as placed (what Undo of a move puts back).
+    nonisolated struct PinSpot: Equatable, Sendable {
+        let latitude: Double
+        let longitude: Double
+        /// `SavedPin.Placement` raw value.
+        let placedBy: String
+        let accuracy: Double?
+        let altitude: Double?
     }
 
     func pinPlaced() { pinPlacedCount += 1 }
@@ -729,9 +741,6 @@ final class AppModel {
             .max { $0.timestamp < $1.timestamp }
     }
 
-    /// The pin button found no fix: say so, with the other way to place one.
-    func showNoFixForPin() { show(.noFixForPin) }
-    func showLocationDenied() { show(.denied) }
 
     // MARK: Location
 
@@ -766,7 +775,8 @@ final class AppModel {
         lastFix = clock.now()
         if let location { lastLocation = location }
         noFixWatch?.cancel()
-        if notice == .noFix { dismissNotice() }
+        // (waiting for a fix: it came)
+        if notice == .noFix || notice == .waitingForPin { dismissNotice() }
     }
 
     /// MapLibre reported a location failure. MapLibre Native 7.0.0 forwards
@@ -843,7 +853,8 @@ final class AppModel {
     }
     #endif
 
-    private func show(_ notice: LocationNotice) {
+    /// Shows a location message for `noticeDuration`.
+    func show(_ notice: LocationNotice) {
         self.notice = notice
         noticeTimer?.cancel()
         noticeTimer = Task { [weak self, clock] in

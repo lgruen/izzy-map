@@ -47,10 +47,12 @@ final class PinPresenter {
     /// Half the side of the box a tap looks for a pin in (fingertip).
     static let hitRadius: CGFloat = 16
     /// The label's distance from the mark's centre, in ems of its 12 pt
-    /// text: 2 pt clear of the halo — or, selected, of the red ring.
+    /// text: a few points clear of the halo — or, selected, of the red
+    /// ring — and clear of the mark's own obstacle plus the label's 2 pt
+    /// collision padding (else the label could never take its first place).
     static let labelSize = 12.0
     static let labelOffset = 1.35
-    static let selectedLabelOffset = (ringRadius + StyleBuilder.selectionWidth + 2) / 12
+    static let selectedLabelOffset = (ringRadius + StyleBuilder.selectionWidth + 4) / labelSize
     /// Longest title printed on the map (a paragraph is no label).
     static let labelLimit = 40
     /// The obstacle icon's side (transparent; scaled to the mark's size).

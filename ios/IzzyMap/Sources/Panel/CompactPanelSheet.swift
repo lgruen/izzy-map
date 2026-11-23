@@ -63,8 +63,16 @@ struct CompactPanelSheet: View {
         .onChange(of: model.keyHighlight) { _, code in
             if code != nil, model.selection == nil { detent = fitDetent }
         }
+        // the card went (closed, deleted, deleted on the other device): the
+        // sheet goes back to its glance with it — a raised sheet with
+        // nothing in it reads as a crash, and it would hide the map (and
+        // the Undo pill above the sheet)
         .onChange(of: model.selection?.id) { _, id in
-            if id == nil { peek = 0; updateFit(contentHeight) }
+            guard id == nil else { return }
+            peek = 0
+            updateFit(contentHeight)
+            detentBeforeEditing = nil
+            if !model.search.isActive { detent = fitDetent }
         }
         // a pin card's title or note has the keyboard: room to type; after,
         // the sheet goes back — undoing only our own change: not when
@@ -155,7 +163,9 @@ struct CompactPanelSheet: View {
                     updateFit(contentHeight)
                 }
         }
-        .scrollEdgeEffectStyle(.soft, for: .top)
+        // a pin card: a hard edge — its swatches would smear colour (data)
+        // into the search row (chrome)
+        .scrollEdgeEffectStyle(PanelContent.topEdge(model), for: .top)
         // a detent's height leaves out the sheet's bottom safe area, which
         // the system adds below it once the sheet sits low enough to reach
         // the home indicator (AX text sizes; at default sizes the small

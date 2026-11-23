@@ -188,6 +188,9 @@ struct MapStatusStack: View {
     /// welcome and chip step aside (a location message still shows).
     var showsModeBar: Bool
     @Binding var frames: [ChromePiece: CGRect]
+    /// The Undo pill in this top slot (iPad, a phone on its side); on a
+    /// phone held upright it sits above the sheet instead (RootView).
+    var showsUndo = true
 
     private var packs: PackStore { model.shared.packs }
 
@@ -198,7 +201,7 @@ struct MapStatusStack: View {
 
     private var welcome: Bool { model.showsWelcome && !showsModeBar }
 
-    private var mapUndo: AppModel.PinUndo? { model.modal?.presentation == .pins ? nil : model.pinUndo }
+    private var mapUndo: AppModel.PinUndo? { showsUndo ? model.mapPinUndo : nil }
 
     var body: some View {
         let arrival = showsModeBar ? nil : arrival
