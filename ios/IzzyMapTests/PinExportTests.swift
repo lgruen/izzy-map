@@ -153,12 +153,12 @@ private func pixel(_ jpeg: Data, x: Double, y: Double) -> (r: Int, b: Int) {
 
         let snapshot = PinExportSnapshot.make(project: project, pins: s.pins(in: project))
         #expect(snapshot.title == "Knocklofty Reserve")
-        #expect(snapshot.pins.map(\.title) == ["Sphagnum, Richea", bare.displayTitle, "Lookout"])
-        #expect(snapshot.pins[1].title.hasPrefix("Pin · "))
+        // an untitled pin's heading is "Untitled pin" — its note stays the body
+        #expect(snapshot.pins.map(\.title) == ["Untitled pin", "Untitled pin", "Lookout"])
 
         let doc = try await PinExport.document(snapshot, includePhotos: true) { _ in nil }
         #expect(doc.title == "Knocklofty Reserve")
-        #expect(doc.sections.map(\.heading) == ["Sphagnum, Richea", bare.displayTitle, "Lookout"])
+        #expect(doc.sections.map(\.heading) == ["Untitled pin", "Untitled pin", "Lookout"])
         #expect(doc.subtitle.count == 2)
         #expect(doc.subtitle[1] == "3 pins")
         #expect(doc.subtitle[0].contains("13") && doc.subtitle[0].contains("20") && doc.subtitle[0].contains("2026"))

@@ -35,7 +35,9 @@ struct PinCard: View {
                         model.present(.pins)
                     }
                 }
-                .padding(.top, 12)
+                // 12 pt from the title row's discs (the close button's
+                // 44 pt target hangs 6 pt below its disc)
+                .padding(.top, 6)
                 // the bottom of the glance: the compact sheet's resting height
                 Color.clear.frame(height: 0)
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(PanelContent.space)).minY } action: {
@@ -100,6 +102,8 @@ struct PinCard: View {
             // that (`EscapeStep.closeProjectForm`)
             .sheet(isPresented: projectEditorShown) {
                 ProjectEditor(model: model, store: store, mode: .new, created: { store.setProject(pin, $0) },
+                              escapeRequest: model.pinProjectFormEscape,
+                              editedChanged: { model.pinProjectFormEdited = $0 },
                               close: { model.pinProjectForm = false })
                     .projectEditorPresentation()
             }
@@ -188,6 +192,9 @@ struct PinCard: View {
                 let inherited = PinColour.named(pin.project?.colour) ?? PinColour.standard
                 store.setColour(pin, colour == inherited ? nil : colour.rawValue)
             }
+            // 8 pt from the label to the swatches as drawn (their 44 pt
+            // targets reach 6 pt above them)
+            .padding(.top, -4)
         }
         .animation(.snappy, value: pin.colour)
     }
@@ -232,7 +239,7 @@ struct PinCard: View {
             GridRow {
                 label("Placed")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(pin.createdAt.formatted(.dateTime.day().month(.abbreviated).year().hour().minute()))
+                    Text(PinText.dateTime(pin.createdAt))
                         .font(.body)
                         .foregroundStyle(DesignColor.ink)
                     Text(Self.source(pin))

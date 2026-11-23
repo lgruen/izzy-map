@@ -57,8 +57,26 @@ extension AppModel {
         }
         if let fix = usableFix { return fix }
         if authorization == .notDetermined { requestLocation() }
-        show(pinNotice(placing: placing))
+        let notice = pinNotice(placing: placing)
+        show(notice)
+        // "Waiting for a location fix": the pin goes there when it comes
+        // (`fixArrived`), unless she does something else first
+        pinWaitsForFix = notice == .waitingForPin
         return nil
+    }
+
+    /// A fix came while "Waiting for a location fix" is up: the pin the
+    /// button asked for is placed now (or, if the fix is too coarse, the
+    /// honest notice). False when nothing was waiting.
+    func fixArrived() -> Bool {
+        guard pinWaitsForFix, notice == .waitingForPin else {
+            pinWaitsForFix = false
+            return false
+        }
+        pinWaitsForFix = false
+        dismissNotice()
+        if usableFix != nil { pinCurrentLocation() } else { show(.noFixForPin) }
+        return true
     }
 
     /// Why there is no fix, in words that say what to do: location off →
@@ -66,7 +84,10 @@ extension AppModel {
     /// asking, or no fix yet since it was allowed → wait (or long-press);
     /// otherwise (fixes came, none recent or close enough) → long-press.
     func pinNotice(placing: Bool) -> LocationNotice {
-        if isLocationDenied { return placing ? .deniedForPin : .denied }
+        if isLocationDenied { return placing ? .deniedForPin : .deniedForMove }
+        // Move: one honest line, whether a fix is still to come or none
+        // usable came — "Move on map" is the other way
+        guard placing else { return .noFixForMove }
         if authorization == .notDetermined || (lastLocation == nil && systemLocation() == nil) { return .waitingForPin }
         return .noFixForPin
     }
@@ -115,7 +136,7 @@ extension AppModel {
     }
 
     private func offerMoveUndo(_ pin: SavedPin, from: PinSpot) {
-        setPinUndo(PinUndo(pin: pin.id, title: PinText.name(title: pin.title, note: "") ?? "", movedFrom: from,
+        setPinUndo(PinUndo(pin: pin.id, title: pin.displayTitle, movedFrom: from,
                            serial: (pinUndo?.serial ?? 0) + 1))
     }
 
@@ -146,7 +167,7 @@ extension AppModel {
 
     /// The Undo pill on the map — not while the Pins screen is up (it
     /// shows the pill at its own foot).
-    var mapPinUndo: PinUndo? { modal?.presentation == .pins ? nil : pinUndo }
+    var mapPinUndo: PinUndo? { modal?.presentation == .pins || pinsScreenShown ? nil : pinUndo }
 
     /// Undo: the pin is back, its card open again — or the project is back
     /// with the pins that went with it (the Pins screen shows it again).

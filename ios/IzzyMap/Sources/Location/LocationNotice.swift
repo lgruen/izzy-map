@@ -14,6 +14,12 @@ nonisolated enum LocationNotice: Equatable, Sendable {
     /// The pin button with location access off: the other way to place a
     /// pin first, then Settings.
     case deniedForPin
+    /// "Move to my location" without a usable fix (none yet, or iOS still
+    /// asking): the other way to move it — never the long-press, which
+    /// would place a second pin.
+    case noFixForMove
+    /// "Move to my location" with location access off.
+    case deniedForMove
 
     var message: String {
         switch self {
@@ -22,19 +28,22 @@ nonisolated enum LocationNotice: Equatable, Sendable {
         case .noFixForPin: "No location yet — long-press the map to place a pin there."
         case .waitingForPin: "Waiting for a location fix — or long-press the map to place a pin."
         case .deniedForPin: "Location access is off for IzzyMap — long-press the map to place a pin, or turn it on in Settings."
+        case .noFixForMove: "No location yet — use Move on map instead."
+        case .deniedForMove: "Location access is off for IzzyMap — use Move on map, or turn it on in Settings."
         }
     }
 
     var symbol: String {
         switch self {
-        case .denied, .deniedForPin: "location.slash"
-        case .noFix, .noFixForPin, .waitingForPin: "location.magnifyingglass"
+        case .denied, .deniedForPin, .deniedForMove: "location.slash"
+        case .noFix, .noFixForPin, .waitingForPin, .noFixForMove: "location.magnifyingglass"
         }
     }
 
-    /// Raised by the pin button (its fix arriving makes it moot).
-    var isPinNotice: Bool { self == .noFixForPin || self == .waitingForPin || self == .deniedForPin }
+    /// Raised by the pin button or "Move to my location" (a fix arriving
+    /// makes it moot).
+    var isPinNotice: Bool { [.noFixForPin, .waitingForPin, .deniedForPin, .noFixForMove, .deniedForMove].contains(self) }
 
     /// The banner offers "Open Settings".
-    var offersSettings: Bool { self == .denied || self == .deniedForPin }
+    var offersSettings: Bool { self == .denied || self == .deniedForPin || self == .deniedForMove }
 }

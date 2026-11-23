@@ -108,6 +108,40 @@ final class PinsTests: XCTestCase {
         XCTAssertFalse(app.buttons["pin-undo"].exists)
     }
 
+    /// "Move on map" → a tap moves the pin → the pill's Undo puts it back
+    /// (both layouts: the pill above the phone's sheet, in the iPad's top
+    /// slot — fix round 2, L-01).
+    @MainActor
+    func testMoveOffersUndoThatPutsThePinBack() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"] + Self.watchdog)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
+        // Return ends the title (the keyboard goes; the phone's sheet drops back)
+        app.typeText("Gate\n")
+        XCTAssertTrue(eventually(patience(3)) { !self.title(app).hasFocus })
+        let position = app.buttons["pin-latlon"]
+        let move = app.buttons["pin-move"]
+        for _ in 0 ..< 3 where !move.isHittable { app.swipeUp() }
+        let before = position.value as? String
+        XCTAssertNotNil(before)
+        move.tap()
+        let onMap = app.buttons["pin-move-on-map"]
+        XCTAssertTrue(onMap.waitForExistence(timeout: patience(3)))
+        onMap.tap()
+        // the next map tap is the new spot (open map on both layouts)
+        let map = app.descendants(matching: .any)["map"].firstMatch
+        XCTAssertTrue(eventually(patience(5)) { map.value as? String == "idle" })
+        app.coordinate(withNormalizedOffset: Self.emptySpot).tap()
+        let undo = app.buttons["pin-undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: patience(3)), "the pill offers Undo")
+        XCTAssertTrue(eventually(patience(3)) { (position.value as? String) != before }, "the pin moved")
+        XCTAssertTrue(undo.isHittable)
+        undo.tap()
+        XCTAssertTrue(eventually(patience(5)) { (position.value as? String) == before }, "Undo put it back")
+        XCTAssertFalse(app.buttons["pin-undo"].exists)
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
     // MARK: The card going while a field has the keyboard
 
     /// A main-thread hang ends the app within this many seconds

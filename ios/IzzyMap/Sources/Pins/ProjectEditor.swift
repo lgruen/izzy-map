@@ -5,8 +5,8 @@ import SwiftUI
 /// Archive and Delete. Opened from a pin card's project chip ("New
 /// project…") and from the Pins screen (New project, Edit). Changes apply
 /// on Create / Save (Return in the name field); ✕ or Escape closes just
-/// this sheet (✕ asks first when something was typed). Archive and Delete act at once (Delete is soft, with
-/// Undo).
+/// this sheet (both ask first when something was typed). Archive and
+/// Delete act at once (Delete is soft, with Undo).
 struct ProjectEditor: View {
     /// What the sheet edits.
     enum Mode: Identifiable, Hashable {
@@ -27,6 +27,12 @@ struct ProjectEditor: View {
     var created: (PinProject) -> Void = { _ in }
     /// The project was deleted (the Pins screen leaves its page).
     var deleted: () -> Void = {}
+    /// Bumped by Escape (a hardware keyboard): the same as ✕ — asks first
+    /// when something was typed or picked.
+    var escapeRequest = 0
+    /// Whether something typed or picked would be lost (the card's form:
+    /// the model's Escape asks the editor instead of closing it).
+    var editedChanged: (Bool) -> Void = { _ in }
     let close: () -> Void
 
     @State private var name = ""
@@ -36,7 +42,8 @@ struct ProjectEditor: View {
     /// What the fields held when the sheet opened (changes = a difference).
     @State private var original: Fields?
     @FocusState private var focus: Field?
-    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// The sheet's width (where the palette's row fits at the pages' inset).
+    @State private var width: CGFloat = 0
     /// ✕ with something typed or picked: asks before throwing it away.
     @State private var confirmDiscard = false
 
@@ -56,10 +63,11 @@ struct ProjectEditor: View {
 
     var body: some View {
         NavigationStack {
-            // plain sections on the sheet's own ground, as Storage
-            // on a phone the card's own inset, so the palette is the card's
-            // one row of eight (at Storage's wider inset it broke in two)
-            PinsList(horizontalMargin: sizeClass == .compact ? 0 : nil) {
+            // plain sections on the sheet's own ground, as Storage, at the
+            // Pins pages' insets (no jump from a project's page to Edit) —
+            // unless that leaves the palette too little room for its one row
+            // of eight (a phone): then the card's own inset
+            PinsList(horizontalMargin: width >= Self.pagesInsetWidth ? nil : 0) {
                 Section {
                     HStack(spacing: 12) {
                         KeyBox(hex: colour.hex, opacity: 1, width: 28, height: 28)
@@ -154,9 +162,7 @@ struct ProjectEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark") {
-                        if hasChanges { confirmDiscard = true } else { close() }
-                    }
+                    Button("Cancel", systemImage: "xmark", action: cancel)
                     .accessibilityIdentifier("project-cancel")
                     // anchored on ✕ (on iPad a popover points at it)
                     .confirmationDialog("Discard your changes?", isPresented: $confirmDiscard, titleVisibility: .hidden) {
@@ -173,8 +179,13 @@ struct ProjectEditor: View {
                 }
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { width = $0 }
         .onAppear(perform: load)
         .interactiveDismissDisabled(hasChanges)
+        // Escape: as ✕
+        .onChange(of: escapeRequest) { cancel() }
+        .onChange(of: hasChanges, initial: true) { editedChanged(hasChanges) }
+        .onDisappear { editedChanged(false) }
         // the project went away while its editor was open (another window,
         // later iCloud): nothing left to edit
         .onChange(of: store.revision, initial: true) {
@@ -186,6 +197,10 @@ struct ProjectEditor: View {
     /// The palette row's width: the card's (one row of eight 44 pt
     /// targets), so both editors read as one palette.
     static let paletteWidth: CGFloat = 8 * SwatchLayout.target - (SwatchLayout.target - SwatchRow.visual)
+    /// A sheet at least this wide keeps the Pins pages' insets (about
+    /// 36 pt a side: the list's margin and the row's) with the palette in
+    /// one row.
+    static let pagesInsetWidth: CGFloat = paletteWidth + 2 * 36
 
     static func footer(_ project: PinProject, pins: Int) -> String {
         let archive = project.archivedAt == nil
@@ -207,6 +222,11 @@ struct ProjectEditor: View {
             focus = .name
         }
         original = fields
+    }
+
+    /// ✕ and Escape: close, or ask first when something would be lost.
+    private func cancel() {
+        if hasChanges { confirmDiscard = true } else { close() }
     }
 
     private func save() {

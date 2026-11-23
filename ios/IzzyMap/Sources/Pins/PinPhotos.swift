@@ -32,6 +32,8 @@ struct PinPhotos<Chip: View>: View {
         let progress = store.photoImports[pin.id]
         VStack(alignment: .leading, spacing: 10) {
             chip()
+                // a section's step to the photos (DESIGN.md §2 Space)
+                .padding(.bottom, 24 - 10)
             strip(photos, progress: progress)
             if cameraDenied { deniedNote }
             if let progress, progress.finished, progress.failed > 0 { failedNote(progress) }
@@ -86,7 +88,7 @@ struct PinPhotos<Chip: View>: View {
                     Button {
                         open(i)
                     } label: {
-                        PinPhotoThumb(photo: photo, side: PinPhotoMetrics.side)
+                        PinPhotoThumb(photo: photo, side: PinPhotoMetrics.side, shape: PinPhotoMetrics.tile)
                     }
                     .buttonStyle(.plain)
                     .hoverEffect(.highlight)
@@ -272,7 +274,7 @@ private struct AddPhotoLabel: View {
         }
         .foregroundStyle(DesignColor.ink)
         .frame(width: 64, height: PinPhotoMetrics.side)
-        .background(Color(uiColor: .tertiarySystemFill), in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+        .background(Color(uiColor: .tertiarySystemFill), in: PinPhotoMetrics.tile)
         .contentShape(.rect)
     }
 }
@@ -280,8 +282,11 @@ private struct AddPhotoLabel: View {
 enum PinPhotoMetrics {
     /// A thumbnail in the card's strip (and the add tile's height).
     static let side: CGFloat = 76
-    /// A pin row's lead box on a project page.
+    /// A pin row's lead box on a project page (and Recently deleted).
     static let row: CGFloat = 40
+    /// The strip's tiles — the add tile and the thumbnails beside it —
+    /// one rounded shape (chrome in the card, concentric with it).
+    static let tile = ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true)
 
     /// Asked once per run (a device query).
     static let hasCamera: Bool = {
@@ -295,11 +300,12 @@ enum PinPhotoMetrics {
 
 // MARK: - Thumbnails
 
-/// A photo's thumbnail as a square: cropped to fill, 0 radius, keyline —
-/// printed matter, like the key boxes.
-struct PinPhotoThumb: View {
+/// A photo's thumbnail as a square, cropped to fill, with a keyline — in
+/// the card's strip in the add tile's rounded shape beside it.
+struct PinPhotoThumb<S: Shape>: View {
     let photo: PinPhoto
     let side: CGFloat
+    let shape: S
 
     var body: some View {
         Group {
@@ -313,8 +319,9 @@ struct PinPhotoThumb: View {
             }
         }
         .frame(width: side, height: side)
-        .clipped()
-        .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
+        .clipShape(shape)
+        // a 0.5 pt keyline inside the edge (the shape's outer half clipped)
+        .overlay { shape.stroke(DesignColor.keyline, lineWidth: 1).clipShape(shape) }
         .accessibilityHidden(true)
     }
 }
@@ -544,13 +551,7 @@ struct PinPhotoFooter: View {
     /// writes it, 12 or 24 hours) — and nothing else: pixels and
     /// megabytes are Storage's business.
     static func facts(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
-        var day = Date.FormatStyle.dateTime.day().month(.abbreviated).year()
-        day.locale = locale
-        day.timeZone = timeZone
-        var time = Date.FormatStyle(date: .omitted, time: .shortened)
-        time.locale = locale
-        time.timeZone = timeZone
-        return "\(date.formatted(day)), \(date.formatted(time))"
+        PinText.dateTime(date, locale: locale, timeZone: timeZone)
     }
 }
 

@@ -1,26 +1,18 @@
 import Foundation
 
 /// The words a pin and a project go by (docs/PINS_PLAN.md §5). One title
-/// rule for every place a pin is named — list rows, the card's empty title
-/// field, the map's label (folded to Latin-1 there, `PinPresenter.label`).
+/// rule for every place a pin is named — list rows, the Undo pill, the
+/// Delete-now dialog, the photo viewer, the export's headings: its own
+/// title, else "Untitled pin". A note is never a title (I-20); the map
+/// draws a label only for a title (`PinPresenter.label`).
 nonisolated enum PinText {
-    /// Longest first line of a note used as a name (a paragraph is no title).
-    static let noteTitleLimit = 40
+    /// What an untitled pin is called wherever a title is shown.
+    static let untitled = "Untitled pin"
 
-    /// The title if it has one; else the note's first line; else "Pin ·
-    /// 24 Nov" (with the year when it isn't this year's).
-    static func title(title: String, note: String, createdAt: Date, now: Date = Date()) -> String {
-        name(title: title, note: note) ?? "Pin · \(shortDate(createdAt, now: now))"
-    }
-
-    /// The words a pin has of its own: its title, else its note's first
-    /// line (clipped); nil for neither. The map labels a pin with this —
-    /// never with the date stand-in, which would clutter (decided by the
-    /// user, 2026-11-24).
-    static func name(title: String, note: String) -> String? {
+    /// The pin's own title, else "Untitled pin".
+    static func title(_ title: String) -> String {
         let own = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !own.isEmpty { return own }
-        return firstLine(note).map { clipped($0, to: noteTitleLimit) }
+        return own.isEmpty ? untitled : own
     }
 
     /// The first line of `text` with words in it, trimmed.
@@ -59,6 +51,19 @@ nonisolated enum PinText {
         return "\(shortDate(first, now: now, calendar: calendar)) – \(end)"
     }
 
+    /// When a pin was placed or a photo taken — "15 Nov 2026, 08:47" (the
+    /// time as the device writes it, 12 or 24 hours): the card's Placed
+    /// line and the photo viewer say it the same way.
+    static func dateTime(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        var day = Date.FormatStyle.dateTime.day().month(.abbreviated).year()
+        day.locale = locale
+        day.timeZone = timeZone
+        var time = Date.FormatStyle(date: .omitted, time: .shortened)
+        time.locale = locale
+        time.timeZone = timeZone
+        return "\(date.formatted(day)), \(date.formatted(time))"
+    }
+
     /// "1 pin", "12 pins".
     static func count(_ n: Int) -> String { "\(n.formatted()) \(n == 1 ? "pin" : "pins")" }
 
@@ -78,6 +83,7 @@ nonisolated enum PinText {
 }
 
 extension SavedPin {
-    /// What this pin is called everywhere (`PinText.title`).
-    nonisolated var displayTitle: String { PinText.title(title: title, note: note, createdAt: createdAt) }
+    /// What this pin is called everywhere: its title, else "Untitled pin"
+    /// (`PinText.title`).
+    nonisolated var displayTitle: String { PinText.title(title) }
 }

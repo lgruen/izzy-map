@@ -17,20 +17,31 @@ private func freshStore(_ clock: DateBox = DateBox()) -> PinStore {
 @Suite struct PinTitleTests {
     private let day = Date(timeIntervalSinceReferenceDate: 800_000_000)  // 2026-05-09
 
-    @Test func titleThenNoteThenDate() {
-        #expect(PinText.title(title: "  Gate ", note: "Locked", createdAt: day, now: day) == "Gate")
-        #expect(PinText.title(title: "", note: "\n  \nSphagnum, Richea\nCheck in spring", createdAt: day, now: day) == "Sphagnum, Richea")
-        #expect(PinText.title(title: " ", note: "", createdAt: day, now: day) == "Pin · \(PinText.shortDate(day, now: day))")
-        // another year's pin says which
-        let later = day.addingTimeInterval(400 * 86_400)
-        let other = PinText.title(title: "", note: "", createdAt: day, now: later)
-        #expect(other.contains("2026") && other.hasPrefix("Pin · "))
+    /// One name for an untitled pin wherever a title is shown (fix round
+    /// 2, item 5): "Untitled pin" — never its note, never a date.
+    @Test func titleOrUntitledPin() throws {
+        #expect(PinText.title("  Gate ") == "Gate")
+        #expect(PinText.title(" ") == "Untitled pin")
+        #expect(PinText.title("") == PinsScreenText.rowTitle("").text)
+        let s = freshStore()
+        let pin = s.addPin(latitude: -42.9, longitude: 147.3, placedBy: .map)
+        s.setNote(pin, "Seep below track")
+        #expect(pin.displayTitle == "Untitled pin", "a note is never a title")
+        // the Undo pill, the Delete-now dialog
+        let m = AppModel(data: .none, tables: .empty)
+        m.dropPin(at: CLLocationCoordinate2D(latitude: -42.9, longitude: 147.3))
+        let id = try #require(m.selection?.pinID)
+        m.pins!.setNote(m.pins!.pin(id)!, "Seep below track")
+        let dialog = PinsDeleteNow.pin(m.pins!.pin(id)!)
+        #expect(dialog.title == "Delete “Untitled pin” now?")
+        m.deletePin(id)
+        #expect(m.pinUndo?.title == "Untitled pin")
     }
 
-    @Test func aLongFirstLineIsClippedOnAWord() {
+    @Test func aLongTitleIsClippedOnAWordForTheMap() {
         let line = "Wattle regrowth along the fire trail — mostly Acacia dealbata and some melanoxylon"
-        let title = PinText.title(title: "", note: line, createdAt: day, now: day)
-        #expect(title.hasSuffix("…") && title.count <= PinText.noteTitleLimit + 1)
+        let title = PinText.clipped(line, to: 40)
+        #expect(title.hasSuffix("…") && title.count <= 41)
         #expect(line.hasPrefix(String(title.dropLast())))
         #expect(!title.dropLast().hasSuffix(" "))
     }
@@ -38,7 +49,7 @@ private func freshStore(_ clock: DateBox = DateBox()) -> PinStore {
     @Test func theMapLabelAndTheCardUseTheSameName() {
         let s = freshStore()
         let pin = s.addPin(latitude: -42.9, longitude: 147.3, placedBy: .map)
-        #expect(pin.displayTitle.hasPrefix("Pin · "))
+        #expect(pin.displayTitle == "Untitled pin")
         // no title, no note: the map draws no label (dates would clutter it)
         #expect(PinPresenter.label(pin) == nil)
         #expect(PinPresenter.features([pin]).first?.attribute(forKey: "label") as? String == "")

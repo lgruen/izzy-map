@@ -102,7 +102,8 @@ struct LayersSheet: View {
         // the iPad's Pins sheet walks its own levels and comes back last
         // (`PinsScreen.done`), so Layers leaves those to it
         .modalEscape(model, depth: path.count + (storageSheet || pinsSheet ? 1 : 0)) {
-            if pinsSheet { return }
+            // (Pins over this popover or over Storage pops itself)
+            if pinsSheet || model.pinsScreenShown { return }
             if storageSheet { storageSheet = false } else if !path.isEmpty { path.removeLast() }
         }
         .presentationDetents([.medium, .large], selection: $detent)

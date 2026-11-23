@@ -28,6 +28,8 @@ struct StorageView: View {
     /// The row `scrollTo` named, ringed for a moment.
     @State private var highlighted: String?
     @State private var showsDiagnostics = false
+    /// Pins over this sheet (iPad, Storage opened from the Layers popover).
+    @State private var pinsSheet = false
 
     init(model: AppModel, done: (() -> Void)? = nil, scrollTo: String? = nil) {
         self.model = model
@@ -148,8 +150,13 @@ struct StorageView: View {
 
             // her own data (only while pins are switched on)
             if let pins = model.pins {
-                PinsStorageSection(store: pins, bytes: storage.pinsBytes) { model.present(.pins) }
-                    .panelRows()
+                // over the iPad's Layers popover Storage is a sheet of its
+                // own: Pins stacks over it (✓ and Escape come back here), as
+                // from Layers; pushed in the phone's Layers sheet it replaces it
+                PinsStorageSection(store: pins, bytes: storage.pinsBytes) {
+                    if done != nil { pinsSheet = true } else { model.present(.pins) }
+                }
+                .panelRows()
             }
         }
         .panelListSurface()
@@ -212,6 +219,12 @@ struct StorageView: View {
                             Button("Done", systemImage: "checkmark") { showsDiagnostics = false }
                         }
                     }
+            }
+        }
+        .sheet(isPresented: $pinsSheet) {
+            if let pins = model.pins {
+                PinsScreen(model: model, store: pins, done: { pinsSheet = false })
+                    .presentationSizing(.form)
             }
         }
         .accessibilityIdentifier("storage")

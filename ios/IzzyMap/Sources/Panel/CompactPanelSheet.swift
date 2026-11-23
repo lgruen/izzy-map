@@ -101,6 +101,14 @@ struct CompactPanelSheet: View {
                 detent = fitDetent
             }
         }
+        // a pin moved ("Move to my location" from the raised card): the
+        // sheet drops to its glance, so the pin and the "Pin moved · Undo"
+        // pill above the sheet are in sight (the large sheet covers both)
+        .onChange(of: model.pinUndo?.serial) {
+            guard model.pinUndo?.movedFrom != nil, detent == .large else { return }
+            detentBeforeEditing = nil
+            detent = fitDetent
+        }
         // "Show on map" from the card: the sheet drops to its glance so
         // the map shows the community statewide
         .onChange(of: model.spotlight?.code) { _, code in

@@ -447,6 +447,8 @@ final class AppModel {
         // detent) shows its card
         if search.isActive { search.end() }
         keyHighlight = nil
+        // anything else on the map: a pin waiting for a fix is off
+        pinWaitsForFix = false
         selection = FeatureSelection(feature: feature)
     }
 
@@ -473,7 +475,10 @@ final class AppModel {
         )))
     }
 
-    func clearSelection() { selection = nil }
+    func clearSelection() {
+        pinWaitsForFix = false
+        selection = nil
+    }
 
     // MARK: Modals and Escape
 
@@ -499,7 +504,7 @@ final class AppModel {
     /// Pins can open now (⌘P, the chip, Layers): switched on, and nothing
     /// on screen that a sheet can't go over.
     var canPresentPins: Bool {
-        pins != nil && !pinProjectForm && !documents.isReading && photoViewer == nil
+        pins != nil && !pinProjectForm && !documents.isReading && photoViewer == nil && !pinsScreenShown
     }
 
     /// A modal asked for while the Layers popover was up (iPad).
@@ -554,7 +559,8 @@ final class AppModel {
         case .dismiss: modal = nil
         case .cancelFraming: cancelFraming()
         case .cancelPinMove: cancelPinMove()
-        case .closeProjectForm: pinProjectForm = false
+        // typed in it: the form asks first, as its ✕ does
+        case .closeProjectForm: if pinProjectFormEdited { pinProjectFormEscape += 1 } else { pinProjectForm = false }
         case .back: cardPath.removeLast()
         case .closeCard: clearSelection()
         case .clearHighlight: keyHighlight = nil
@@ -657,6 +663,15 @@ final class AppModel {
     var pinStoreNoticeDismissed = false
     /// The card's "New project…" form is open (Escape closes just that).
     var pinProjectForm = false
+    /// Something is typed in that form: Escape asks it (`pinProjectFormEscape`)
+    /// rather than closing it.
+    @ObservationIgnored var pinProjectFormEdited = false
+    /// Bumped by Escape while the form has something typed.
+    private(set) var pinProjectFormEscape = 0
+    /// The Pins screen is up — as the modal, or over Layers or Storage on
+    /// an iPad: the map's Undo pill stays down (the screen shows its own)
+    /// and ⌘P has nothing to open.
+    var pinsScreenShown = false
     /// The camera eases to a pin placed out of sight (the pin button).
     private(set) var pinFocus: PinFocus?
     /// "Show on map" and a pin picked in the Pins screen: the camera frames
@@ -668,6 +683,10 @@ final class AppModel {
     @ObservationIgnored var systemLocation: @MainActor () -> CLLocation? = { SystemLocation.latest }
     /// Wall-clock time, to judge a fix's age by its timestamp.
     @ObservationIgnored var wallClock: @MainActor () -> Date = { Date() }
+    /// The pin button found no fix yet and said "Waiting for a location
+    /// fix": the pin is placed when the first one comes — unless the
+    /// notice goes or she does anything else on the map first.
+    @ObservationIgnored var pinWaitsForFix = false
     /// A pin just deleted: the Undo banner.
     private(set) var pinUndo: PinUndo?
     @ObservationIgnored var pinUndoTimer: Task<Void, Never>?
@@ -775,7 +794,8 @@ final class AppModel {
         lastFix = clock.now()
         if let location { lastLocation = location }
         noFixWatch?.cancel()
-        // (waiting for a fix: it came)
+        // (waiting for a fix: it came — a pin asked for meanwhile goes there)
+        if fixArrived() { return }
         if notice == .noFix || notice == .waitingForPin { dismissNotice() }
     }
 
@@ -809,6 +829,7 @@ final class AppModel {
     func dismissNotice() {
         noticeTimer?.cancel()
         notice = nil
+        pinWaitsForFix = false
     }
 
     /// Following started: if no position arrives within `noFixDelay`, say so

@@ -30,6 +30,9 @@ struct PinsScreen: View {
     /// Escape while the export sheet is up: the sheet decides (Cancel while
     /// it works, else close).
     @State private var exportEscape = 0
+    /// Escape while the project editor is up: the editor decides (asks
+    /// first when something was typed, else closes).
+    @State private var editorEscape = 0
     #if DEBUG
     @State private var debugOpened = false
     #endif
@@ -49,7 +52,7 @@ struct PinsScreen: View {
         // over Layers (iPad) the screen itself is one level more: the last
         // Escape goes back to Layers, as from Storage
         .modalEscape(model, depth: depth + (done == nil ? 0 : 1)) {
-            if export != nil { exportEscape += 1 } else if editor != nil { editor = nil } else if selection != nil { selection = nil } else if !path.isEmpty { path.removeLast() } else { done?() }
+            if export != nil { exportEscape += 1 } else if editor != nil { editorEscape += 1 } else if selection != nil { selection = nil } else if !path.isEmpty { path.removeLast() } else { done?() }
         }
         .onChange(of: path) { selection = nil }
         .sheet(item: $export) { target in
@@ -60,7 +63,7 @@ struct PinsScreen: View {
             ProjectEditor(model: model, store: store, mode: mode, deleted: {
                 // the deleted project's page has nothing left to show
                 if case let .project(id)? = path.last, store.project(id) == nil { path.removeLast() }
-            }, close: { editor = nil })
+            }, escapeRequest: editorEscape, close: { editor = nil })
             .projectEditorPresentation()
         }
         // Undo for a project (or a pin) deleted while the screen is up: at
@@ -74,6 +77,10 @@ struct PinsScreen: View {
             }
         }
         .animation(.snappy, value: model.pinUndo)
+        // the map's own Undo pill stays down while this screen shows it, and
+        // ⌘P has nothing to open (`AppModel.pinsScreenShown`)
+        .onAppear { model.pinsScreenShown = true }
+        .onDisappear { model.pinsScreenShown = false }
         #if DEBUG
         // screenshots: `-openPinsProject <name>` / `-openPinsDeleted YES`
         .task {
@@ -540,7 +547,7 @@ nonisolated enum PinsScreenText {
     /// date, which every row shows trailing.
     static func rowTitle(_ title: String) -> (text: String, untitled: Bool) {
         let own = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return own.isEmpty ? ("Untitled pin", true) : (own, false)
+        return own.isEmpty ? (PinText.untitled, true) : (own, false)
     }
 
     /// The status line under the list: "25 pins · 32 photos · 10 MB";
@@ -585,9 +592,12 @@ private struct RecentlyDeletedPage: View {
                     DeletedRow(title: PinText.projectName(project.name), titleLines: 2,
                                status: PinsScreenText.deletedStatus(place: PinText.count(gone.count), photos: store.photoCount(gone),
                                                                     daysLeft: store.daysLeft(project.deletedAt)),
+                               confirm: $confirm, request: { .project(project, in: store) },
                                restore: { store.restoreProject(project) },
-                               delete: { confirm = .project(project, in: store) }) {
-                        KeyBox(hex: PinColour.hex(forName: project.colour), opacity: 1, width: PinsMetrics.swatch, height: PinsMetrics.swatch)
+                               perform: { model.deleteNow($0) }) {
+                        // the 40 pt lead column of a project's page
+                        KeyBox(hex: PinColour.hex(forName: project.colour), opacity: 1,
+                               width: PinPhotoMetrics.row, height: PinPhotoMetrics.row)
                     }
                 }
                 ForEach(store.deletedPins) { pin in
@@ -596,9 +606,10 @@ private struct RecentlyDeletedPage: View {
                                status: PinsScreenText.deletedStatus(place: Self.place(pin), photos: store.photoCount(of: pin),
                                                                     daysLeft: store.daysLeft(pin.deletedAt)),
                                identifier: pin.displayTitle,
+                               confirm: $confirm, request: { .pin(pin) },
                                restore: { store.restore(pin) },
-                               delete: { confirm = .pin(pin) }) {
-                        PinRowMark(store: store, pin: pin, side: PinsMetrics.swatch)
+                               perform: { model.deleteNow($0) }) {
+                        PinRowMark(store: store, pin: pin, side: PinPhotoMetrics.row)
                     }
                 }
             } footer: {
@@ -617,6 +628,7 @@ private struct RecentlyDeletedPage: View {
                     }
                     .buttonStyle(.plain)
                     .hoverEffect(.highlight)
+                    .deleteNowDialog($confirm, id: "all") { model.deleteNow($0) }
                     .accessibilityIdentifier("deleted-delete-all")
                 }
                 .panelRows()
@@ -627,15 +639,6 @@ private struct RecentlyDeletedPage: View {
         .toolbar { DoneItem(done: done) }
         // overdue items go now, not only at launch (a long-running iPad)
         .onAppear { model.purgePins() }
-        // the dialog shows words taken when it opened — never a record that
-        // "Delete" has just removed (read while the dialog animates away)
-        .confirmationDialog(confirm?.title ?? "", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }),
-                            titleVisibility: .visible, presenting: confirm) { c in
-            Button(c.button, role: .destructive) { model.deleteNow(c) }
-            Button("Cancel", role: .cancel) {}
-        } message: { c in
-            Text(c.message)
-        }
     }
 
     /// Where a pin goes back to: "Knocklofty", "Unfiled".
@@ -652,8 +655,12 @@ private struct DeletedRow<Mark: View>: View {
     let status: String
     /// The row's id in UI tests (default: the title).
     var identifier: String? = nil
+    /// The page's one "Delete now" question; this row's is asked from its
+    /// own trash button (on an iPad the popover points at it).
+    @Binding var confirm: PinsDeleteNow?
+    let request: () -> PinsDeleteNow
     let restore: () -> Void
-    let delete: () -> Void
+    let perform: (PinsDeleteNow) -> Void
     @ViewBuilder let mark: () -> Mark
 
     var body: some View {
@@ -661,7 +668,8 @@ private struct DeletedRow<Mark: View>: View {
         HStack(spacing: 8) {
             PinsRowLabel(title: self.title, status: status, titleLines: titleLines, statusLines: 2, untitled: untitled, mark: mark)
             Spacer(minLength: 0)
-            Button(action: delete) {
+            let question = request()
+            Button { confirm = question } label: {
                 Image(systemName: "trash")
                     .foregroundStyle(DesignColor.secondaryInk)
                     .frame(width: 40, height: 44)
@@ -669,10 +677,29 @@ private struct DeletedRow<Mark: View>: View {
             }
             .buttonStyle(.plain)
             .hoverEffect(.highlight)
+            .deleteNowDialog($confirm, id: question.id, perform: perform)
             .accessibilityLabel("Delete now")
             .accessibilityIdentifier("deleted-delete-\(title)")
             GetButton(title: "Restore", action: restore)
                 .accessibilityIdentifier("deleted-restore-\(title)")
+        }
+    }
+}
+
+extension View {
+    /// Recently deleted's "Delete now" question, anchored on the control
+    /// that asked it (`id`: which question this control asks). It shows
+    /// words taken when it opened — never a record that "Delete" has just
+    /// removed (read while the dialog animates away).
+    func deleteNowDialog(_ confirm: Binding<PinsDeleteNow?>, id: String, perform: @escaping (PinsDeleteNow) -> Void) -> some View {
+        let shown = Binding(get: { confirm.wrappedValue?.id == id },
+                            set: { if !$0, confirm.wrappedValue?.id == id { confirm.wrappedValue = nil } })
+        return confirmationDialog(confirm.wrappedValue?.title ?? "", isPresented: shown, titleVisibility: .visible,
+                                  presenting: confirm.wrappedValue) { c in
+            Button(c.button, role: .destructive) { perform(c) }
+            Button("Cancel", role: .cancel) {}
+        } message: { c in
+            Text(c.message)
         }
     }
 }
@@ -699,6 +726,8 @@ struct PinsList<Content: View>: View {
                 .panelListSurface()
                 .listSectionSpacing(.compact)
                 .contentMargins(.top, 8, for: .scrollContent)
+                // the last row (the status footer) clear of the sheet's edge
+                .contentMargins(.bottom, 24, for: .scrollContent)
                 .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
         }
         // a pushed page keeps the sheet's own ground (the navigation
