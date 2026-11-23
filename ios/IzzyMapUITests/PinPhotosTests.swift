@@ -56,8 +56,8 @@ final class PinPhotosTests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: patience(3)))
         add.tap()
         // with a camera (iOS 27 simulators may report the Mac's) the button
-        // is a menu: Take Photo / Choose from Library
-        let library = app.buttons["Choose from Library"]
+        // is a menu: Take photo / Choose from library
+        let library = app.buttons["Choose from library"]
         if library.waitForExistence(timeout: patience(2)) { library.tap() }
         XCTAssertTrue(thumb(app, 1).waitForExistence(timeout: patience(15)), "two thumbnails")
         XCTAssertTrue(thumb(app, 0).exists)
@@ -82,7 +82,7 @@ final class PinPhotosTests: XCTestCase {
         viewer(app).swipeRight()
         XCTAssertTrue(eventually(patience(3)) { self.pageLabel(app) == "1 of 2" })
         app.buttons["pin-photo-delete"].tap()
-        let confirm = app.buttons.matching(NSPredicate(format: "label == 'Delete Photo' AND identifier != 'pin-photo-delete'")).firstMatch
+        let confirm = app.buttons.matching(NSPredicate(format: "label == 'Delete photo' AND identifier != 'pin-photo-delete'")).firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: patience(3)), "Delete asks first")
         confirm.tap()
         XCTAssertTrue(eventually(patience(3)) { self.pageLabel(app) == nil }, "one photo left (no page count)")

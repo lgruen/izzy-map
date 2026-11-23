@@ -121,14 +121,15 @@ nonisolated enum PinExport {
 
     // MARK: File name
 
-    /// "<Project> — pins 2026-11-24.docx", with what file systems refuse
-    /// left out (/ \ : * ? " < > |, control characters, leading dots).
-    static func fileName(stem: String, date: Date = Date(), timeZone: TimeZone = .current) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let d = calendar.dateComponents([.year, .month, .day], from: date)
-        let day = String(format: "%04d-%02d-%02d", d.year ?? 0, d.month ?? 0, d.day ?? 0)
-        return "\(safeStem(stem)) — pins \(day).docx"
+    /// "<Project> — pins, 24 Nov 2026.docx" (the date as every date in the
+    /// app reads), with what file systems refuse left out of the name and
+    /// the date alike (/ \ : * ? " < > |, control characters, leading dots).
+    static func fileName(stem: String, date: Date = Date(), timeZone: TimeZone = .current, locale: Locale = .current) -> String {
+        var style = Date.FormatStyle.dateTime.day().month(.abbreviated).year()
+        style.timeZone = timeZone
+        style.locale = locale
+        let day = safeStem(date.formatted(style))
+        return "\(safeStem(stem)) — pins, \(day).docx"
     }
 
     /// The name with forbidden characters dropped, whitespace runs folded,

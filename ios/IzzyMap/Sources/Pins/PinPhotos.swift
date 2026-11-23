@@ -9,7 +9,7 @@ import UIKit
 /// the add button first, then square thumbnails NEWEST first (the photo
 /// she just took lands beside the button, in view, without scrolling).
 /// Without: just a compact "Add photo" capsule beside the chip. The add
-/// button is a menu — Take Photo / Choose from Library — so the camera is
+/// button is a menu — Take photo / Choose from library — so the camera is
 /// two taps away; where there is no camera it opens the library at once.
 /// A thumbnail opens the full-screen viewer, paging across this pin's
 /// photos, with the caption (editable), the date and Delete.
@@ -134,9 +134,9 @@ struct PinPhotos<Chip: View>: View {
             label.accessibilityIdentifier("pin-photo-progress")
         } else if Self.hasCamera {
             Menu {
-                Button { takePhoto() } label: { Label("Take Photo", systemImage: "camera") }
+                Button { takePhoto() } label: { Label("Take photo", systemImage: "camera") }
                     .accessibilityIdentifier("pin-photo-take")
-                Button { chooseFromLibrary() } label: { Label("Choose from Library", systemImage: "photo.on.rectangle") }
+                Button { chooseFromLibrary() } label: { Label("Choose from library", systemImage: "photo.on.rectangle") }
                     .accessibilityIdentifier("pin-photo-library")
             } label: { label }
                 .buttonStyle(.plain)
@@ -223,7 +223,7 @@ struct PinPhotos<Chip: View>: View {
                         Link("Open Settings", destination: url)
                             .accessibilityIdentifier("pin-camera-settings")
                     }
-                    Button("Choose a Photo") { chooseFromLibrary() }
+                    Button("Choose a photo") { chooseFromLibrary() }
                 }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(DesignColor.ink)
@@ -408,9 +408,30 @@ struct PinRowMark: View {
                 }
                 .accessibilityHidden(true)
         } else {
-            PinMark(hex: PinColour.hex(forName: pin.effectiveColourName))
-                .frame(width: side)
+            // a key plate as big as a thumbnail, the map's mark centred:
+            // one lead column, with or without photos
+            PinMarkDot(hex: PinColour.hex(forName: pin.effectiveColourName))
+                .frame(width: side, height: side)
+                .background(DesignColor.keyPlate)
+                .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
+                .accessibilityHidden(true)
         }
+    }
+}
+
+/// The map's mark alone: the pin's colour in its white halo and ink
+/// keyline, 14 pt (as `PinMark` draws it on its 28 × 18 key box).
+private struct PinMarkDot: View {
+    let hex: String
+
+    var body: some View {
+        Circle()
+            .fill(Color(uiColor: PinColour.uiColor(hex: hex)))
+            .overlay { Circle().strokeBorder(.black.opacity(0.22), lineWidth: 0.5) }
+            .padding(2)
+            .background(Circle().fill(.white))
+            .overlay { Circle().strokeBorder(Color(uiColor: PinPresenter.ink), lineWidth: 0.75) }
+            .frame(width: 14, height: 14)
     }
 }
 
@@ -491,13 +512,14 @@ nonisolated enum PinViewerSelection {
 }
 
 /// Under a pin's photo: its caption (typed in place, saved like the note),
-/// when it was taken, its size, and Delete (asks first; for good — the
+/// when it was taken, and Delete (asks first; for good — the
 /// viewer then shows the neighbour, or closes after the last).
-private struct PinPhotoFooter: View {
+struct PinPhotoFooter: View {
     let store: PinStore
     let photo: PinPhoto
     @State private var confirm = false
     @FocusState private var editing: Bool
+    @Environment(\.photoViewerMeasure) private var measure
 
 
     var body: some View {
@@ -520,17 +542,18 @@ private struct PinPhotoFooter: View {
                     }
                     .frame(minHeight: 32)
                     .accessibilityIdentifier("pin-photo-caption")
-                Text(Self.facts(photo))
+                Text(Self.facts(photo.createdAt))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.white.opacity(0.85))
                     .accessibilityIdentifier("pin-photo-facts")
             }
             .shadow(color: .black.opacity(0.5), radius: 3)
-            // a readable measure on an iPad's full width
-            .frame(maxWidth: 640, alignment: .leading)
+            // a readable measure on an iPad's full width; beside a
+            // pillarboxed photo, the black margin
+            .frame(maxWidth: measure, alignment: .leading)
             Spacer(minLength: 0)
-            Button("Delete Photo", systemImage: "trash") { confirm = true }
+            Button("Delete photo", systemImage: "trash") { confirm = true }
                 .labelStyle(.iconOnly)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white)
@@ -540,24 +563,28 @@ private struct PinPhotoFooter: View {
                 .accessibilityIdentifier("pin-photo-delete")
                 // anchored on the button (a popover's arrow points at it)
                 .confirmationDialog("Delete this photo?", isPresented: $confirm, titleVisibility: .visible) {
-                    Button("Delete Photo", role: .destructive) {
+                    Button("Delete photo", role: .destructive) {
                         store.deletePhoto(photo)
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("It’s deleted for good. This can’t be undone.")
+                    Text("This can’t be undone.")
                 }
         }
         .id(photo.id)
     }
 
-    /// "24 Nov 2026, 10:42 · 4032 × 3024 · 2.1 MB".
-    static func facts(_ photo: PinPhoto) -> String {
-        let date = photo.createdAt.formatted(.dateTime.day().month(.abbreviated).year().hour().minute())
-        var parts = [date]
-        if photo.width > 0, photo.height > 0 { parts.append("\(photo.width) × \(photo.height)") }
-        if photo.bytes > 0 { parts.append(PinsStorageSection.size(photo.bytes) ?? "") }
-        return parts.joined(separator: " · ")
+    /// When it was taken — "24 Nov 2026, 4:31 am" (the time as the device
+    /// writes it, 12 or 24 hours) — and nothing else: pixels and
+    /// megabytes are Storage's business.
+    static func facts(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        var day = Date.FormatStyle.dateTime.day().month(.abbreviated).year()
+        day.locale = locale
+        day.timeZone = timeZone
+        var time = Date.FormatStyle(date: .omitted, time: .shortened)
+        time.locale = locale
+        time.timeZone = timeZone
+        return "\(date.formatted(day)), \(date.formatted(time))"
     }
 }
 

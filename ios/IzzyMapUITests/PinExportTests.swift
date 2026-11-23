@@ -50,12 +50,12 @@ final class PinExportTests: XCTestCase {
         XCTAssertTrue(app.buttons["export-photos"].exists, "the seeded project has photos: Include photos is offered")
         app.buttons["export-share"].tap()
         // the system share sheet (UIActivityViewController), headed by the
-        // file's name: "Knocklofty Reserve — pins <date>.docx"
+        // file's name: "Knocklofty Reserve — pins, 24 Nov 2026.docx"
         let list = app.otherElements["ActivityListView"].firstMatch
         XCTAssertTrue(list.waitForExistence(timeout: patience(20)), "the share sheet")
         let file = list.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH '.docx'")).firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: patience(5)), "it offers the .docx")
-        XCTAssertTrue(file.label.hasPrefix("Knocklofty Reserve — pins 20"), file.label)
+        XCTAssertTrue(file.label.hasPrefix("Knocklofty Reserve — pins, "), file.label)
     }
 
     @MainActor

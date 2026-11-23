@@ -29,7 +29,7 @@ struct MapCommands: Commands {
                 .keyboardShortcut("l")
                 .disabled(model == nil)
             if Features.pins {
-                Button("Pins") { model?.present(.pins) }
+                Button("Show Pins") { model?.present(.pins) }
                     .keyboardShortcut("p")
                     // off while a sheet the Pins screen can't go over is up
                     .disabled(!(canOpenPins ?? false))

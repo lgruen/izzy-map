@@ -28,6 +28,8 @@ struct LayersSheet: View {
     @State private var storageSheet = false
     /// Storage was opened by an area's Download: it scrolls to the areas.
     @State private var storageTarget: String?
+    /// iPad: the Pins screen over the popover, as Storage.
+    @State private var pinsSheet = false
 
     /// The iPad popover: system glass that never turns opaque. Storage (a
     /// dense list of figures) opens from it as a form sheet — the system's
@@ -48,7 +50,9 @@ struct LayersSheet: View {
                     }
                     .accessibilityIdentifier("legend-link")
                     if PinsEntry.available(model) {
-                        Button { model.present(.pins) } label: {
+                        // iPad: over the popover, as Storage (Layers stays
+                        // underneath; ✓ and Escape come back to it)
+                        Button { if inPopover { pinsSheet = true } else { model.present(.pins) } } label: {
                             ChevronRow(label: Label("Pins", systemImage: "mappin.and.ellipse"))
                         }
                         .buttonStyle(.plain)
@@ -94,8 +98,11 @@ struct LayersSheet: View {
                 }
             }
         }
-        // Escape: Storage (pushed, or the iPad's own sheet) / Key → Layers
-        .modalEscape(model, depth: path.count + (storageSheet ? 1 : 0)) {
+        // Escape: Storage (pushed, or the iPad's own sheet) / Key → Layers;
+        // the iPad's Pins sheet walks its own levels and comes back last
+        // (`PinsScreen.done`), so Layers leaves those to it
+        .modalEscape(model, depth: path.count + (storageSheet || pinsSheet ? 1 : 0)) {
+            if pinsSheet { return }
             if storageSheet { storageSheet = false } else if !path.isEmpty { path.removeLast() }
         }
         .presentationDetents([.medium, .large], selection: $detent)
@@ -104,6 +111,12 @@ struct LayersSheet: View {
                 StorageView(model: model, done: { storageSheet = false }, scrollTo: storageTarget)
             }
             .presentationSizing(.form)
+        }
+        .sheet(isPresented: $pinsSheet) {
+            if let pins = model.pins {
+                PinsScreen(model: model, store: pins, done: { pinsSheet = false })
+                    .presentationSizing(.form)
+            }
         }
         // a modal asked for from the popover (Pins) shows once it has gone
         .onDisappear { model.layersDidDisappear() }

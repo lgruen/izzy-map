@@ -258,7 +258,17 @@ private func pixel(_ jpeg: Data, x: Double, y: Double) -> (r: Int, b: Int) {
     private let hobart = TimeZone(identifier: "Australia/Hobart")!
 
     @Test func projectNameDashPinsDate() {
-        #expect(PinExport.fileName(stem: "Knocklofty Reserve", date: day, timeZone: hobart) == "Knocklofty Reserve — pins 2026-11-24.docx")
+        let australia = Locale(identifier: "en_AU")
+        #expect(PinExport.fileName(stem: "Knocklofty Reserve", date: day, timeZone: hobart, locale: australia)
+            == "Knocklofty Reserve — pins, 24 Nov 2026.docx")
+        // the local day, not UTC's 23 Nov
+        #expect(PinExport.fileName(stem: "A/B: site", date: day, timeZone: hobart, locale: australia) == "AB site — pins, 24 Nov 2026.docx")
+        // whatever the locale writes, a file name never gets "/" or ":"
+        for id in ["en_US", "de_DE", "ja_JP", "fr_CA", "ar", "he_IL"] {
+            let name = PinExport.fileName(stem: "Site", date: day, timeZone: hobart, locale: Locale(identifier: id))
+            #expect(!name.contains("/") && !name.contains(":"), "\(id): \(name)")
+            #expect(name.hasPrefix("Site — pins, ") && name.hasSuffix(".docx"), "\(id): \(name)")
+        }
     }
 
     @Test func charactersFileSystemsRefuseAreLeftOut() {

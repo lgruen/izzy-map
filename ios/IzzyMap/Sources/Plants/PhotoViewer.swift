@@ -16,7 +16,8 @@ struct ViewerPhoto: Identifiable {
 /// The plant sheet's photos full screen: pinch or double-tap to zoom (a
 /// UIScrollView, the system's own zooming), swipe between photos, tap to
 /// hide or show the bar and credit. × or Escape closes it (Escape through
-/// the window's chain, `EscapeStep.closePhoto`); ← → page on a keyboard.
+/// the window's chain, `EscapeStep.closePhoto`), and so does a swipe down
+/// while the photo is at its fit; ← → page on a keyboard.
 struct PhotoViewer: View {
     let model: AppModel
     let title: AttributedString
@@ -29,38 +30,82 @@ struct PhotoViewer: View {
     var footer: ((Int) -> AnyView)?
     @State private var chrome = true
     @FocusState private var focused: Bool
+    /// Each photo's width ÷ height once it is drawn (where it sits on the
+    /// screen decides whether the text needs a scrim).
+    @State private var aspects: [String: CGFloat] = [:]
+    /// Photos zoomed past their fit (they may cover anything).
+    @State private var zoomed: Set<String> = []
+    /// The screen, and the text rows on it (window coordinates).
+    @State private var screen: CGRect = .zero
+    @State private var topText: CGRect = .zero
+    @State private var bottomText: CGRect = .zero
+    /// Swipe down to close: how far the photo has followed the finger,
+    /// and which way this drag was read (vertical = closing).
+    @State private var pull: CGFloat = 0
+    @State private var pullAxis: Axis?
+
+    private var current: ViewerPhoto? { photos.isEmpty ? nil : photos[min(max(page, 0), photos.count - 1)] }
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black
+                .opacity(1 - min(0.6, pull / 500))
+                .ignoresSafeArea()
+                // the whole screen, keyboard or not, where the photo is
+                // fitted (it ignores every safe area): the frame grown by
+                // the insets it reports
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    let f = proxy.frame(in: .global), s = proxy.safeAreaInsets
+                    return CGRect(x: f.minX - s.leading, y: f.minY - s.top,
+                                  width: f.width + s.leading + s.trailing, height: f.height + s.top + s.bottom)
+                } action: { screen = $0 }
             TabView(selection: $page) {
                 ForEach(Array(photos.enumerated()), id: \.element.id) { i, photo in
-                    ZoomablePhoto(photo: photo, onTap: toggleChrome)
+                    ZoomablePhoto(photo: photo, onTap: toggleChrome,
+                                  onAspect: { aspects[photo.id] = $0 },
+                                  onZoom: { if $0 { zoomed.insert(photo.id) } else { zoomed.remove(photo.id) } })
                         .ignoresSafeArea()
                         .tag(i)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
+            .offset(y: pull)
+            .simultaneousGesture(pullToClose)
         }
         .overlay(alignment: .top) {
-            if chrome { topBar.transition(.opacity) }
+            if chrome {
+                topBar
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { topText = $0 }
+                    .background(alignment: .top) { if scrims(over: topText) { topShade } }
+                    .transition(.opacity)
+            }
         }
         .overlay(alignment: .bottom) {
             if chrome, !photos.isEmpty {
-                if let footer {
-                    footer(min(max(page, 0), photos.count - 1))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 28)
-                        .padding(.bottom, 12)
-                        .background(alignment: .bottom) { shade }
-                        .transition(.opacity)
-                } else {
-                    credit.transition(.opacity)
+                Group {
+                    if let footer {
+                        footer(min(max(page, 0), photos.count - 1))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 28)
+                            .padding(.bottom, 12)
+                    } else {
+                        credit
+                    }
                 }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { bottomText = $0 }
+                // the footer's whole band takes its taps (as the scrim did
+                // when it was always there): a tap meant for the caption
+                // never falls through to the photo and hides the chrome
+                .contentShape(.rect)
+                // the scrim travels with the text (up with the keyboard too)
+                .background(alignment: .bottom) { if scrims(over: bottomText) { shade } }
+                .transition(.opacity)
             }
         }
+        // beside a pillarboxed photo the text keeps to the black margin
+        .environment(\.photoViewerMeasure, sideMargin.map { max(160, $0 - 32) } ?? PhotoViewerMeasure.full)
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
         .environment(\.colorScheme, .dark)
@@ -89,13 +134,14 @@ struct PhotoViewer: View {
                     .minimumScaleFactor(0.8)
                 if photos.count > 1 {
                     Text("\(page + 1) of \(photos.count)")
-                        .font(.caption)
+                        .font(.subheadline)
                         .monospacedDigit()
                         .accessibilityIdentifier("photo-viewer-page")
                 }
             }
             .foregroundStyle(.white)
-            .shadow(color: .black.opacity(0.6), radius: 3)
+            .shadow(color: .black.opacity(0.5), radius: 2)
+            .frame(maxWidth: sideMargin.map { max(160, $0 - 32) } ?? .infinity, alignment: .leading)
             Spacer(minLength: 0)
             Button("Close", systemImage: "xmark") { model.photoViewer = nil }
                 .labelStyle(.iconOnly)
@@ -116,27 +162,89 @@ struct PhotoViewer: View {
             .font(.caption)
             .foregroundStyle(.white.opacity(0.9))
             .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: sideMargin.map { max(160, $0 - 32) } ?? .infinity, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.top, 28)
             .padding(.bottom, 12)
-            .background(alignment: .bottom) {
-                LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .top, endPoint: .bottom)
-                    .ignoresSafeArea()
-            }
             .allowsHitTesting(false)
             .accessibilityIdentifier("photo-viewer-credit")
     }
 
-    /// The gradient under a `footer` (only there — the credit keeps its own,
-    /// as before): darker, under the home indicator but never stretched under
-    /// the keyboard (a caption being typed would sit on its clear top over a
-    /// bright photo).
-    private var shade: some View {
-        LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.55), location: 0.4),
-                               .init(color: .black.opacity(0.7), location: 1)],
+    /// The scrims: full width behind their text rows, black 0 → 45 %, so
+    /// white text holds over a bright sky. They travel with the text (the
+    /// bottom one rides up with the keyboard), and they appear only where
+    /// the photo actually lies under the text — on the black margins of a
+    /// letter- or pillarboxed photo there is nothing to darken.
+    private var topShade: some View {
+        LinearGradient(stops: [.init(color: .black.opacity(0.45), location: 0), .init(color: .black.opacity(0.45), location: 0.45),
+                               .init(color: .clear, location: 1)],
                        startPoint: .top, endPoint: .bottom)
+            .frame(minHeight: 88)
+            .padding(.bottom, -24)
+            .ignoresSafeArea(.container, edges: .top)
+            .allowsHitTesting(false)
+    }
+
+    private var shade: some View {
+        LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.45), location: 0.45),
+                               .init(color: .black.opacity(0.45), location: 1)],
+                       startPoint: .top, endPoint: .bottom)
+            .frame(minHeight: 120)
+            // under the home indicator, never stretched under the keyboard
             .ignoresSafeArea(.container, edges: .bottom)
+            .allowsHitTesting(false)
+    }
+
+    /// The current photo at its fit, nil while its shape is unknown or it
+    /// is zoomed (then it may cover anything).
+    private var fitted: CGRect? {
+        guard let current, let aspect = aspects[current.id], aspect > 0, screen.width > 0, screen.height > 0,
+              !zoomed.contains(current.id) else { return nil }
+        return PhotoFit.rect(aspect: aspect, in: screen)
+    }
+
+    /// A pillarboxed photo's black margin, when there is room in it for the
+    /// text (a portrait photo on a landscape iPad: ~300 pt each side).
+    private var sideMargin: CGFloat? {
+        guard let fitted else { return nil }
+        let margin = fitted.minX - screen.minX
+        return margin >= PhotoViewerMeasure.marginForText ? margin : nil
+    }
+
+    /// Whether a text row needs its scrim: the photo lies under it. On the
+    /// black of a letterbox (above and below) or a pillarbox margin (the
+    /// text keeps to it) there is nothing to darken. Not knowing the
+    /// photo's shape yet, or zoomed, counts as yes.
+    private func scrims(over text: CGRect) -> Bool {
+        guard let fitted else { return true }
+        if sideMargin != nil { return false }
+        return fitted.insetBy(dx: 1, dy: 1).intersects(text)
+    }
+
+    /// Swipe down (at the photo's fit) to close: the photo follows the
+    /// finger and the black thins; let go past 100 pt, or flicked, and it
+    /// closes — the way it came from the thumbnail. A sideways drag pages,
+    /// a zoomed photo pans: neither closes.
+    private var pullToClose: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                if pullAxis == nil {
+                    let t = value.translation
+                    pullAxis = t.height > abs(t.width) * 1.5 ? .vertical : .horizontal
+                }
+                guard pullAxis == .vertical, let current, !zoomed.contains(current.id) else { return }
+                pull = max(0, value.translation.height)
+            }
+            .onEnded { value in
+                defer { pullAxis = nil }
+                guard pullAxis == .vertical, pull > 0 else { return }
+                if pull > 100 || value.predictedEndTranslation.height > 260 {
+                    model.photoViewer = nil
+                } else {
+                    withAnimation(.snappy) { pull = 0 }
+                }
+            }
     }
 
     private func toggleChrome() {
@@ -151,10 +259,38 @@ struct PhotoViewer: View {
     }
 }
 
+/// How wide the viewer's text may run: a readable measure on an iPad's
+/// full width, or a pillarboxed photo's black margin (`photoViewerMeasure`).
+enum PhotoViewerMeasure {
+    static let full: CGFloat = 640
+    /// A side margin at least this wide takes the text.
+    static let marginForText: CGFloat = 200
+}
+
+extension EnvironmentValues {
+    /// The width the viewer's text (a pin photo's caption) may take.
+    @Entry var photoViewerMeasure: CGFloat = PhotoViewerMeasure.full
+}
+
+/// Where a photo of `aspect` (width ÷ height) sits when fitted to `bounds`.
+nonisolated enum PhotoFit {
+    static func rect(aspect: CGFloat, in bounds: CGRect) -> CGRect {
+        guard aspect > 0, bounds.width > 0, bounds.height > 0 else { return bounds }
+        let size = bounds.width / bounds.height > aspect
+            ? CGSize(width: bounds.height * aspect, height: bounds.height)
+            : CGSize(width: bounds.width, height: bounds.width / aspect)
+        return CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
+    }
+}
+
 /// One page: the plate's image at once, the sharp one when it is decoded.
 private struct ZoomablePhoto: View {
     let photo: ViewerPhoto
     let onTap: () -> Void
+    /// The image's width ÷ height, once there is one.
+    var onAspect: (CGFloat) -> Void = { _ in }
+    /// Zoomed past the fit, or back at it.
+    var onZoom: (Bool) -> Void = { _ in }
     @Environment(\.displayScale) private var scale
     @State private var image: UIImage?
     @State private var settled = false
@@ -163,7 +299,7 @@ private struct ZoomablePhoto: View {
         GeometryReader { geo in
             ZStack {
                 if let image {
-                    ZoomScroll(image: image, onTap: onTap)
+                    ZoomScroll(image: image, onTap: onTap, onZoom: onZoom)
                 } else {
                     Color.clear
                         .contentShape(Rectangle())
@@ -186,6 +322,9 @@ private struct ZoomablePhoto: View {
                 if let sharp = await photo.load(pixels), !Task.isCancelled { image = sharp }
                 settled = true
             }
+            .onChange(of: image?.size, initial: true) { _, size in
+                if let size, size.width > 0, size.height > 0 { onAspect(size.width / size.height) }
+            }
         }
     }
 }
@@ -197,16 +336,19 @@ private struct ZoomablePhoto: View {
 private struct ZoomScroll: UIViewRepresentable {
     let image: UIImage
     let onTap: () -> Void
+    var onZoom: (Bool) -> Void = { _ in }
 
     func makeUIView(context: Context) -> ZoomScrollView {
         let view = ZoomScrollView()
         view.onTap = onTap
+        view.onZoom = onZoom
         view.set(image)
         return view
     }
 
     func updateUIView(_ view: ZoomScrollView, context: Context) {
         view.onTap = onTap
+        view.onZoom = onZoom
         if view.imageView.image !== image { view.set(image) }
     }
 }
@@ -214,6 +356,9 @@ private struct ZoomScroll: UIViewRepresentable {
 final class ZoomScrollView: UIScrollView, UIScrollViewDelegate {
     let imageView = UIImageView()
     var onTap: (() -> Void)?
+    /// Told when the photo leaves its fit (zoomed in) or comes back to it.
+    var onZoom: ((Bool) -> Void)?
+    private var isZoomed = false
     private var fittedTo: CGSize = .zero
 
     override init(frame: CGRect) {
@@ -287,7 +432,14 @@ final class ZoomScrollView: UIScrollView, UIScrollViewDelegate {
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
 
-    func scrollViewDidZoom(_ scrollView: UIScrollView) { centre() }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centre()
+        let now = zoomScale > minimumZoomScale + 0.01
+        if now != isZoomed {
+            isZoomed = now
+            onZoom?(now)
+        }
+    }
 
     @objc private func singleTapped() { onTap?() }
 

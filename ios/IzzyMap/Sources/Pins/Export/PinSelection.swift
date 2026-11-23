@@ -52,6 +52,9 @@ struct PinsSectionHeader: View {
 /// The foot of the list while selecting: "Export 3 pins…" (the ink capsule).
 struct ExportSelectionBar: View {
     let count: Int
+    /// The rows' content edges: the capsule lines up with them.
+    var leading: CGFloat = 16
+    var trailing: CGFloat = 16
     let export: () -> Void
 
     var body: some View {
@@ -60,7 +63,8 @@ struct ExportSelectionBar: View {
             .disabled(count == 0)
             .opacity(count == 0 ? 0.4 : 1)
             .keyboardShortcut(.defaultAction)
-            .padding(.horizontal, 16)
+            .padding(.leading, leading)
+            .padding(.trailing, trailing)
             .padding(.top, 8)
             .padding(.bottom, 12)
             .background(.bar)

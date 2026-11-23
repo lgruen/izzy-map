@@ -4,8 +4,8 @@ import SwiftUI
 /// name and the colour — and, for a project that exists, its note,
 /// Archive and Delete. Opened from a pin card's project chip ("New
 /// project…") and from the Pins screen (New project, Edit). Changes apply
-/// on Create / Save (Return in the name field); Cancel or Escape closes
-/// just this sheet. Archive and Delete act at once (Delete is soft, with
+/// on Create / Save (Return in the name field); ✕ or Escape closes just
+/// this sheet (✕ asks first when something was typed). Archive and Delete act at once (Delete is soft, with
 /// Undo).
 struct ProjectEditor: View {
     /// What the sheet edits.
@@ -36,12 +36,15 @@ struct ProjectEditor: View {
     /// What the fields held when the sheet opened (changes = a difference).
     @State private var original: Fields?
     @FocusState private var focus: Field?
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// ✕ with something typed or picked: asks before throwing it away.
+    @State private var confirmDiscard = false
 
     private enum Field: Hashable { case name, note }
 
     private var project: PinProject? { Self.project(mode, in: store) }
     /// From the mode, never from the lookup: a project that went away while
-    /// its editor was open must not turn the sheet into "New Project".
+    /// its editor was open must not turn the sheet into "New project".
     private var isNew: Bool { mode == .new }
 
     private var fields: Fields { Fields(name: name, colour: colour, note: note) }
@@ -53,7 +56,10 @@ struct ProjectEditor: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            // plain sections on the sheet's own ground, as Storage
+            // on a phone the card's own inset, so the palette is the card's
+            // one row of eight (at Storage's wider inset it broke in two)
+            PinsList(horizontalMargin: sizeClass == .compact ? 0 : nil) {
                 Section {
                     HStack(spacing: 12) {
                         KeyBox(hex: colour.hex, opacity: 1, width: 28, height: 28)
@@ -63,20 +69,32 @@ struct ProjectEditor: View {
                             .focused($focus, equals: .name)
                             .submitLabel(.done)
                             .onSubmit(save)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 44)
+                            .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
                             .accessibilityIdentifier("project-name")
                     }
-                    .frame(minHeight: 44)
+                    .padding(.vertical, 4)
+                    .listRowSeparator(.hidden)
+                } header: {
+                    Text("Name").panelHeader()
                 }
+                .panelRows()
+                .listSectionSeparator(.hidden)
 
                 Section {
+                    // the card's own palette row, as wide as on the card
                     SwatchRow(selected: colour.rawValue) { colour = $0 }
-                        .padding(.vertical, 2)
+                        .frame(maxWidth: Self.paletteWidth, alignment: .leading)
+                        .listRowSeparator(.hidden)
                 } header: {
-                    Text("Colour").foregroundStyle(DesignColor.secondaryInk)
+                    Text("Colour").panelHeader()
                 } footer: {
                     Text("Its pins take this colour, unless a pin has its own.")
                         .foregroundStyle(DesignColor.secondaryInk)
                 }
+                .panelRows()
+                .listSectionSeparator(.hidden)
 
                 if let project {
                     Section {
@@ -86,42 +104,66 @@ struct ProjectEditor: View {
                             .foregroundStyle(DesignColor.ink)
                             .lineLimit(2 ... 8)
                             .focused($focus, equals: .note)
+                            .padding(12)
+                            .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
+                            .padding(.vertical, 4)
+                            .listRowSeparator(.hidden)
                             .accessibilityIdentifier("project-note")
                     } header: {
-                        Text("Note").foregroundStyle(DesignColor.secondaryInk)
+                        Text("Note").panelHeader()
                     }
+                    .panelRows()
+                    .listSectionSeparator(.hidden)
 
                     Section {
                         Button {
                             Self.toggleArchived(mode, fields: fields, in: store)
                             close()
                         } label: {
-                            Label(project.archivedAt == nil ? "Archive Project" : "Unarchive Project",
+                            Label(project.archivedAt == nil ? "Archive project" : "Unarchive project",
                                   systemImage: project.archivedAt == nil ? "archivebox" : "tray.and.arrow.up")
                                 .foregroundStyle(DesignColor.ink)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(.rect)
                         }
+                        .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                         .accessibilityIdentifier("project-archive")
                         Button(role: .destructive) {
                             model.deleteProject(project)
                             close()
                             deleted()
                         } label: {
-                            Label("Delete Project", systemImage: "trash")
+                            Label("Delete project", systemImage: "trash")
                                 .foregroundStyle(Color(uiColor: .systemRed))
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(.rect)
                         }
+                        .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                         .accessibilityIdentifier("project-delete")
                     } footer: {
                         Text(Self.footer(project, pins: store.pins(in: project).count))
                             .foregroundStyle(DesignColor.secondaryInk)
                     }
+                    .panelRows()
+                    .listSectionSeparator(.hidden)
                 }
             }
-            .navigationTitle(isNew ? "New Project" : "Edit Project")
+            .navigationTitle(isNew ? "New project" : "Edit project")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark", action: close)
-                        .accessibilityIdentifier("project-cancel")
+                    Button("Cancel", systemImage: "xmark") {
+                        if hasChanges { confirmDiscard = true } else { close() }
+                    }
+                    .accessibilityIdentifier("project-cancel")
+                    // anchored on ✕ (on iPad a popover points at it)
+                    .confirmationDialog("Discard your changes?", isPresented: $confirmDiscard, titleVisibility: .hidden) {
+                        Button("Discard changes", role: .destructive, action: close)
+                            .accessibilityIdentifier("project-discard")
+                        Button("Keep editing", role: .cancel) {}
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isNew ? "Create" : "Save", action: save)
@@ -140,6 +182,10 @@ struct ProjectEditor: View {
         }
         .accessibilityIdentifier("project-editor")
     }
+
+    /// The palette row's width: the card's (one row of eight 44 pt
+    /// targets), so both editors read as one palette.
+    static let paletteWidth: CGFloat = 8 * SwatchLayout.target - (SwatchLayout.target - SwatchRow.visual)
 
     static func footer(_ project: PinProject, pins: Int) -> String {
         let archive = project.archivedAt == nil
@@ -218,11 +264,13 @@ struct ProjectEditor: View {
 }
 
 extension View {
-    /// The project editor's presentation: the large (opaque) sheet on a
-    /// phone — at medium it would be glass over a busy list or card — and
-    /// a form sheet that fits its content on an iPad.
+    /// The project editor's (and Export's) presentation: the large
+    /// (opaque) sheet on a phone — at medium it would be glass over a busy
+    /// list or card — and the system's form sheet on an iPad, as Storage.
+    /// (Fitted to its content it collapsed to the title bar: a `List` has
+    /// no ideal height.)
     func projectEditorPresentation() -> some View {
         presentationDetents([.large])
-            .presentationSizing(.form.fitted(horizontal: false, vertical: true))
+            .presentationSizing(.form)
     }
 }
