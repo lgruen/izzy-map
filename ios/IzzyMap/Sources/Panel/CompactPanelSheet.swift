@@ -71,8 +71,15 @@ struct CompactPanelSheet: View {
             guard id == nil else { return }
             peek = 0
             updateFit(contentHeight)
-            detentBeforeEditing = nil
-            if !model.search.isActive { detent = fitDetent }
+            guard !model.search.isActive else { return }
+            if detentBeforeEditing != nil {
+                // a card field still has the keyboard (Delete while typing):
+                // the sheet goes to its glance once the editing ends — never
+                // a detent change under a keyboard that is still up
+                detentBeforeEditing = fitDetent
+            } else {
+                detent = fitDetent
+            }
         }
         // a pin card's title or note has the keyboard: room to type; after,
         // the sheet goes back — undoing only our own change: not when

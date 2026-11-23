@@ -152,9 +152,9 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
         app.typeText("Gate")
 
-        // the chip's menu: "All Pins…"
+        // the chip's menu: "All pins…"
         app.buttons["pin-project"].tap()
-        app.buttons["All Pins…"].tap()
+        app.buttons["All pins…"].tap()
         XCTAssertTrue(screen(app).waitForExistence(timeout: patience(5)), "the Pins screen from the chip")
         // a new project, confirmed with Return
         app.buttons["pins-new-project"].tap()
@@ -201,13 +201,13 @@ final class PinsTests: XCTestCase {
         XCTAssertEqual(title(app).value as? String, "Gate")
     }
 
-    /// The card's "New Project…" is the same editor; Create files the pin.
+    /// The card's "New project…" is the same editor; Create files the pin.
     @MainActor
     func testNewProjectFromTheCardFilesThePin() {
         let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"])
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
         app.buttons["pin-project"].tap()
-        app.buttons["New Project…"].tap()
+        app.buttons["New project…"].tap()
         let name = app.textFields["project-name"]
         XCTAssertTrue(name.waitForExistence(timeout: patience(3)))
         XCTAssertTrue(eventually(patience(3)) { name.hasFocus })

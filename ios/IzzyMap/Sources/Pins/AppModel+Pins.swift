@@ -308,6 +308,6 @@ struct PinsDeleteNow: Identifiable, Equatable {
         let what = parts.joined(separator: " and ")
         return PinsDeleteNow(target: .all, title: "Delete everything here now?",
                              message: "\(what.prefix(1).uppercased() + what.dropFirst()) — deleted for good. This can’t be undone.",
-                             button: "Delete All")
+                             button: "Delete all")
     }
 }

@@ -30,6 +30,18 @@ struct MGAFixture: Decodable { var name: String; var lat: Double; var lon: Doubl
             == "Map centre, latitude -42.88234, longitude 147.32720")
     }
 
+    /// The typeset form (cards): grouped metres with thin spaces, a true
+    /// minus and degree signs — the pasteable `text` stays plain ASCII.
+    @Test func displayStrings() {
+        #expect(GridReadout.mga.displayText(latitude: -42.88234, longitude: 147.3272)
+            == "MGA55 E\u{00A0}526\u{2009}720 N\u{00A0}5\u{2009}252\u{2009}199")
+        #expect(GridReadout.latLon.displayText(latitude: -42.88234, longitude: 147.3272)
+            == "\u{2212}42.88234°, 147.32720°")
+        // a northern / eastern-positive figure keeps no sign
+        #expect(GridReadout.latLon.displayText(latitude: 1.5, longitude: -0.25) == "1.50000°, \u{2212}0.25000°")
+        #expect(GridReadout.latLon.text(latitude: -42.88234, longitude: 147.3272).allSatisfy { $0.isASCII })
+    }
+
     /// Pasteable whatever the region format: no grouping, "." decimal, ASCII digits.
     @Test func readoutIgnoresTheDeviceLocale() {
         let text = GridReadout.latLon.text(latitude: -41.123456, longitude: 146.5)

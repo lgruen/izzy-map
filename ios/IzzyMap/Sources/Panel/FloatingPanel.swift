@@ -37,6 +37,13 @@ struct FloatingPanel: View {
         }
     }
 
+    /// The bottom fade of a card whose content doesn't fit.
+    private static let fade: CGFloat = 24
+
+    private func overflows(_ maxHeight: CGFloat) -> Bool {
+        model.cardPath.isEmpty && headerHeight + contentHeight > maxHeight + 1
+    }
+
     private func scroller(inset: CGFloat, maxHeight: CGFloat) -> some View {
         let hasBody = PanelContent.hasBody(model)
         return PanelStack(model: model) {
@@ -57,7 +64,18 @@ struct FloatingPanel: View {
                         .padding(.bottom, hasBody ? 14 : inset)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                 }
-                .scrollEdgeEffectStyle(.soft, for: .top)
+                .scrollEdgeEffectStyle(PanelContent.topEdge(model), for: .top)
+                // a card taller than the room (a phone on its side): the
+                // content fades out over the last 24 pt — it reads as
+                // "scrolls on", never as a row cut off flush with the edge
+                .mask {
+                    VStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .black.opacity(overflows(maxHeight) ? 0 : 1)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(height: Self.fade)
+                    }
+                }
                 .environment(\.panelActions, PanelActions(scrollTo: { id in
                     withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo(id, anchor: .top) }
                 }))

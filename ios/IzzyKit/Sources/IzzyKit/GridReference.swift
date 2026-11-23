@@ -96,6 +96,41 @@ public enum GridReadout: Sendable, Hashable {
         }
     }
 
+    /// The same figures typeset for reading (DESIGN.md §2 Numerals):
+    /// "MGA55 E 526 720 N 5 252 199" — easting and northing grouped in
+    /// threes by thin spaces (U+2009), as surveyors write them — or
+    /// "−42.88234°, 147.32720°" (a true minus, degree signs). For UI text
+    /// only: `text` is what a copy puts on the pasteboard, and never the
+    /// map (Latin-1 glyphs).
+    public func displayText(latitude: Double, longitude: Double) -> String {
+        switch self {
+        case .mga:
+            let (e, n) = Self.metres(latitude: latitude, longitude: longitude)
+            return "MGA55 E\u{00A0}\(Self.grouped(e)) N\u{00A0}\(Self.grouped(n))"
+        case .latLon:
+            return "\(Self.signed(Self.degrees(latitude)))°, \(Self.signed(Self.degrees(longitude)))°"
+        }
+    }
+
+    /// "5252199" → "5 252 199" with thin spaces.
+    private static func grouped(_ digits: String) -> String {
+        let negative = digits.hasPrefix("-")
+        var body = Array(negative ? digits.dropFirst() : Substring(digits))
+        var out: [Character] = []
+        while body.count > 3 {
+            out.insert(contentsOf: Array(body.suffix(3)), at: 0)
+            out.insert("\u{2009}", at: 0)
+            body.removeLast(3)
+        }
+        out.insert(contentsOf: body, at: 0)
+        return (negative ? "\u{2212}" : "") + String(out)
+    }
+
+    /// A leading hyphen-minus as a true minus sign (U+2212).
+    private static func signed(_ number: String) -> String {
+        number.hasPrefix("-") ? "\u{2212}" + number.dropFirst() : number
+    }
+
     /// What VoiceOver reads for the pill (same figures, words for the units).
     public func spokenText(latitude: Double, longitude: Double) -> String {
         switch self {

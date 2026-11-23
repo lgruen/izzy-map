@@ -5,9 +5,11 @@ import UIKit
 
 /// A saved pin's card (docs/PINS_PLAN.md §5): the glance — the map's mark,
 /// the title edited in place, the project chip, the photos (`PinPhotos`) —
-/// then colour, note, facts and the actions Move / Open in Maps / Delete.
-/// Title and note save as she types (`PinStore`, flushed when the card
-/// goes); nothing here is a modal.
+/// then the note (the content of a field notebook), the facts, the colour
+/// (the occasional tweak) and the actions Move / Open in Maps / Delete, on
+/// the vegetation card's rhythm: 24 pt between sections, 12 between fact
+/// rows, 8 from a label to what it labels. Title and note save as she
+/// types (`PinStore`, flushed when the card goes); nothing here is a modal.
 struct PinCard: View {
     let model: AppModel
     let store: PinStore
@@ -21,7 +23,7 @@ struct PinCard: View {
 
     var body: some View {
         if let pin = store.pin(pinID) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
                 header(pin)
                 // the chip, then the photo strip (or, with no photos yet, a
                 // compact "Add photo" beside the chip): both above the fold
@@ -33,16 +35,24 @@ struct PinCard: View {
                         model.present(.pins)
                     }
                 }
+                .padding(.top, 12)
                 // the bottom of the glance: the compact sheet's resting height
                 Color.clear.frame(height: 0)
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(PanelContent.space)).minY } action: {
                         actions.peek($0)
                     }
-                colourRow(pin)
                 note(pin)
+                    .padding(.top, Self.section)
                 facts(pin)
+                    .padding(.top, Self.section)
+                colourRow(pin)
+                    .padding(.top, Self.section)
+                // (the swatch row's 44 pt targets leave ~9 pt under the swatches)
                 actionRow(pin)
-                    .padding(.top, 4)
+                    .padding(.top, Self.section - 9)
+                    // moving: the map is where she acts; the card waits
+                    .opacity(model.movingPin == pin.id ? 0.35 : 1)
+                    .disabled(model.movingPin == pin.id)
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("pin-card")
@@ -80,6 +90,9 @@ struct PinCard: View {
         }
     }
 
+    /// Between the card's sections (DESIGN.md §2 Space).
+    static let section: CGFloat = 24
+
     private var projectEditorShown: Binding<Bool> {
         Binding(get: { model.pinProjectForm }, set: { if !$0 { model.pinProjectForm = false } })
     }
@@ -91,9 +104,11 @@ struct PinCard: View {
             PinMark(hex: PinColour.hex(forName: pin.effectiveColourName))
                 .padding(.top, 6)
             TextField("Title", text: Binding(get: { pin.title }, set: { store.setTitle(pin, $0) }),
-                      // the name it goes by meanwhile (the note's first line, or
-                      // "Pin · 24 Nov") — the same as the map label and the lists
-                      prompt: Text(pin.displayTitle).foregroundStyle(DesignColor.secondaryInk), axis: .vertical)
+                      // an invitation, not a name: quiet and regular, so an
+                      // untitled pin never looks titled (a note is never its
+                      // title, here or on the map)
+                      prompt: Text(Self.titlePrompt).foregroundStyle(DesignColor.secondaryInk).fontWeight(.regular),
+                      axis: .vertical)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DesignColor.ink)
                 .lineLimit(1 ... 3)
@@ -109,36 +124,55 @@ struct PinCard: View {
                 .frame(minHeight: 32)
                 .accessibilityIdentifier("pin-title")
             Spacer(minLength: 0)
-            CloseButton { model.clearSelection() }
+            CloseButton {
+                focus = nil
+                model.clearSelection()
+            }
         }
     }
 
+    /// The untitled pin's title field.
+    static let titlePrompt = "Add a title"
+
     // MARK: Colour
 
+    /// The eight swatches with the one in effect framed — the pin's own,
+    /// else its project's, else the standard colour. While the pin
+    /// overrides it, a text button gives it back ("Use project colour").
     private func colourRow(_ pin: SavedPin) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Colour")
-                    .font(.subheadline)
-                    .foregroundStyle(DesignColor.secondaryInk)
-                Spacer()
-                Button {
-                    store.setColour(pin, nil)
-                } label: {
-                    Label(pin.project == nil ? "Standard colour" : "Project colour",
-                          systemImage: pin.colour == nil ? "checkmark" : "arrow.uturn.backward")
-                        .font(.subheadline)
-                        .foregroundStyle(DesignColor.ink)
-                        .frame(minHeight: 44)
-                        .contentShape(.rect)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Colour")
+                .font(.subheadline)
+                .foregroundStyle(DesignColor.secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // (an overlay: showing it never moves the swatches)
+                .overlay(alignment: .trailing) {
+                    if let reset = Self.resetTitle(pin) {
+                        Button(reset) { store.setColour(pin, nil) }
+                            .font(.subheadline)
+                            .foregroundStyle(DesignColor.ink)
+                            .buttonStyle(.plain)
+                            .contentShape(.rect.inset(by: -12))
+                            .hoverEffect(.highlight)
+                            .accessibilityIdentifier("pin-colour-project")
+                            .transition(.opacity)
+                    }
                 }
-                .buttonStyle(.plain)
-                .hoverEffect(.highlight)
-                .accessibilityAddTraits(pin.colour == nil ? .isSelected : [])
-                .accessibilityIdentifier("pin-colour-project")
+            SwatchRow(selected: pin.effectiveColourName) { colour in
+                // the inherited colour picked: no override (the same as
+                // "Use project colour"), so a later project recolour follows
+                let inherited = PinColour.named(pin.project?.colour) ?? PinColour.standard
+                store.setColour(pin, colour == inherited ? nil : colour.rawValue)
             }
-            SwatchRow(selected: pin.colour) { store.setColour(pin, $0.rawValue) }
         }
+        .animation(.snappy, value: pin.colour)
+    }
+
+    /// "Use project colour" ("Use standard colour" when unfiled) while the
+    /// pin has a colour of its own; nil otherwise.
+    static func resetTitle(_ pin: SavedPin) -> String? {
+        guard pin.colour != nil else { return nil }
+        return pin.project == nil ? "Use standard colour" : "Use project colour"
     }
 
     // MARK: Note
@@ -158,14 +192,18 @@ struct PinCard: View {
     // MARK: Facts
 
     private func facts(_ pin: SavedPin) -> some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 8) {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 12) {
+            // typeset for reading; a tap copies the plain figures a GPS or
+            // LISTmap takes ("-42.87947, 147.31893")
             GridRow {
                 label("Position")
-                copyable(GridReadout.latLon.text(latitude: pin.lat, longitude: pin.lon), id: "pin-latlon")
+                copyable(GridReadout.latLon.displayText(latitude: pin.lat, longitude: pin.lon),
+                         copies: GridReadout.latLon.text(latitude: pin.lat, longitude: pin.lon), id: "pin-latlon")
             }
             GridRow {
                 label("Grid ref")
-                copyable(GridReadout.mga.text(latitude: pin.lat, longitude: pin.lon), id: "pin-mga")
+                copyable(GridReadout.mga.displayText(latitude: pin.lat, longitude: pin.lon),
+                         copies: GridReadout.mga.text(latitude: pin.lat, longitude: pin.lon), id: "pin-mga")
             }
             GridRow {
                 label("Placed")
@@ -184,7 +222,7 @@ struct PinCard: View {
         }
     }
 
-    /// "GPS ± 5 m · 312 m altitude" or "On the map".
+    /// "GPS ± 5 m · 312 m altitude" or "Placed by hand on the map".
     static func source(_ pin: SavedPin) -> String {
         switch pin.placement {
         case .gps:
@@ -192,7 +230,7 @@ struct PinCard: View {
             if let altitude = pin.altitude { parts.append("\(Self.metres(altitude)) altitude") }
             return parts.joined(separator: " · ")
         case .map:
-            return "On the map"
+            return "Placed by hand on the map"
         }
     }
 
@@ -207,10 +245,11 @@ struct PinCard: View {
             .gridColumnAlignment(.leading)
     }
 
-    /// A figure she may paste into LISTmap or a GPS: a tap copies it.
-    private func copyable(_ text: String, id: String) -> some View {
+    /// A figure she may paste into LISTmap or a GPS: shows `text`, a tap
+    /// copies `copies` (plain ASCII, no thin spaces or true minus).
+    private func copyable(_ text: String, copies: String, id: String) -> some View {
         Button {
-            UIPasteboard.general.string = text
+            UIPasteboard.general.string = copies
             copied = id
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
@@ -227,11 +266,13 @@ struct PinCard: View {
                     .font(.footnote)
                     .foregroundStyle(DesignColor.secondaryInk)
             }
-            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-            .contentShape(.rect)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // a fingertip's target without loosening the rows' rhythm
+            .contentShape(.rect.inset(by: -8))
         }
         .buttonStyle(.plain)
         .hoverEffect(.highlight)
+        .accessibilityValue(copies)
         .accessibilityHint("Copies it")
         .accessibilityIdentifier(id)
     }
@@ -245,13 +286,15 @@ struct PinCard: View {
                     focus = nil
                     model.startMovingPin()
                 } label: {
-                    Label("Tap the Map at the New Spot", systemImage: "hand.tap")
+                    Label("Move on map", systemImage: "hand.tap")
                 }
+                .accessibilityIdentifier("pin-move-on-map")
                 Button {
                     model.movePinToMyLocation()
                 } label: {
-                    Label("To My Location", systemImage: "location")
+                    Label("Move to my location", systemImage: "location")
                 }
+                .accessibilityIdentifier("pin-move-here")
             } label: {
                 ActionLabel(title: "Move", symbol: "arrow.up.and.down.and.arrow.left.and.right")
             }
@@ -267,6 +310,8 @@ struct PinCard: View {
             .accessibilityIdentifier("pin-open-maps")
 
             Button(role: .destructive) {
+                // the keyboard goes first: the card (and its field) is going
+                focus = nil
                 model.deletePin(pin.id)
             } label: {
                 ActionLabel(title: "Delete", symbol: "trash", destructive: true)
@@ -452,10 +497,10 @@ private struct ProjectChip: View {
             }
             Divider()
             Button(action: newProject) {
-                Label("New Project…", systemImage: "plus")
+                Label("New project…", systemImage: "plus")
             }
             Button(action: allPins) {
-                Label("All Pins…", systemImage: "list.bullet")
+                Label("All pins…", systemImage: "list.bullet")
             }
         } label: {
             HStack(spacing: 8) {
