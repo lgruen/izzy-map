@@ -95,6 +95,10 @@ struct PhotoViewer: View {
                     }
                 }
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { bottomText = $0 }
+                // the footer's whole band takes its taps (as the scrim did
+                // when it was always there): a tap meant for the caption
+                // never falls through to the photo and hides the chrome
+                .contentShape(.rect)
                 // the scrim travels with the text (up with the keyboard too)
                 .background(alignment: .bottom) { if scrims(over: bottomText) { shade } }
                 .transition(.opacity)
