@@ -447,11 +447,14 @@ private func freshStore(_ clock: DateBox = DateBox()) -> PinStore {
         s.deleteProject(site)
 
         let one = PinsDeleteNow.project(site, in: s)
-        #expect(one.title == "Delete “Gone” now?" && one.message.hasPrefix("The project and its 2 pins are"))
+        #expect(one.title == "Delete “Gone” now?" && one.message == "Its 2 pins go with it. This can’t be undone.")
         let all = PinsDeleteNow.all(in: s)
         // names everything it removes, the project's pins included
-        #expect(all.message.hasPrefix("1 project with its 2 pins and 1 pin deleted on its own"), "\(all.message)")
+        #expect(all.message == "1 project with its 2 pins and 1 pin deleted on its own. This can’t be undone.", "\(all.message)")
+        #expect(all.button == "Delete all")
         let pin = PinsDeleteNow.pin(lone)
+        // the title asks; the message says it once
+        #expect(pin.message == "This can’t be undone." && pin.button == "Delete")
         model.deleteNow(pin)
         #expect(s.anyPin(lone.id) == nil)
         model.deleteNow(pin)  // a second time: nothing left, nothing happens
@@ -543,9 +546,53 @@ private func freshStore(_ clock: DateBox = DateBox()) -> PinStore {
         let g = StorageGauge(parts: [.maps: 10, .pins: 2], capacity: nil, free: 100)
         #expect(g.izzyBytes == 12)
         #expect(g.segments.map(\.title) == ["Core maps", "Pins", "Free"])
+        // pins have a segment (and a key entry) of their own, named as the
+        // list's Pins section; the field guide and detailed areas share one
         let shared = StorageGauge(parts: [.extras: 3, .areas: 2, .pins: 1], capacity: nil, free: nil)
-        #expect(shared.segments.map(\.title) == ["Field guide, areas & pins"] && shared.izzyBytes == 6)
+        #expect(shared.segments.map(\.title) == ["Field guide & areas", "Pins"] && shared.izzyBytes == 6)
+        #expect(shared.segments.map(\.kind) == [.izzy(.extras), .izzy(.pins)])
         let two = StorageGauge(parts: [.extras: 3, .areas: 2], capacity: nil, free: nil)
         #expect(two.segments.map(\.title) == ["Field guide & areas"])
+    }
+
+    /// The bar is read literally: 10 MB of pins is a sliver beside 8.66 GB
+    /// of extra maps, never the same width (P-18: a 16 pt floor made all
+    /// four used segments ≈ 16 pt on a 154 GB phone).
+    @Test func gaugeWidthsAreProportionalWithAThinFloor() {
+        let mb: Int64 = 1_000_000
+        let g = StorageGauge(parts: [.maps: 3_730 * mb, .moreMaps: 8_660 * mb, .plantID: 909 * mb, .extras: 8 * mb, .pins: 10 * mb],
+                             capacity: 256_000 * mb, free: 138_000 * mb)
+        let w = g.widths(in: 500, minimum: StorageGaugeView.minimumSegment)
+        #expect(StorageGaugeView.minimumSegment <= 3)
+        #expect(w.count == 6)
+        // proportional where above the floor: extra maps ≈ 2.3 × core maps
+        #expect(abs(w[1] / w[0] - 8_660.0 / 3_730.0) < 0.01)
+        // the slivers: shown, but no wider than the floor
+        #expect(w[3] == StorageGaugeView.minimumSegment && w[4] == StorageGaugeView.minimumSegment)
+        #expect(w[1] > 5 * w[4])
+        #expect(abs(w.reduce(0, +) - 500) < 0.001)
+    }
+}
+
+/// The Pins screen's words (rows, the status line, Recently deleted).
+@Suite struct PinsScreenTextTests {
+    @Test func anUntitledRowSaysSoAndNeverShowsTheNoteAsItsTitle() {
+        #expect(PinsScreenText.rowTitle("  Gate ") == ("Gate", false))
+        #expect(PinsScreenText.rowTitle("") == ("Untitled pin", true))
+        #expect(PinsScreenText.rowTitle(" \n ") == ("Untitled pin", true))
+    }
+
+    @Test func theStatusLineNamesTheDeviceOnceAndNeverSaysZeroPins() {
+        #expect(PinsScreenText.sizeLine(pins: 25, photos: 32, deleted: 0, size: "10 MB") == "25 pins · 32 photos · 10 MB")
+        #expect(PinsScreenText.sizeLine(pins: 1, photos: 0, deleted: 4, size: "248 KB") == "1 pin · 248 KB")
+        #expect(PinsScreenText.sizeLine(pins: 0, photos: 0, deleted: 1, size: "3.2 MB")
+            == "No pins on the map · 1 in Recently deleted · 3.2 MB")
+        #expect(!PinsScreenText.sizeLine(pins: 3, photos: 1, deleted: 0, size: "1 MB").contains("on this"))
+    }
+
+    @Test func aDeletedRowNamesWhereItGoesBackFirstThenTheDaysLeft() {
+        #expect(PinsScreenText.deletedStatus(place: "Knocklofty Reserve", photos: 3, daysLeft: 30)
+            == "Knocklofty Reserve · 3 photos\n30 days left")
+        #expect(PinsScreenText.deletedStatus(place: "Unfiled", photos: 0, daysLeft: 1) == "Unfiled\n1 day left")
     }
 }

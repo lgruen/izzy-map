@@ -51,7 +51,7 @@ struct MapControls: View {
                 Divider()
                     .frame(width: Self.buttonSize - 20)
 
-                MapControlButton(symbol: "mappin.and.ellipse", label: "Pin My Location") {
+                MapControlButton(symbol: "mappin.and.ellipse", label: "Pin my location") {
                     model.pinCurrentLocation()
                 }
                 .accessibilityIdentifier("pin-button")

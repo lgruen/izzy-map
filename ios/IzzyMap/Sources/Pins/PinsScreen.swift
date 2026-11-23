@@ -18,6 +18,9 @@ nonisolated enum PinsRoute: Hashable, Sendable {
 struct PinsScreen: View {
     let model: AppModel
     let store: PinStore
+    /// Opened from the iPad's Layers popover, as Storage is: ✓ and the
+    /// last Escape go back to Layers (nil: the screen is the modal itself).
+    var done: (() -> Void)? = nil
     @State private var path: [PinsRoute] = []
     @State private var editor: ProjectEditor.Mode?
     @State private var showsArchived = false
@@ -33,18 +36,20 @@ struct PinsScreen: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            PinsHome(model: model, store: store, showsArchived: $showsArchived) { editor = .new }
+            PinsHome(model: model, store: store, showsArchived: $showsArchived, done: close) { editor = .new }
                 .navigationDestination(for: PinsRoute.self) { route in
                     switch route {
                     case let .project(id):
-                        ProjectPage(model: model, store: store, project: id, selection: $selection, export: { export = $0 }) { editor = .edit(id) }
-                    case .unfiled: ProjectPage(model: model, store: store, project: nil, selection: $selection, export: { export = $0 }) {}
-                    case .deleted: RecentlyDeletedPage(model: model, store: store)
+                        ProjectPage(model: model, store: store, project: id, selection: $selection, done: close, export: { export = $0 }) { editor = .edit(id) }
+                    case .unfiled: ProjectPage(model: model, store: store, project: nil, selection: $selection, done: close, export: { export = $0 }) {}
+                    case .deleted: RecentlyDeletedPage(model: model, store: store, done: close)
                     }
                 }
         }
-        .modalEscape(model, depth: path.count + (editor == nil && export == nil ? 0 : 1) + (selection == nil ? 0 : 1)) {
-            if export != nil { exportEscape += 1 } else if editor != nil { editor = nil } else if selection != nil { selection = nil } else if !path.isEmpty { path.removeLast() }
+        // over Layers (iPad) the screen itself is one level more: the last
+        // Escape goes back to Layers, as from Storage
+        .modalEscape(model, depth: depth + (done == nil ? 0 : 1)) {
+            if export != nil { exportEscape += 1 } else if editor != nil { editor = nil } else if selection != nil { selection = nil } else if !path.isEmpty { path.removeLast() } else { done?() }
         }
         .onChange(of: path) { selection = nil }
         .sheet(item: $export) { target in
@@ -99,6 +104,16 @@ struct PinsScreen: View {
         #endif
         .accessibilityIdentifier("pins-screen")
     }
+
+    /// Levels above the home page: a pushed page, picking pins, a sheet.
+    private var depth: Int {
+        path.count + (editor == nil && export == nil ? 0 : 1) + (selection == nil ? 0 : 1)
+    }
+
+    /// ✓: back to Layers when opened from it, else the whole screen closes.
+    private func close() {
+        if let done { done() } else { model.dismissModal() }
+    }
 }
 
 // MARK: - Home
@@ -107,21 +122,22 @@ private struct PinsHome: View {
     let model: AppModel
     let store: PinStore
     @Binding var showsArchived: Bool
+    let done: () -> Void
     let newProject: () -> Void
 
     private var isEmpty: Bool { store.pins.isEmpty && store.projects.isEmpty }
 
     var body: some View {
         PinsList {
-            Section {
-                NewProjectButton(action: newProject)
-                    .listRowSeparator(.hidden)
-                if isEmpty {
+            // nothing yet: the drawing teaches the two gestures; a project
+            // can wait (the toolbar's + makes one any time)
+            if isEmpty {
+                Section {
                     PinsEmptyState()
                         .listRowSeparator(.hidden)
                 }
+                .panelRows()
             }
-            .panelRows()
 
             // projects, then Unfiled as the list's last row (not a project:
             // a glyph, not a swatch)
@@ -199,9 +215,14 @@ private struct PinsHome: View {
             if hasPins || store.sync != nil {
                 Section {} footer: {
                     VStack(alignment: .leading, spacing: 4) {
+                        // where they are ("On this iPad only", "In iCloud"),
+                        // then what they take — the device named once
                         PinSyncLine(sync: store.sync)
                         if hasPins, let size = PinsStorageSection.size(bytes) {
-                            Text("\(PinText.count(pins: store.pins.count, photos: store.photoCount(store.pins))) · \(size) on this \(DeviceNoun.current)")
+                            Text(PinsScreenText.sizeLine(pins: store.pins.count, photos: store.photoCount(store.pins),
+                                               deleted: store.deletedPins.count
+                                                   + store.deletedProjects.reduce(0) { $0 + store.pinsDeleted(with: $1).count },
+                                               size: size))
                                 .monospacedDigit()
                                 .foregroundStyle(DesignColor.secondaryInk)
                                 .accessibilityIdentifier("pins-size")
@@ -212,7 +233,14 @@ private struct PinsHome: View {
         }
         .navigationTitle("Pins")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { DoneItem(model: model) }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("New project", systemImage: "plus", action: newProject)
+                    .keyboardShortcut("n")
+                    .accessibilityIdentifier("pins-new-project")
+            }
+            DoneItem(done: done)
+        }
         .task(id: store.saves) { bytes = await store.bytesOnDisk() }
     }
 
@@ -231,28 +259,6 @@ private struct PinsHome: View {
         if projects > 0 { parts.append("\(projects.formatted()) \(projects == 1 ? "project" : "projects")") }
         if pins > 0 { parts.append(PinText.count(pins)) }
         return parts.joined(separator: " · ") + " · kept 30 days"
-    }
-}
-
-/// "New project": the screen's point, first — the ink capsule Storage
-/// uses for "Download an area…". ⌘N on a keyboard.
-private struct NewProjectButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label("New project", systemImage: "plus")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Color(uiColor: .systemBackground))
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(DesignColor.ink, in: .capsule)
-                .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .hoverEffect(.highlight)
-        .keyboardShortcut("n")
-        .padding(.vertical, 4)
-        .accessibilityIdentifier("pins-new-project")
     }
 }
 
@@ -302,7 +308,7 @@ private struct ProjectRow: View {
 
     var body: some View {
         NavigationLink(value: PinsRoute.project(project.id)) {
-            PinsRowLabel(title: PinText.projectName(project.name), status: PinsHome.status(store.pins(in: project), in: store)) {
+            PinsRowLabel(title: PinText.projectName(project.name), status: PinsHome.status(store.pins(in: project), in: store), titleLines: 2) {
                 KeyBox(hex: PinColour.hex(forName: project.colour), opacity: 1, width: PinsMetrics.swatch, height: PinsMetrics.swatch)
             }
         }
@@ -322,11 +328,16 @@ private struct ProjectPage: View {
     let project: UUID?
     /// Picking pins to export (nil: not picking).
     @Binding var selection: Set<UUID>?
+    let done: () -> Void
     let export: (PinExportTarget) -> Void
     let edit: () -> Void
     /// The header (with the name) is on screen: the bar stays empty until
     /// it scrolls away, so the name is never shown twice.
     @State private var headerVisible = true
+    /// The page's width and where the header row's content sits in it:
+    /// the export bar lines up with the rows' edges.
+    @State private var pageFrame: CGRect = .zero
+    @State private var contentFrame: CGRect = .zero
 
     var body: some View {
         let record = project.flatMap { store.project($0) }
@@ -360,21 +371,29 @@ private struct ProjectPage: View {
                 .panelRows()
             }
         }
+        // both in window coordinates (a named space doesn't reach into
+        // the list's rows)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pageFrame = $0 }
         .navigationTitle(headerVisible ? "" : record.map { PinText.projectName($0.name) } ?? "Unfiled")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            DoneItem(model: model)
+            // picking pins: one way out, in words — no ✕ beside the ✓
+            // that would read as Cancel / Done
             if selection != nil {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark") { withAnimation(.snappy) { selection = nil } }
+                    Button("Cancel") { withAnimation(.snappy) { selection = nil } }
                         .accessibilityIdentifier("pins-select-cancel")
                 }
+            } else {
+                DoneItem(done: done)
             }
         }
         .navigationBarBackButtonHidden(selection != nil)
         .safeAreaInset(edge: .bottom) {
             if let chosen = selection {
-                ExportSelectionBar(count: chosen.count) {
+                let measured = contentFrame.width > 0 && pageFrame.width > 0
+                ExportSelectionBar(count: chosen.count, leading: measured ? max(0, contentFrame.minX - pageFrame.minX) : 16,
+                                   trailing: measured ? max(0, pageFrame.maxX - contentFrame.maxX) : 16) {
                     export(PinExportTarget(project: project, pins: chosen))
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -395,7 +414,8 @@ private struct ProjectPage: View {
                     Text(record.map { PinText.projectName($0.name) } ?? "Unfiled")
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(DesignColor.ink)
-                        .lineLimit(3)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("project-title")
                         .onScrollVisibilityChange(threshold: 0.5) { headerVisible = $0 }
@@ -418,36 +438,44 @@ private struct ProjectPage: View {
                     .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
-                if !archived {
-                    Button { model.showOnMap(pins) } label: {
-                        ActionLabel(title: "Show on map", symbol: "map")
-                    }
-                    .buttonStyle(.plain)
-                    .hoverEffect(.highlight)
-                    .disabled(pins.isEmpty)
-                    .opacity(pins.isEmpty ? 0.4 : 1)
-                    .accessibilityIdentifier("project-show")
-                }
-                Button { export(PinExportTarget(project: project, pins: nil)) } label: {
-                    ActionLabel(title: "Export", symbol: "square.and.arrow.up")
+            // while picking pins the bar at the foot is the one action
+            if selection == nil {
+                actions(record, pins: pins, archived: archived)
+            }
+        }
+        .padding(.vertical, 6)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { contentFrame = $0 }
+    }
+
+    private func actions(_ record: PinProject?, pins: [SavedPin], archived: Bool) -> some View {
+        HStack(spacing: 8) {
+            if !archived {
+                Button { model.showOnMap(pins) } label: {
+                    ActionLabel(title: "Show on map", symbol: "map")
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
                 .disabled(pins.isEmpty)
                 .opacity(pins.isEmpty ? 0.4 : 1)
-                .accessibilityIdentifier("project-export")
-                if record != nil {
-                    Button(action: edit) {
-                        ActionLabel(title: "Edit", symbol: "pencil")
-                    }
-                    .buttonStyle(.plain)
-                    .hoverEffect(.highlight)
-                    .accessibilityIdentifier("project-edit")
+                .accessibilityIdentifier("project-show")
+            }
+            Button { export(PinExportTarget(project: project, pins: nil)) } label: {
+                ActionLabel(title: "Export", symbol: "square.and.arrow.up")
+            }
+            .buttonStyle(.plain)
+            .hoverEffect(.highlight)
+            .disabled(pins.isEmpty)
+            .opacity(pins.isEmpty ? 0.4 : 1)
+            .accessibilityIdentifier("project-export")
+            if record != nil {
+                Button(action: edit) {
+                    ActionLabel(title: "Edit", symbol: "pencil")
                 }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .accessibilityIdentifier("project-edit")
             }
         }
-        .padding(.vertical, 6)
     }
 }
 
@@ -462,34 +490,28 @@ private struct PinRow: View {
     let show: () -> Void
 
     var body: some View {
-        let title = pin.displayTitle
-        let hasTitle = !pin.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let row = Self.title(pin)
+        let title = row.text
         let noteLine = PinText.firstLine(pin.note)
-        // an untitled pin is named by its note or its date: don't say it twice
-        let date = hasTitle || noteLine != nil ? PinText.shortDate(pin.createdAt) : nil
-        let hasPhoto = store.coverPhoto(of: pin) != nil
         Button(action: show) {
-            // a photo leads (square, centred on the text); else the mark,
-            // centred in the same box, on the first line
-            HStack(alignment: hasPhoto ? .center : .firstTextBaseline, spacing: 12) {
+            // one 40 pt lead column: the newest photo, or the map's mark on
+            // a key plate of the same size
+            HStack(alignment: .center, spacing: 12) {
                 PinRowMark(store: store, pin: pin, side: PinPhotoMetrics.row)
-                    .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(title)
-                            .foregroundStyle(DesignColor.ink)
+                            .foregroundStyle(row.untitled ? DesignColor.secondaryInk : DesignColor.ink)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        if let date {
-                            Text(date)
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .foregroundStyle(DesignColor.secondaryInk)
-                                .fixedSize()
-                        }
+                        Text(PinText.shortDate(pin.createdAt))
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignColor.secondaryInk)
+                            .fixedSize()
                     }
-                    if hasTitle, let noteLine {
+                    if let noteLine {
                         Text(noteLine)
                             .font(.subheadline)
                             .foregroundStyle(DesignColor.secondaryInk)
@@ -505,7 +527,37 @@ private struct PinRow: View {
         .hoverEffect(.highlight)
         .disabled(!enabled)
         .accessibilityAddTraits(selected == true ? .isSelected : [])
-        .accessibilityIdentifier("pin-row-\(title)")
+        .accessibilityIdentifier("pin-row-\(pin.displayTitle)")
+    }
+
+    static func title(_ pin: SavedPin) -> (text: String, untitled: Bool) { PinsScreenText.rowTitle(pin.title) }
+}
+
+/// The Pins screen's words that follow rules (unit-tested).
+nonisolated enum PinsScreenText {
+    /// A pin row's title: the pin's own, else "Untitled pin" (set in
+    /// secondary ink) — never its note, which has the second line, nor the
+    /// date, which every row shows trailing.
+    static func rowTitle(_ title: String) -> (text: String, untitled: Bool) {
+        let own = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return own.isEmpty ? ("Untitled pin", true) : (own, false)
+    }
+
+    /// The status line under the list: "25 pins · 32 photos · 10 MB";
+    /// with only deleted ones left, "No pins on the map · 1 in Recently
+    /// deleted · 3.2 MB" (never "0 pins" beside a size). The device is
+    /// named once, by the sync line above it.
+    static func sizeLine(pins: Int, photos: Int, deleted: Int, size: String) -> String {
+        if pins == 0, deleted > 0 { return "No pins on the map · \(deleted.formatted()) in Recently deleted · \(size)" }
+        return "\(PinText.count(pins: pins, photos: photos)) · \(size)"
+    }
+
+    /// A Recently deleted row's two lines: where it goes back to (and its
+    /// photos), then the days left — "Knocklofty Reserve · 3 photos" /
+    /// "12 days left".
+    static func deletedStatus(place: String, photos: Int, daysLeft: Int) -> String {
+        let first = place + (photos > 0 ? " · \(PinText.photoCount(photos))" : "")
+        return first + "\n" + (daysLeft == 1 ? "1 day left" : "\(daysLeft) days left")
     }
 }
 
@@ -516,28 +568,34 @@ private struct PinRow: View {
 private struct RecentlyDeletedPage: View {
     let model: AppModel
     let store: PinStore
+    let done: () -> Void
     @State private var confirm: PinsDeleteNow?
 
     var body: some View {
         PinsList {
             Section {
                 if !store.hasDeleted {
-                    Text("Nothing here.")
+                    Text("Nothing deleted in the last 30 days.")
                         .font(.subheadline)
                         .foregroundStyle(DesignColor.secondaryInk)
                         .padding(.vertical, 4)
                 }
                 ForEach(store.deletedProjects) { project in
                     let gone = store.pinsDeleted(with: project)
-                    DeletedRow(title: PinText.projectName(project.name),
-                               status: "\(PinText.count(pins: gone.count, photos: store.photoCount(gone))) · \(daysLeft(project.deletedAt))",
+                    DeletedRow(title: PinText.projectName(project.name), titleLines: 2,
+                               status: PinsScreenText.deletedStatus(place: PinText.count(gone.count), photos: store.photoCount(gone),
+                                                                    daysLeft: store.daysLeft(project.deletedAt)),
                                restore: { store.restoreProject(project) },
                                delete: { confirm = .project(project, in: store) }) {
                         KeyBox(hex: PinColour.hex(forName: project.colour), opacity: 1, width: PinsMetrics.swatch, height: PinsMetrics.swatch)
                     }
                 }
                 ForEach(store.deletedPins) { pin in
-                    DeletedRow(title: pin.displayTitle, status: Self.status(pin, photos: store.photoCount(of: pin), daysLeft: daysLeft(pin.deletedAt)),
+                    let row = PinRow.title(pin)
+                    DeletedRow(title: row.text, untitled: row.untitled,
+                               status: PinsScreenText.deletedStatus(place: Self.place(pin), photos: store.photoCount(of: pin),
+                                                                    daysLeft: store.daysLeft(pin.deletedAt)),
+                               identifier: pin.displayTitle,
                                restore: { store.restore(pin) },
                                delete: { confirm = .pin(pin) }) {
                         PinRowMark(store: store, pin: pin, side: PinsMetrics.swatch)
@@ -552,7 +610,7 @@ private struct RecentlyDeletedPage: View {
             if store.hasDeleted {
                 Section {
                     Button(role: .destructive) { confirm = .all(in: store) } label: {
-                        Text("Delete All Now")
+                        Text("Delete all now")
                             .foregroundStyle(Color(uiColor: .systemRed))
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                             .contentShape(.rect)
@@ -566,7 +624,7 @@ private struct RecentlyDeletedPage: View {
         }
         .navigationTitle("Recently deleted")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { DoneItem(model: model) }
+        .toolbar { DoneItem(done: done) }
         // overdue items go now, not only at launch (a long-running iPad)
         .onAppear { model.purgePins() }
         // the dialog shows words taken when it opened — never a record that
@@ -580,17 +638,7 @@ private struct RecentlyDeletedPage: View {
         }
     }
 
-    private func daysLeft(_ date: Date?) -> String {
-        let n = store.daysLeft(date)
-        return n == 1 ? "1 day left" : "\(n) days left"
-    }
-
-    /// "12 days left · Knocklofty · 3 photos" (no photo count without photos).
-    static func status(_ pin: SavedPin, photos: Int, daysLeft: String) -> String {
-        return "\(daysLeft) · \(place(pin))" + (photos > 0 ? " · \(PinText.photoCount(photos))" : "")
-    }
-
-    /// "Knocklofty", "Unfiled".
+    /// Where a pin goes back to: "Knocklofty", "Unfiled".
     static func place(_ pin: SavedPin) -> String {
         guard let project = pin.project, project.deletedAt == nil else { return "Unfiled" }
         return PinText.projectName(project.name)
@@ -599,14 +647,19 @@ private struct RecentlyDeletedPage: View {
 
 private struct DeletedRow<Mark: View>: View {
     let title: String
+    var titleLines = 1
+    var untitled = false
     let status: String
+    /// The row's id in UI tests (default: the title).
+    var identifier: String? = nil
     let restore: () -> Void
     let delete: () -> Void
     @ViewBuilder let mark: () -> Mark
 
     var body: some View {
+        let title = identifier ?? self.title
         HStack(spacing: 8) {
-            PinsRowLabel(title: title, status: status, mark: mark)
+            PinsRowLabel(title: self.title, status: status, titleLines: titleLines, statusLines: 2, untitled: untitled, mark: mark)
             Spacer(minLength: 0)
             Button(action: delete) {
                 Image(systemName: "trash")
@@ -632,8 +685,11 @@ enum PinsMetrics {
 }
 
 /// The list as Storage builds it: below the navigation bar behind a
-/// hairline, rows straight on the opaque sheet, compact section spacing.
-private struct PinsList<Content: View>: View {
+/// hairline, rows straight on the opaque sheet, compact section spacing —
+/// every Pins surface (the screen's pages, the project editor, Export).
+struct PinsList<Content: View>: View {
+    /// The list's side margins (nil: the system's, as Storage).
+    var horizontalMargin: CGFloat? = nil
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -643,14 +699,24 @@ private struct PinsList<Content: View>: View {
                 .panelListSurface()
                 .listSectionSpacing(.compact)
                 .contentMargins(.top, 8, for: .scrollContent)
+                .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
         }
+        // a pushed page keeps the sheet's own ground (the navigation
+        // container otherwise lays an opaque white page over it on iPad)
+        .containerBackground(.clear, for: .navigation)
     }
 }
 
-/// A row's mark, name (one line, truncated) and status line.
+/// A row's mark, name and status line. A project's name may take two
+/// lines (a long one keeps its distinguishing tail; beyond that the
+/// middle goes), a status line too where it carries two facts.
 private struct PinsRowLabel<Mark: View>: View {
     let title: String
-    let status: String
+    let status: String?
+    var titleLines = 1
+    var statusLines = 1
+    /// "Untitled pin": a stand-in, in secondary ink.
+    var untitled = false
     @ViewBuilder let mark: () -> Mark
 
     var body: some View {
@@ -658,14 +724,25 @@ private struct PinsRowLabel<Mark: View>: View {
             mark()
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .foregroundStyle(DesignColor.ink)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(status)
-                    .font(.subheadline)
-                    .monospacedDigit()
-                    .foregroundStyle(DesignColor.secondaryInk)
-                    .lineLimit(1)
+                    .foregroundStyle(untitled ? DesignColor.secondaryInk : DesignColor.ink)
+                    .lineLimit(titleLines)
+                    .truncationMode(titleLines > 1 ? .middle : .tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                // each line of the status its own (a narrow row may wrap the
+                // first — a project's name — but never drop the next)
+                if let status {
+                    let lines = status.split(separator: "\n").map(String.init)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
+                            Text(line)
+                                .font(.subheadline)
+                                .monospacedDigit()
+                                .foregroundStyle(DesignColor.secondaryInk)
+                                .lineLimit(i == 0 ? statusLines : 1)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
         }
         .padding(.vertical, 4)
@@ -689,13 +766,14 @@ struct GlyphSwatch: View {
     }
 }
 
-/// Done: closes the whole screen (as in Storage).
+/// Done: closes the whole screen — or goes back to Layers when opened from
+/// it (as in Storage).
 private struct DoneItem: ToolbarContent {
-    let model: AppModel
+    let done: () -> Void
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
-            Button("Done", systemImage: "checkmark") { model.dismissModal() }
+            Button("Done", systemImage: "checkmark", action: done)
                 .accessibilityIdentifier("pins-done")
         }
     }
@@ -705,46 +783,60 @@ private struct DoneItem: ToolbarContent {
 
 /// Storage → "Pins": how many, and what the store takes on this device,
 /// photos included (`PinStore.bytesOnDisk` walks the external-data folder).
-/// A state row, like the others; nothing to remove here — pins are deleted
-/// in Pins.
+/// A state row whose chevron leads to the Pins screen — pins are deleted
+/// there, nothing is removed here.
 struct PinsStorageSection: View {
     let store: PinStore
     /// The store on disk (StorageView measures it as the store saves).
     let bytes: Int64
+    /// Opens the Pins screen.
+    let open: () -> Void
     @State private var footprints = FootprintStore.shared
 
     var body: some View {
         Section {
-            HStack(spacing: 12) {
-                Group {
-                    if let outline = footprints.outline {
-                        TasmaniaMiniMap(outline: outline, marks: .pins(marks, radius: 2), scaleBar: false)
-                    } else {
-                        GlyphSwatch(symbol: "mappin.and.ellipse", side: StorageMetrics.thumbWidth)
-                    }
-                }
-                .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)
-                .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(Self.title(pins: store.pins.count, projects: store.projects.count))
-                        .foregroundStyle(DesignColor.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    StatusLine(symbol: StateSymbol.onDevice,
-                               text: "On this \(DeviceNoun.current)" + (Self.size(Int(bytes)).map { " · \($0)" } ?? ""),
-                               identifier: "pins-storage-status")
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 4)
-            .frame(minHeight: StorageMetrics.thumbHeight + 8)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("pins-storage")
+            Button(action: open) { row }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .accessibilityIdentifier("pins-storage")
         } header: {
             Text("Pins").panelHeader()
         } footer: {
             Text(PinSyncText.storageFooter(store.sync?.status ?? .localOnly, now: Date(), device: DeviceNoun.current))
                 .foregroundStyle(DesignColor.secondaryInk)
         }
+    }
+
+    private var row: some View {
+        HStack(spacing: 12) {
+            Group {
+                if let outline = footprints.outline {
+                    TasmaniaMiniMap(outline: outline, marks: .pins(marks, radius: 2), scaleBar: false)
+                } else {
+                    GlyphSwatch(symbol: "mappin.and.ellipse", side: StorageMetrics.thumbWidth)
+                }
+            }
+            .frame(width: StorageMetrics.thumbWidth, height: StorageMetrics.thumbHeight)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(Self.title(pins: store.pins.count, projects: store.projects.count))
+                    .foregroundStyle(DesignColor.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                StatusLine(symbol: StateSymbol.onDevice,
+                           text: "On this \(DeviceNoun.current)" + (Self.size(Int(bytes)).map { " · \($0)" } ?? ""),
+                           identifier: "pins-storage-status")
+            }
+            Spacer(minLength: 8)
+            // the system's disclosure chevron, as a NavigationLink draws it
+            Image(systemName: "chevron.forward")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .padding(.trailing, 2)
+        }
+        .padding(.vertical, 4)
+        .frame(minHeight: StorageMetrics.thumbHeight + 8)
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
     }
 
     /// Where her pins are (the map's drawing, small).

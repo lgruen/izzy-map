@@ -318,10 +318,13 @@ final class PinStore {
         }
     }
 
-    /// The first palette colour no active project uses yet (all used: the standard).
+    /// The first palette colour no active project uses yet — the standard
+    /// (Unfiled's) colour last, so filing a pin in a new project shows on
+    /// the map (all used: the standard).
     func nextProjectColour() -> PinColour {
         let used = Set(activeProjects.map(\.colour))
-        return PinColour.allCases.first { !used.contains($0.rawValue) } ?? PinColour.standard
+        let order = PinColour.allCases.filter { $0 != .standard } + [.standard]
+        return order.first { !used.contains($0.rawValue) } ?? PinColour.standard
     }
 
     // MARK: Pins

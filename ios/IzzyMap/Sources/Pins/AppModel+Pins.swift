@@ -238,14 +238,13 @@ struct PinsDeleteNow: Identifiable, Equatable {
     static func project(_ project: PinProject, in store: PinStore) -> PinsDeleteNow {
         let n = store.pinsDeleted(with: project).count
         return PinsDeleteNow(target: .project(project.id), title: "Delete “\(PinText.projectName(project.name))” now?",
-                             message: (n == 0 ? "The project is" : "The project and its \(PinText.count(n)) are")
-                                 + " deleted for good. This can’t be undone.",
+                             message: (n == 0 ? "" : "Its \(PinText.count(n)) go with it. ") + "This can’t be undone.",
                              button: "Delete")
     }
 
     static func pin(_ pin: SavedPin) -> PinsDeleteNow {
         PinsDeleteNow(target: .pin(pin.id), title: "Delete “\(pin.displayTitle)” now?",
-                      message: "The pin is deleted for good. This can’t be undone.", button: "Delete")
+                      message: "This can’t be undone.", button: "Delete")
     }
 
     /// Names everything it removes: the projects with the pins that went
@@ -265,7 +264,7 @@ struct PinsDeleteNow: Identifiable, Equatable {
         }
         let what = parts.joined(separator: " and ")
         return PinsDeleteNow(target: .all, title: "Delete everything here now?",
-                             message: "\(what.prefix(1).uppercased() + what.dropFirst()) — deleted for good. This can’t be undone.",
-                             button: "Delete All")
+                             message: "\(what.prefix(1).uppercased() + what.dropFirst()). This can’t be undone.",
+                             button: "Delete all")
     }
 }

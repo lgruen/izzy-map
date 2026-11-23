@@ -168,10 +168,22 @@ private func freshDefaults() -> UserDefaults {
 
     @Test func newProjectsTakeTheNextUnusedColour() {
         let s = store()
-        #expect(s.nextProjectColour() == .orange)
-        s.addProject(name: "A", colour: .orange)
-        s.addProject(name: "B", colour: .gold)
-        #expect(s.nextProjectColour() == .olive)
+        // the first project skips the standard (Unfiled's) orange: filing a
+        // fresh pin in it changes the mark
+        #expect(PinColour.standard == .orange)
+        #expect(s.nextProjectColour() == .gold)
+        s.addProject(name: "A", colour: .gold)
+        s.addProject(name: "B", colour: .olive)
+        #expect(s.nextProjectColour() == .teal)
+        // a project already in orange doesn't change the order of the rest
+        s.addProject(name: "C", colour: .orange)
+        #expect(s.nextProjectColour() == .teal)
+        // the standard comes only once the other seven are taken
+        for colour in [PinColour.teal, .violet, .magenta, .pink] { s.addProject(name: colour.title, colour: colour) }
+        let t = store()
+        for colour in PinColour.allCases where colour != .standard { t.addProject(name: colour.title, colour: colour) }
+        #expect(t.nextProjectColour() == .standard)
+        #expect(s.nextProjectColour() == .brown)
     }
 
     /// An import (another context's save — how CloudKit records will

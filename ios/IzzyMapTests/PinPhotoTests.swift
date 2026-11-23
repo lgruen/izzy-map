@@ -496,6 +496,31 @@ private let hobart = TimeZone(identifier: "Australia/Hobart")!
         // none left: the viewer closes
         #expect(PinViewerSelection.resolve(selected: a, in: [], lastIndex: 0) == nil)
     }
+
+    /// The line under a caption: when it was taken, nothing else (I-10).
+    @Test func aPhotosFactsAreItsDateAndTimeOnly() {
+        let hobart = TimeZone(identifier: "Australia/Hobart")!
+        let date = DateComponents(calendar: Calendar(identifier: .gregorian), timeZone: hobart,
+                                  year: 2026, month: 11, day: 24, hour: 4, minute: 31).date!
+        let facts = PinPhotoFooter.facts(date, locale: Locale(identifier: "en_AU"), timeZone: hobart)
+        #expect(facts.hasPrefix("24 Nov 2026, 4:31") && facts.hasSuffix("am"), "\(facts)")
+        #expect(!facts.contains("×") && !facts.contains("MB") && !facts.contains("KB") && !facts.contains(" at "))
+    }
+
+    /// Where a photo sits decides whether the viewer's text needs a scrim
+    /// (I-11): on a letterbox's or a pillarbox's black, none.
+    @Test func aPhotoFitsTheScreenLetterOrPillarboxed() {
+        let landscape = CGRect(x: 0, y: 0, width: 1366, height: 1024)
+        // a 3:4 portrait photo on a landscape iPad: ~300 pt of black each side
+        let portrait = PhotoFit.rect(aspect: 0.75, in: landscape)
+        #expect(abs(portrait.width - 768) < 0.5 && portrait.height == 1024)
+        #expect(abs(portrait.minX - 299) < 0.5 && portrait.minX >= PhotoViewerMeasure.marginForText)
+        // a 4:3 photo on a portrait iPad: letterboxed, the title row on black
+        let tall = CGRect(x: 0, y: 0, width: 1024, height: 1366)
+        let wide = PhotoFit.rect(aspect: 4.0 / 3.0, in: tall)
+        #expect(wide.width == 1024 && abs(wide.minY - 299) < 0.5)
+        #expect(!wide.intersects(CGRect(x: 16, y: 8, width: 300, height: 44)))
+    }
 }
 
 // MARK: - Migration
