@@ -133,7 +133,10 @@ struct PackQueueTests {
         let store = await PackStore.testing(system: system, defaults: defaults(), tuning: Self.tuning)
         defer { store.shutdown() }
         store.fetch(.season2023)
-        #expect(await eventually { store.state(.season2023).isInstalled })
+        // installed AND settled: `refresh()` (or the watchdog's) can mark it
+        // installed while `process` is still suspended before `finish`
+        // clears the retry count (CI, 2026-11-23: retries read 2 here)
+        #expect(await eventually { store.state(.season2023).isInstalled && store.current == nil })
         #expect(system.requests == ["season-2023", "season-2023", "season-2023"])
         #expect(store.errorLog[.season2023]?.count == 2)
         #expect(store.retries[.season2023] == nil)

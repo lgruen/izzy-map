@@ -36,9 +36,12 @@ final class PinPhotosTests: XCTestCase {
     @MainActor private func card(_ app: XCUIApplication) -> XCUIElement { app.descendants(matching: .any)["pin-card"].firstMatch }
     @MainActor private func viewer(_ app: XCUIApplication) -> XCUIElement { app.descendants(matching: .any)["photo-viewer"].firstMatch }
     @MainActor private func thumb(_ app: XCUIApplication, _ i: Int) -> XCUIElement { app.buttons["pin-photo-\(i)"] }
+    /// One resolution, not `exists` then `label`: the page count goes away
+    /// when a delete leaves one photo, and an element that vanishes between
+    /// the two queries makes `.label` FAIL the test (CI, 2026-11-23) instead
+    /// of reading as "gone". `snapshot()` throws instead (SearchTests' way).
     @MainActor private func pageLabel(_ app: XCUIApplication) -> String? {
-        let label = app.staticTexts["photo-viewer-page"]
-        return label.exists ? label.label : nil
+        (try? app.staticTexts["photo-viewer-page"].snapshot())?.label
     }
 
     @MainActor
