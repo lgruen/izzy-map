@@ -41,6 +41,30 @@ nonisolated enum PinFraming {
         return b
     }
 
+    /// Keeping a selected pin in sight (`MapCoordinator.revealSelectedPin`):
+    /// a pin this far inside the uncovered map shows whole — its ring (19 pt)
+    /// at the sides and top, its label underneath.
+    static let comfort = UIEdgeInsets(top: 24, left: 24, bottom: 40, right: 24)
+    /// Where a hidden pin is brought to: well inside, not grazing an edge.
+    static let revealInset = UIEdgeInsets(top: 56, left: 48, bottom: 72, right: 48)
+    /// Less uncovered map than this (the large detent): nowhere to show it.
+    static let revealMinimum = CGSize(width: 120, height: 120)
+
+    /// How far (in points) the pin at `pin` must move to sit comfortably
+    /// inside `free`, the map no chrome covers: nil when it already does,
+    /// or when `free` is too small to show it in. The smallest move: the
+    /// pin goes to the nearest point of the inner frame (`revealInset`),
+    /// or the middle of `free` when that frame is empty.
+    static func revealShift(pin: CGPoint, free: CGRect) -> CGVector? {
+        guard free.width >= revealMinimum.width, free.height >= revealMinimum.height else { return nil }
+        if free.inset(by: comfort).contains(pin) { return nil }
+        let inner = free.inset(by: revealInset)
+        let target = inner.width > 0 && inner.height > 0
+            ? CGPoint(x: min(max(pin.x, inner.minX), inner.maxX), y: min(max(pin.y, inner.minY), inner.maxY))
+            : CGPoint(x: free.midX, y: free.midY)
+        return CGVector(dx: target.x - pin.x, dy: target.y - pin.y)
+    }
+
     /// Absolute insets for the fit: the chrome (`framing`) plus a margin.
     static func margin(framing: UIEdgeInsets, in size: CGSize) -> UIEdgeInsets {
         let free = CGSize(width: max(0, size.width - framing.left - framing.right),

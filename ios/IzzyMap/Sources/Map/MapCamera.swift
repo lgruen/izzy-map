@@ -13,8 +13,28 @@ import UIKit
 nonisolated enum MapFraming {
     /// `bounds`: the map view's bounds (window coordinates: the map is
     /// full-window). `safe`: the safe-area insets. `obstructions`: chrome
-    /// frames in the same coordinates.
+    /// frames in the same coordinates. A piece that covers the whole free
+    /// area (the phone's sheet at its large detent) leaves it as it was —
+    /// flights still need somewhere to aim — unless `collapsesWhenCovered`:
+    /// then nothing is free (nil), for a caller that must SEE the result.
     static func insets(bounds: CGRect, safe: UIEdgeInsets, obstructions: [CGRect]) -> UIEdgeInsets {
+        free(bounds: bounds, safe: safe, obstructions: obstructions, collapsesWhenCovered: false)
+            .map { insets(of: $0, in: bounds) } ?? .zero
+    }
+
+    /// The uncovered map as insets, or nil when chrome covers all of it.
+    static func visibleInsets(bounds: CGRect, safe: UIEdgeInsets, obstructions: [CGRect]) -> UIEdgeInsets? {
+        free(bounds: bounds, safe: safe, obstructions: obstructions, collapsesWhenCovered: true)
+            .map { insets(of: $0, in: bounds) }
+    }
+
+    private static func insets(of free: CGRect, in bounds: CGRect) -> UIEdgeInsets {
+        UIEdgeInsets(top: free.minY - bounds.minY, left: free.minX - bounds.minX,
+                     bottom: bounds.maxY - free.maxY, right: bounds.maxX - free.maxX)
+    }
+
+    private static func free(bounds: CGRect, safe: UIEdgeInsets, obstructions: [CGRect],
+                             collapsesWhenCovered: Bool) -> CGRect? {
         var free = bounds.inset(by: safe)
         // biggest first: a sheet decides before a pill beside it
         let sorted = obstructions.filter { !$0.isNull && !$0.isEmpty }
@@ -24,20 +44,26 @@ nonisolated enum MapFraming {
             for o in sorted {
                 let hit = free.intersection(o)
                 guard !hit.isNull, hit.width > 0.5, hit.height > 0.5 else { continue }
+                // (sizes clamped at 0: a CGRect's width and height read
+                // standardised, so a negative one would pass as positive —
+                // a piece reaching past the free area's edge offered a
+                // phantom strip beyond it)
                 let options: [CGRect] = [
-                    CGRect(x: free.minX, y: o.maxY, width: free.width, height: free.maxY - o.maxY),  // top down
-                    CGRect(x: free.minX, y: free.minY, width: free.width, height: o.minY - free.minY),  // bottom up
-                    CGRect(x: o.maxX, y: free.minY, width: free.maxX - o.maxX, height: free.height),  // leading across
-                    CGRect(x: free.minX, y: free.minY, width: o.minX - free.minX, height: free.height),  // trailing in
+                    CGRect(x: free.minX, y: o.maxY, width: free.width, height: max(0, free.maxY - o.maxY)),  // top down
+                    CGRect(x: free.minX, y: free.minY, width: free.width, height: max(0, o.minY - free.minY)),  // bottom up
+                    CGRect(x: o.maxX, y: free.minY, width: max(0, free.maxX - o.maxX), height: free.height),  // leading across
+                    CGRect(x: free.minX, y: free.minY, width: max(0, o.minX - free.minX), height: free.height),  // trailing in
                 ].filter { $0.width > 0 && $0.height > 0 }
-                guard let best = options.max(by: { $0.width * $0.height < $1.width * $1.height }) else { continue }
+                guard let best = options.max(by: { $0.width * $0.height < $1.width * $1.height }) else {
+                    if collapsesWhenCovered { return nil }
+                    continue
+                }
                 free = best
                 changed = true
             }
             if !changed { break }
         }
-        return UIEdgeInsets(top: free.minY - bounds.minY, left: free.minX - bounds.minX,
-                            bottom: bounds.maxY - free.maxY, right: bounds.maxX - free.maxX)
+        return free
     }
 }
 

@@ -39,31 +39,41 @@ private func freshStore(_ clock: DateBox = DateBox()) -> PinStore {
         let s = freshStore()
         let pin = s.addPin(latitude: -42.9, longitude: 147.3, placedBy: .map)
         #expect(pin.displayTitle.hasPrefix("Pin · "))
-        // no title, no note: the rows and the card say "Pin · <date>", the
-        // map draws no label (dates would clutter it)
+        // no title, no note: the map draws no label (dates would clutter it)
         #expect(PinPresenter.label(pin) == nil)
         #expect(PinPresenter.features([pin]).first?.attribute(forKey: "label") as? String == "")
+        // a note is never the map label (I-20: a note is no name)
         s.setNote(pin, "Smith’s gully – north side\nmore")
-        #expect(pin.displayTitle == "Smith’s gully – north side")
+        #expect(PinPresenter.features([pin]).first?.attribute(forKey: "label") as? String == "")
+        // a title is, folded to Latin-1
+        s.setTitle(pin, "Smith’s gully – north side")
         #expect(PinPresenter.features([pin]).first?.attribute(forKey: "label") as? String == "Smith's gully - north side")
         s.setTitle(pin, "Nest 🐦")
-        // a title of its own wins, even one the map can't draw (no label then)
+        // one the map can't draw: no label rather than a dropped one
         #expect(pin.displayTitle == "Nest 🐦" && PinPresenter.label(pin) == nil)
     }
 
-    @Test func aNoteSignalsTheMapOnlyWhenItRenamesAnUntitledPin() {
+    @Test func aNoteNeverSignalsTheMap() {
         let s = freshStore()
         let pin = s.addPin(latitude: -42.9, longitude: 147.3, placedBy: .map)
         var before = s.revision
-        s.setNote(pin, "Seep")
-        #expect(s.revision > before)
-        before = s.revision
-        s.setNote(pin, "Seep\nsecond line")  // same first line: same label
+        s.setNote(pin, "Seep")  // untitled: still no label (I-20)
         #expect(s.revision == before)
         s.setTitle(pin, "Gate")
+        #expect(s.revision > before)
         before = s.revision
         s.setNote(pin, "Anything")  // titled: the note never shows on the map
         #expect(s.revision == before)
+    }
+
+    /// Long titles are clipped on a word boundary before the map folds them.
+    @Test func aLongTitleIsClippedForTheMap() throws {
+        let s = freshStore()
+        let pin = s.addPin(latitude: -42.9, longitude: 147.3, placedBy: .map)
+        s.setTitle(pin, "Wattle regrowth along the fire trail below the old quarry gate")
+        let label = try #require(PinPresenter.label(pin))
+        #expect(label.hasSuffix("...") && label.count <= PinPresenter.labelLimit + 3)
+        #expect(MapText.isLatin1(label))
     }
 
     @Test func dateRangesReadLikeTheSingleDates() {

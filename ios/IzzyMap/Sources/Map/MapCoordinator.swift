@@ -44,7 +44,7 @@ final class MapCoordinator: NSObject {
     /// Saved pins' runtime layers (Pins/PinPresenter.swift).
     let pinMarks = PinPresenter()
     /// The pin the selection ring is drawn on, and where.
-    private var ringedPin: (id: UUID, latitude: Double, longitude: Double)?
+    private var ringedPin: (id: UUID, latitude: Double, longitude: Double, colour: String)?
     private var appliedLocationRequest = 0
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Map")
 
@@ -96,6 +96,12 @@ final class MapCoordinator: NSObject {
         self.map = map
         map.delegate = self
         map.automaticallyAdjustsContentInset = false
+        // MapLibre draws the user dot (and its heading arrow) in the map
+        // view's tint, which would otherwise inherit the app's ink tint: a
+        // black dot reads as a pin. System blue is the platform's location
+        // colour (DESIGN.md §2 `location`), set on the map view only — the
+        // chrome stays ink.
+        map.tintColor = .systemBlue
         map.showsLogoView = false
         // The app owns attribution (Attribution.swift + its own (i) control):
         // MapLibre's button would list PMTiles metadata, not our credits.
@@ -188,7 +194,11 @@ final class MapCoordinator: NSObject {
             camera.contentInsetChanged()
             camera.resume(interrupted, on: map)
         }
+        let insetsChanged = appliedChrome?.visibleInsets != chrome.visibleInsets
         appliedChrome = chrome
+        // the sheet changed detent, the card appeared or grew: the selected
+        // pin may now be under it
+        if insetsChanged { scheduleRevealPin(map) }
         let compassWidth = map.compassView.bounds.width > 0 ? map.compassView.bounds.width : 40
         map.compassViewMargins = CGPoint(
             x: max(0, chrome.controlsCentreFromTrailing - compassWidth / 2),
@@ -294,22 +304,74 @@ final class MapCoordinator: NSObject {
     /// the other device) closes its card.
     func apply(pins store: PinStore?, selectedPin: UUID?, to map: MLNMapView) {
         guard let store else { return }
-        pinMarks.apply(store, visible: model.layers.pins, to: map)
+        pinMarks.apply(store, visible: model.layers.pins, selected: selectedPin, to: map)
+        if selectedPin != revealFor {
+            revealFor = selectedPin
+            scheduleRevealPin(map)
+        }
         guard let id = selectedPin else { return }
         guard let pin = store.pin(id), pin.isOnMap else {
             // (not during SwiftUI's view update)
             Task { [model] in if model.selection?.pinID == id { model.clearSelection() } }
             return
         }
-        if ringedPin?.id != id || ringedPin?.latitude != pin.lat || ringedPin?.longitude != pin.lon { ringPin(id) }
+        let colour = pin.effectiveColourName
+        if ringedPin?.id != id || ringedPin?.latitude != pin.lat || ringedPin?.longitude != pin.lon
+            || ringedPin?.colour != colour { ringPin(id) }
     }
 
     private func ringPin(_ id: UUID) {
         guard let pin = model.pins?.pin(id) else { return }
         // a polygon tapped before must not get its outline back at the next idle
         anchor = nil
-        ringedPin = (id, pin.lat, pin.lon)
+        ringedPin = (id, pin.lat, pin.lon, pin.effectiveColourName)
         showSelection(featureID: nil, shape: PinPresenter.selectionShape(pin))
+    }
+
+    // MARK: Keep the selected pin in sight
+
+    /// The pin selection the reveal last looked at.
+    private var revealFor: UUID?
+    private var revealWork: DispatchWorkItem?
+    /// How long after the chrome last changed the reveal looks (the
+    /// phone's sheet takes ~0.35 s to settle at a new detent).
+    static let revealDelay: TimeInterval = 0.45
+
+    /// A pin selected (a tap, a long-press, the pin button, Undo, a row in
+    /// Pins) or the chrome round it changed (the sheet's detent, the card
+    /// growing, a banner): once the chrome has settled, a selected pin
+    /// hidden under the sheet, the card or a pill comes back into the map
+    /// she can see. The comparison gesture needs the thing she tapped in
+    /// sight; a pin already comfortably visible never moves the map.
+    private func scheduleRevealPin(_ map: MLNMapView) {
+        revealWork?.cancel()
+        revealWork = nil
+        guard model.selection?.pinID != nil else { return }
+        let item = DispatchWorkItem { [weak self, weak map] in
+            MainActor.assumeIsolated {
+                guard let self, let map else { return }
+                self.revealSelectedPin(map)
+            }
+        }
+        revealWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealDelay, execute: item)
+    }
+
+    /// The camera move itself (also called directly by tests): the
+    /// smallest pan that brings the selected pin inside the uncovered map
+    /// with room for its ring and label — nothing while a flight, a move
+    /// or following holds the camera, or when the sheet leaves too little
+    /// map to show it in (the large detent).
+    func revealSelectedPin(_ map: MLNMapView, animated: Bool = !UIAccessibility.isReduceMotionEnabled) {
+        guard let id = model.selection?.pinID, let pin = model.pins?.pin(id), pin.isOnMap,
+              model.movingPin == nil, model.trackingMode == .off, camera.flightUnderWay == nil,
+              let framing = appliedChrome?.visibleInsets else { return }
+        let free = map.bounds.inset(by: framing)
+        let point = map.convert(CLLocationCoordinate2D(latitude: pin.lat, longitude: pin.lon), toPointTo: map)
+        guard let shift = PinFraming.revealShift(pin: point, free: free) else { return }
+        let centre = map.convert(map.centerCoordinate, toPointTo: map)
+        let target = map.convert(CGPoint(x: centre.x - shift.dx, y: centre.y - shift.dy), toCoordinateFrom: map)
+        camera.setCenter(map, target, zoom: map.zoomLevel, animated: animated)
     }
 
     private var appliedPinFocus: Int?
@@ -380,7 +442,7 @@ final class MapCoordinator: NSObject {
             pins.setColour(pin, colour.rawValue)
         }
         // on the map now, so the next idle (a `-debugTaps` tap) finds them drawn
-        pinMarks.apply(pins, visible: model.layers.pins, to: map)
+        pinMarks.apply(pins, visible: model.layers.pins, selected: model.selection?.pinID, to: map)
     }
     #endif
 
@@ -757,6 +819,8 @@ extension MapCoordinator: MLNMapViewDelegate {
             userMovedCamera = true
             // a flight still waiting for the chrome to settle is hers no more
             camera.gestureBegan()
+            revealWork?.cancel()
+            revealWork = nil
         }
         if model.map.isIdle { model.map.isIdle = false }
     }
@@ -826,7 +890,9 @@ extension MapCoordinator: MLNMapViewDelegate {
         // … and with its own paint and none of the runtime layers: a soloed
         // community's fade and presence cells again
         spotlights.styleLoaded(mapView, model: model)
-        if let pins = model.pins { pinMarks.styleLoaded(mapView, store: pins, visible: model.layers.pins) }
+        if let pins = model.pins {
+            pinMarks.styleLoaded(mapView, store: pins, visible: model.layers.pins, selected: model.selection?.pinID)
+        }
         refreshVisibleSources(mapView)
         model.map.zoom = mapView.zoomLevel
         Self.hideOrnaments(mapView)

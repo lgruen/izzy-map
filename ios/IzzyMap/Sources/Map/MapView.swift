@@ -20,6 +20,9 @@ nonisolated struct MapChrome: Equatable, Sendable {
     /// bounds — measured frames (`MapFraming`). A camera that frames an
     /// extent keeps it inside.
     var framingInsets: UIEdgeInsets = .zero
+    /// The same, but nil when chrome covers the whole map (the phone's
+    /// sheet at its large detent): what a selected pin is kept inside.
+    var visibleInsets: UIEdgeInsets?
     /// While framing a detailed area: the dashed frame, in the map view's
     /// coordinates (its box on the ground goes to `MapLiveState.framedBox`).
     var areaFrame: CGRect?

@@ -30,6 +30,39 @@ import UIKit
         #expect(free.height > 400)
     }
 
+    /// The phone's sheet at its large detent covers the whole map: nothing
+    /// is visible (a selected pin is not "revealed" into a phantom strip),
+    /// while flights keep an aim (the whole map, as before).
+    @Test func aSheetCoveringTheMapLeavesNothingVisible() {
+        let bounds = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let safe = UIEdgeInsets(top: 47, left: 0, bottom: 34, right: 0)
+        let sheet = CGRect(x: 0, y: 47, width: 390, height: 797)
+        let controls = CGRect(x: 326, y: 63, width: 48, height: 145)
+        let grid = CGRect(x: 0, y: 224, width: 203, height: 50)  // capped under the controls
+        #expect(MapFraming.visibleInsets(bounds: bounds, safe: safe, obstructions: [controls, grid, sheet]) == nil)
+        let aim = MapFraming.insets(bounds: bounds, safe: safe, obstructions: [controls, grid, sheet])
+        #expect(bounds.inset(by: aim).height > 0)
+        // the medium detent: the map above the sheet is visible
+        let medium = CGRect(x: 8, y: 400, width: 374, height: 444)
+        let visible = MapFraming.visibleInsets(bounds: bounds, safe: safe, obstructions: [controls, medium])
+        #expect(visible.map { bounds.inset(by: $0).maxY } == 400)
+    }
+
+    /// The selected pin: no move while comfortably in sight; the smallest
+    /// move otherwise; none without room.
+    @Test func revealShiftMovesAHiddenPinIntoSightAndLeavesAVisibleOne() throws {
+        let free = CGRect(x: 0, y: 47, width: 326, height: 500)
+        #expect(PinFraming.revealShift(pin: CGPoint(x: 160, y: 300), free: free) == nil)
+        // under the sheet: up to the inner frame's bottom edge, x kept
+        let below = try #require(PinFraming.revealShift(pin: CGPoint(x: 160, y: 620), free: free))
+        #expect(below.dx == 0 && 620 + below.dy == free.maxY - PinFraming.revealInset.bottom)
+        // beside the controls (right of the free area): left, y kept
+        let right = try #require(PinFraming.revealShift(pin: CGPoint(x: 350, y: 300), free: free))
+        #expect(right.dy == 0 && 350 + right.dx == free.maxX - PinFraming.revealInset.right)
+        // the large detent's sliver: no room, no move
+        #expect(PinFraming.revealShift(pin: CGPoint(x: 160, y: 620), free: CGRect(x: 0, y: 47, width: 390, height: 60)) == nil)
+    }
+
     @Test func iPadLandscapeKeepsClearOfTheCardAndOrnaments() {
         let bounds = CGRect(x: 0, y: 0, width: 1210, height: 834)
         let safe = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
