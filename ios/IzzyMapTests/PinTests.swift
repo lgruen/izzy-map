@@ -687,7 +687,7 @@ private func freshDefaults() -> UserDefaults {
         let m = model()
         m.dropPin(at: Self.here)
         let pin = try #require(m.selectedPin)
-        #expect(PinCard.source(pin) == "Placed by hand on the map")
+        #expect(PinCard.source(pin) == "By hand on the map")
         // the colour in effect, no override: no reset button
         #expect(PinCard.resetTitle(pin) == nil)
         m.pins!.setColour(pin, PinColour.teal.rawValue)

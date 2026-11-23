@@ -18,6 +18,8 @@ final class PinsTests: XCTestCase {
 
     /// Where the tests press: open map, clear of the controls and the sheet.
     private static let spot = CGVector(dx: 0.45, dy: 0.4)
+    /// Open map away from the pin, on the phone and beside the iPad's card.
+    private static let emptySpot = CGVector(dx: 0.7, dy: 0.25)
 
     @MainActor
     private func launch(_ extra: [String] = []) -> XCUIApplication {
@@ -42,8 +44,8 @@ final class PinsTests: XCTestCase {
         XCTAssertFalse(card(app).exists)
         app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "a long-press opens the new pin's card")
-        // (the facts row reads as one element: "<date>, Placed by hand on the map")
-        XCTAssertTrue(app.staticTexts["pin-source"].firstMatch.label.hasSuffix("Placed by hand on the map"))
+        // (the facts row reads as one element: "<date>, By hand on the map")
+        XCTAssertTrue(app.staticTexts["pin-source"].firstMatch.label.hasSuffix("By hand on the map"))
         // the title field is ready: typing goes straight into it
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus }, "title focused")
         app.typeText("Seep below the track")
@@ -66,8 +68,10 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)))
         XCTAssertEqual(title(app).value as? String, "Seep below the track")
         XCTAssertFalse(title(app).hasFocus)
-        // an empty tap elsewhere closes it again
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.2)).tap()
+        // an empty tap elsewhere closes it again (open map on both devices:
+        // right of the pin, clear of the iPad's side card on the left and
+        // of the map buttons at the trailing edge)
+        app.coordinate(withNormalizedOffset: Self.emptySpot).tap()
         XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists })
     }
 

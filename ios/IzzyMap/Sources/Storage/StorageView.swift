@@ -363,11 +363,9 @@ enum StorageMetrics {
 /// space empty — then the key under it, its swatches the same fills.
 struct StorageGaugeView: View {
     let gauge: StorageGauge
-    /// Widths are proportional: the bar is read literally (10 MB of pins
-    /// beside 8.66 GB of maps must not look the same). A segment with any
-    /// bytes is at least this wide, so it shows at all; the key under the
-    /// bar carries the fill and the figure of a sliver.
-    static let minimumSegment: CGFloat = 3
+    /// A segment is at least this wide, so its fill can be told apart (on a
+    /// 512 GB phone IzzyMap is a sliver; the figures say the exact sizes).
+    static let minimumSegment: CGFloat = 16
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -424,8 +422,8 @@ struct StorageGaugeView: View {
 }
 
 /// A gauge segment's fill — the same view in the bar and in the key, so a
-/// swatch IS its segment. Five fills, five meanings, told apart by FORM as
-/// well as tone (solid, diagonal hatch, dots, horizontal rules, open rings — all in ink,
+/// swatch IS its segment. Four fills, four meanings, told apart by FORM as
+/// well as tone (solid, diagonal hatch, dots, horizontal rules — all in ink,
 /// so they hold in light and dark); free space is the empty remainder. No
 /// grey anywhere: on this screen nothing else may look like a category.
 struct GaugeFill: View {
@@ -466,7 +464,7 @@ struct GaugeFill: View {
                         row += 1
                     }
                     ctx.fill(p, with: .foreground)
-                case .extras, .areas:
+                case .extras, .areas, .pins:
                     var p = Path()
                     var y: CGFloat = 2
                     while y < size.height {
@@ -475,22 +473,6 @@ struct GaugeFill: View {
                         y += 4
                     }
                     ctx.stroke(p, with: .foreground, lineWidth: 1.2)
-                case .pins:
-                    // open rings: marks, as pins are on the map
-                    var p = Path()
-                    let pitch: CGFloat = 5
-                    var row = 0
-                    var y = pitch / 2
-                    while y < size.height {
-                        var x = (row.isMultiple(of: 2) ? pitch / 2 : pitch)
-                        while x < size.width {
-                            p.addEllipse(in: CGRect(x: x - 1.5, y: y - 1.5, width: 3, height: 3))
-                            x += pitch
-                        }
-                        y += pitch
-                        row += 1
-                    }
-                    ctx.stroke(p, with: .foreground, lineWidth: 0.9)
                 }
                 // every filled block keeps an ink edge, so a sparse fill
                 // still reads as one block beside the empty free space

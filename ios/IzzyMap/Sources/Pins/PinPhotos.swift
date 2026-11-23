@@ -5,10 +5,10 @@ import SwiftUI
 import UIKit
 
 /// The pin card's photos (docs/PINS_PLAN.md §5): under the project chip,
-/// above the fold, so they show at the fit detent. With photos: a strip —
-/// the add button first, then square thumbnails NEWEST first (the photo
-/// she just took lands beside the button, in view, without scrolling).
-/// Without: just a compact "Add photo" capsule beside the chip. The add
+/// above the fold, so they show at the fit detent. A strip from the start —
+/// the add tile first (alone while there are none), then square thumbnails
+/// NEWEST first (the photo she just took lands beside the tile, in view,
+/// without scrolling). The add
 /// button is a menu — Take photo / Choose from library — so the camera is
 /// two taps away; where there is no camera it opens the library at once.
 /// A thumbnail opens the full-screen viewer, paging across this pin's
@@ -31,25 +31,8 @@ struct PinPhotos<Chip: View>: View {
         let photos = pin.sortedPhotos
         let progress = store.photoImports[pin.id]
         VStack(alignment: .leading, spacing: 10) {
-            if photos.isEmpty, progress == nil || progress?.finished == true {
-                // "Add photo" beside the chip while both fit (a narrow iPad
-                // card or a long project name: the glyph alone)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
-                        chip()
-                        Spacer(minLength: 0)
-                        addButton(.capsule, progress: nil)
-                    }
-                    HStack(spacing: 8) {
-                        chip()
-                        Spacer(minLength: 0)
-                        addButton(.glyph, progress: nil)
-                    }
-                }
-            } else {
-                chip()
-                strip(photos, progress: progress)
-            }
+            chip()
+            strip(photos, progress: progress)
             if cameraDenied { deniedNote }
             if let progress, progress.finished, progress.failed > 0 { failedNote(progress) }
         }
@@ -98,7 +81,7 @@ struct PinPhotos<Chip: View>: View {
     private func strip(_ photos: [PinPhoto], progress: PinStore.PhotoImport?) -> some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                addButton(.tile, progress: progress.flatMap { $0.finished ? nil : $0 })
+                addButton(progress: progress.flatMap { $0.finished ? nil : $0 })
                 ForEach(Array(photos.enumerated()), id: \.element.id) { i, photo in
                     Button {
                         open(i)
@@ -128,8 +111,8 @@ struct PinPhotos<Chip: View>: View {
     // MARK: Add
 
     @ViewBuilder
-    private func addButton(_ style: AddPhotoLabel.Style, progress: PinStore.PhotoImport?) -> some View {
-        let label = AddPhotoLabel(style: style, progress: progress)
+    private func addButton(progress: PinStore.PhotoImport?) -> some View {
+        let label = AddPhotoLabel(progress: progress)
         if progress != nil {
             label.accessibilityIdentifier("pin-photo-progress")
         } else if Self.hasCamera {
@@ -263,51 +246,34 @@ struct PinPhotos<Chip: View>: View {
     }
 }
 
-/// The add button: compact, a capsule beside the chip ("Add photo"); in the
-/// strip, a tile as tall as a thumbnail. Chrome, so concentric/capsule and
-/// ink; while photos are coming in, their count and a progress ring.
+/// The add tile: as tall as a thumbnail, first in the strip. Chrome, so
+/// concentric and ink; while photos are coming in, their count and a
+/// progress ring.
 private struct AddPhotoLabel: View {
-    enum Style: Hashable { case capsule, glyph, tile }
-    let style: Style
     let progress: PinStore.PhotoImport?
 
     var body: some View {
-        if style != .tile {
-            HStack(spacing: 6) {
+        VStack(spacing: 6) {
+            if let progress {
+                ProgressView(value: Double(progress.done + progress.failed), total: Double(max(1, progress.total)))
+                    .progressViewStyle(.circular)
+                    .tint(DesignColor.ink)
+                    .frame(height: 22)
+                Text("\(min(progress.done + progress.failed + 1, progress.total)) of \(progress.total)")
+                    .font(.footnote.weight(.medium))
+                    .monospacedDigit()
+            } else {
                 Image(systemName: "camera")
-                if style == .capsule { Text("Add photo") }
+                    .font(.body.weight(.medium))
+                    .frame(height: 22)
+                Text("Add")
+                    .font(.footnote.weight(.medium))
             }
-            .fixedSize()
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(DesignColor.ink)
-            .lineLimit(1)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 44)
-            .background(Color(uiColor: .tertiarySystemFill), in: .capsule)
-            .contentShape(.capsule)
-        } else {
-            VStack(spacing: 6) {
-                if let progress {
-                    ProgressView(value: Double(progress.done + progress.failed), total: Double(max(1, progress.total)))
-                        .progressViewStyle(.circular)
-                        .tint(DesignColor.ink)
-                        .frame(height: 22)
-                    Text("\(min(progress.done + progress.failed + 1, progress.total)) of \(progress.total)")
-                        .font(.footnote.weight(.medium))
-                        .monospacedDigit()
-                } else {
-                    Image(systemName: "camera")
-                        .font(.body.weight(.medium))
-                        .frame(height: 22)
-                    Text("Add")
-                        .font(.footnote.weight(.medium))
-                }
-            }
-            .foregroundStyle(DesignColor.ink)
-            .frame(width: 64, height: PinPhotoMetrics.side)
-            .background(Color(uiColor: .tertiarySystemFill), in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
-            .contentShape(.rect)
         }
+        .foregroundStyle(DesignColor.ink)
+        .frame(width: 64, height: PinPhotoMetrics.side)
+        .background(Color(uiColor: .tertiarySystemFill), in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+        .contentShape(.rect)
     }
 }
 

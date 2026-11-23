@@ -25,8 +25,8 @@ struct PinCard: View {
         if let pin = store.pin(pinID) {
             VStack(alignment: .leading, spacing: 0) {
                 header(pin)
-                // the chip, then the photo strip (or, with no photos yet, a
-                // compact "Add photo" beside the chip): both above the fold
+                // the chip on a row of its own, then the photo strip (the
+                // add tile alone while there are none): both above the fold
                 PinPhotos(model: model, store: store, pin: pin) {
                     ProjectChip(store: store, pin: pin) {
                         focus = nil
@@ -222,7 +222,7 @@ struct PinCard: View {
         }
     }
 
-    /// "GPS ± 5 m · 312 m altitude" or "Placed by hand on the map".
+    /// "GPS ± 5 m · 312 m altitude" or "By hand on the map".
     static func source(_ pin: SavedPin) -> String {
         switch pin.placement {
         case .gps:
@@ -230,7 +230,8 @@ struct PinCard: View {
             if let altitude = pin.altitude { parts.append("\(Self.metres(altitude)) altitude") }
             return parts.joined(separator: " · ")
         case .map:
-            return "Placed by hand on the map"
+            // (under the label "Placed")
+            return "By hand on the map"
         }
     }
 
@@ -509,8 +510,10 @@ private struct ProjectChip: View {
                         .fill(Color(uiColor: PinColour.uiColor(hex: PinColour.hex(forName: project.colour))))
                         .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
                         .frame(width: 12, height: 12)
+                    // a long name keeps both its ends ("Waterworks…stage 2")
                     Text(PinText.projectName(project.name))
                         .foregroundStyle(DesignColor.ink)
+                        .truncationMode(.middle)
                 } else {
                     Image(systemName: "tray")
                         .foregroundStyle(DesignColor.secondaryInk)

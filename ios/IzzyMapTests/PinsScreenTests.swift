@@ -556,31 +556,29 @@ private func freshStore(_ clock: DateBox = DateBox()) -> PinStore {
         let g = StorageGauge(parts: [.maps: 10, .pins: 2], capacity: nil, free: 100)
         #expect(g.izzyBytes == 12)
         #expect(g.segments.map(\.title) == ["Core maps", "Pins", "Free"])
-        // pins have a segment (and a key entry) of their own, named as the
-        // list's Pins section; the field guide and detailed areas share one
+        // DESIGN.md: four fills; pins are counted in the fourth segment,
+        // which is named for what's in it
         let shared = StorageGauge(parts: [.extras: 3, .areas: 2, .pins: 1], capacity: nil, free: nil)
-        #expect(shared.segments.map(\.title) == ["Field guide & areas", "Pins"] && shared.izzyBytes == 6)
-        #expect(shared.segments.map(\.kind) == [.izzy(.extras), .izzy(.pins)])
+        #expect(shared.segments.map(\.title) == ["Field guide, areas & pins"] && shared.izzyBytes == 6)
+        #expect(shared.segments.map(\.kind) == [.izzy(.extras)])
+        let guide = StorageGauge(parts: [.extras: 3, .pins: 1], capacity: nil, free: nil)
+        #expect(guide.segments.map(\.title) == ["Field guide & pins"])
         let two = StorageGauge(parts: [.extras: 3, .areas: 2], capacity: nil, free: nil)
         #expect(two.segments.map(\.title) == ["Field guide & areas"])
     }
 
-    /// The bar is read literally: 10 MB of pins is a sliver beside 8.66 GB
-    /// of extra maps, never the same width (P-18: a 16 pt floor made all
-    /// four used segments ≈ 16 pt on a 154 GB phone).
-    @Test func gaugeWidthsAreProportionalWithAThinFloor() {
+    /// DESIGN.md: each filled block is at least 16 pt wide so its fill can
+    /// be read — 10 MB of pins beside 8.66 GB of maps included (the figures
+    /// carry the exact sizes).
+    @Test func everyGaugeBlockIsWideEnoughToReadItsFill() {
         let mb: Int64 = 1_000_000
         let g = StorageGauge(parts: [.maps: 3_730 * mb, .moreMaps: 8_660 * mb, .plantID: 909 * mb, .extras: 8 * mb, .pins: 10 * mb],
                              capacity: 256_000 * mb, free: 138_000 * mb)
-        let w = g.widths(in: 500, minimum: StorageGaugeView.minimumSegment)
-        #expect(StorageGaugeView.minimumSegment <= 3)
-        #expect(w.count == 6)
-        // proportional where above the floor: extra maps ≈ 2.3 × core maps
-        #expect(abs(w[1] / w[0] - 8_660.0 / 3_730.0) < 0.01)
-        // the slivers: shown, but no wider than the floor
-        #expect(w[3] == StorageGaugeView.minimumSegment && w[4] == StorageGaugeView.minimumSegment)
-        #expect(w[1] > 5 * w[4])
-        #expect(abs(w.reduce(0, +) - 500) < 0.001)
+        #expect(StorageGaugeView.minimumSegment == 16)
+        #expect(g.segments.count == 5)  // four fills + free
+        let w = g.widths(in: 340, minimum: StorageGaugeView.minimumSegment)
+        #expect(w.allSatisfy { $0 >= 16 })
+        #expect(abs(w.reduce(0, +) - 340) < 0.001)
     }
 }
 

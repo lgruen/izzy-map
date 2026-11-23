@@ -24,7 +24,8 @@ struct GridPill: View {
                 Button {
                     readout = readout.toggled
                 } label: {
-                    Text(readout.text(latitude: centre.latitude, longitude: centre.longitude))
+                    // typeset like the pin card's facts ("MGA55 E 526 720 N 5 252 199")
+                    Text(readout.displayText(latitude: centre.latitude, longitude: centre.longitude))
                         .font(.footnote.weight(.medium).monospacedDigit())
                         .foregroundStyle(DesignColor.ink)
                         .frame(minHeight: 22)

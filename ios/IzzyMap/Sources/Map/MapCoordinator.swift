@@ -843,6 +843,9 @@ extension MapCoordinator: MLNMapViewDelegate {
         refreshAnchoredSelection(mapView)
         spotlights.idle(mapView, model: model)
         #if DEBUG
+        // These wait for the map to settle: with a network whose live LIST
+        // tiles time out (a VPN's stalled DNS) it doesn't settle for minutes
+        // — add `-simulateOffline YES` for scripted screenshots.
         // `-openLayers YES`: the Layers sheet once the map settles (thumbnail screenshots)
         if UserDefaults.standard.bool(forKey: "openLayers"), !openedLayers {
             openedLayers = true

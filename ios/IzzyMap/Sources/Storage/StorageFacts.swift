@@ -300,12 +300,12 @@ nonisolated enum StorageText {
 /// by category, then the device's free space — the room it can still grow
 /// into. Everything else on the device stays out of the bar (on a 128 GB
 /// phone it would shrink IzzyMap's categories to slivers); the capacity is
-/// said in words. It is the screen's ONE picture of space: five fills, each
+/// said in words. It is the screen's ONE picture of space: four fills, each
 /// with one meaning (`GaugeFill`), and free space the empty remainder.
 nonisolated struct StorageGauge: Equatable, Sendable {
-    /// Where bytes come from. The field guide and detailed areas share one
-    /// segment (what the device fetched for a place or a topic); pins, her
-    /// own notes and photos, have theirs.
+    /// Where bytes come from. The field guide, detailed areas and pins share
+    /// one segment (what the device keeps for her: fetched for a place or a
+    /// topic, or her own notes).
     nonisolated enum Category: String, CaseIterable, Sendable {
         case maps, moreMaps, plantID, extras, areas, pins
         var title: String {
@@ -329,12 +329,10 @@ nonisolated struct StorageGauge: Equatable, Sendable {
             }
         }
 
-        /// The segment it is drawn in: detailed areas share the field
-        /// guide's; pins have their own, as the list has a Pins section
-        /// (her own data, not something fetched).
-        var segment: Category { self == .areas ? .extras : self }
-        /// The five segments, in bar order.
-        static let segments: [Category] = [.maps, .moreMaps, .plantID, .extras, .pins]
+        /// The segment it is drawn in.
+        var segment: Category { self == .areas || self == .pins ? .extras : self }
+        /// The four segments, in bar order.
+        static let segments: [Category] = [.maps, .moreMaps, .plantID, .extras]
     }
 
     nonisolated struct Segment: Equatable, Sendable, Identifiable {
