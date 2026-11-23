@@ -71,15 +71,13 @@ struct CompactPanelSheet: View {
             guard id == nil else { return }
             peek = 0
             updateFit(contentHeight)
+            // (every way a card goes ends here: ✕, Delete, Escape, a map
+            // tap, a pick, the pin deleted on the other device — with or
+            // without a field's keyboard still up: the fitted height never
+            // depends on the keyboard)
+            detentBeforeEditing = nil
             guard !model.search.isActive else { return }
-            if detentBeforeEditing != nil {
-                // a card field still has the keyboard (Delete while typing):
-                // the sheet goes to its glance once the editing ends — never
-                // a detent change under a keyboard that is still up
-                detentBeforeEditing = fitDetent
-            } else {
-                detent = fitDetent
-            }
+            detent = fitDetent
         }
         // a pin card's title or note has the keyboard: room to type; after,
         // the sheet goes back — undoing only our own change: not when
@@ -179,12 +177,26 @@ struct CompactPanelSheet: View {
         // sheet floats clear of it and the inset is 0). The content runs
         // through that band, and the fitted detent subtracts it, so the
         // search row stays centred; scrolled content keeps clear of it.
+        //
+        // Measured with the keyboard left out (a child of a container that
+        // ignores the keyboard's region): the scroll view's own inset
+        // includes the keyboard's overlap with the sheet, which depends on
+        // the sheet's height — the fitted detent would follow the keyboard
+        // (down to 44 pt, the sheet squashed to nothing under it) and the
+        // sheet's keyboard handling would lay the sheet out again on every
+        // change. The scroll view keeps its own keyboard avoidance.
         .contentMargins(.bottom, detent == fitDetent ? 0 : bottomInset, for: .scrollContent)
         .ignoresSafeArea(.container, edges: .bottom)
-        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { inset in
-            guard abs(inset - bottomInset) > 0.5 else { return }
-            bottomInset = inset
-            updateFit(contentHeight)
+        .background {
+            ZStack {
+                Color.clear
+                    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom.rounded() } action: { inset in
+                        guard abs(inset - bottomInset) > 0.5 else { return }
+                        bottomInset = inset
+                        updateFit(contentHeight)
+                    }
+            }
+            .ignoresSafeArea(.keyboard)
         }
     }
 

@@ -28,6 +28,9 @@ struct IzzyMapApp: App {
 
     init() {
         MapLogging.install()
+        #if DEBUG
+        HangWatchdog.startIfAsked()
+        #endif
         let shared = AppData.launch()
         let thumbnails = LayerThumbnails()
         _shared = State(initialValue: shared)

@@ -191,13 +191,18 @@ struct RootView: View {
         // reference photos stand in for guide plants without one of their
         // own (plant sheets, Plants lists), not only inside Identify
         .onChange(of: model.shared.packs.state(.refphotos), initial: true) { PlantIDRefPhotos.shared.use(packs: model.shared.packs) }
+        // in whole points: with the keyboard up over the panel sheet, the
+        // sheet's keyboard layout handed the root a width of 390.0000000000001
+        // and 390.00000000000006 on alternate passes (and an origin of −6e-14
+        // / −3e-14); each counted as a change, re-rendered the root, which
+        // laid the sheet out again — the main thread never left that loop
         .onGeometryChange(for: ScreenMetrics.self) { proxy in
             ScreenMetrics(
                 size: proxy.size,
                 frame: proxy.frame(in: .global),
                 safe: proxy.safeAreaInsets,
                 bottom: proxy.frame(in: .global).maxY + proxy.safeAreaInsets.bottom
-            )
+            ).wholePoints
         } action: { screen = $0 }
         .sheet(isPresented: .constant(usesSheet)) {
             CompactPanelSheet(model: model) { frame in
@@ -349,6 +354,16 @@ nonisolated struct ScreenMetrics: Equatable, Sendable {
     var safe = EdgeInsets()
     /// Global y of the screen's bottom edge.
     var bottom: CGFloat = 0
+
+    /// Rounded to whole points (layout passes differ in the last bits).
+    var wholePoints: ScreenMetrics {
+        func r(_ v: CGFloat) -> CGFloat { v.rounded() }
+        return ScreenMetrics(size: CGSize(width: r(size.width), height: r(size.height)),
+                             frame: CGRect(x: r(frame.minX), y: r(frame.minY), width: r(frame.width), height: r(frame.height)),
+                             safe: EdgeInsets(top: r(safe.top), leading: r(safe.leading),
+                                              bottom: r(safe.bottom), trailing: r(safe.trailing)),
+                             bottom: r(bottom))
+    }
 }
 
 private nonisolated struct RestingProbe: Equatable, Sendable {

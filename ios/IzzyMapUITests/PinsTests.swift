@@ -78,7 +78,7 @@ final class PinsTests: XCTestCase {
     /// `-debugLongPress` (screenshots, scripted runs) takes the same path.
     @MainActor
     func testDeleteOffersUndo() {
-        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"])
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"] + Self.watchdog)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
         app.typeText("Gate")
@@ -106,6 +106,122 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "Undo brings the pin and its card back")
         XCTAssertEqual(title(app).value as? String, "Gate")
         XCTAssertFalse(app.buttons["pin-undo"].exists)
+    }
+
+    // MARK: The card going while a field has the keyboard
+
+    /// A main-thread hang ends the app within this many seconds
+    /// (`-hangWatchdog`), so the test fails at once instead of stalling.
+    private static let watchdog = ["-hangWatchdog", "5"]
+
+    /// The phone's sheet back at its glance with nothing in it, and the
+    /// app answering (no hang: a hung app is gone, see `watchdog`).
+    @MainActor
+    private func assertGlance(_ app: XCUIApplication, _ message: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists }, "the card closes — \(message)", file: file, line: line)
+        XCTAssertEqual(app.state, .runningForeground, "the app is still running — \(message)", file: file, line: line)
+        let window = app.windows.firstMatch
+        guard window.horizontalSizeClass == .compact, window.verticalSizeClass == .regular else { return }
+        let search = app.textFields["search-field"]
+        XCTAssertTrue(eventually(patience(3)) {
+            search.exists && search.frame.minY > window.frame.height * 0.6
+        }, "the sheet back at its glance — \(message)", file: file, line: line)
+        // and it stays there (no detent see-saw once the keyboard is gone)
+        let y = search.frame.minY
+        sleep(1)
+        XCTAssertEqual(search.frame.minY, y, accuracy: 1, "the sheet at rest — \(message)", file: file, line: line)
+        XCTAssertTrue(app.buttons["layers-button"].isHittable, "the map's controls answer — \(message)", file: file, line: line)
+    }
+
+    /// The card closed from outside while the title has the keyboard —
+    /// what Escape on a hardware keyboard or a map tap does
+    /// (`-debugCloseCardAfter`: XCUITest's Escape never reaches the app in
+    /// the simulator; and on a phone the map takes no taps while typing:
+    /// the title raises the sheet to its large detent, where the map is
+    /// inert, and dragging the sheet down puts the keyboard away).
+    @MainActor
+    func testCardClosedFromOutsideWhileTypingATitle() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugCloseCardAfter", "6"] + Self.watchdog)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
+        app.typeText("Gate")
+        XCTAssertTrue(title(app).hasFocus, "still typing when the card closes")
+        XCTAssertTrue(eventually(patience(10)) { !self.card(app).exists }, "the card closes")
+        assertGlance(app, "closed from outside while typing")
+    }
+
+    /// Delete while the title has the keyboard (`-debugDeletePinAfter`:
+    /// the card's Delete sits under the keyboard, and the swipe that
+    /// reaches it puts the keyboard away): the pill offers Undo.
+    @MainActor
+    func testDeleteWhileTypingATitle() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugDeletePinAfter", "6"] + Self.watchdog)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
+        app.typeText("Gate")
+        XCTAssertTrue(title(app).hasFocus, "still typing when Delete comes")
+        XCTAssertTrue(eventually(patience(10)) { !self.card(app).exists }, "the card closes")
+        assertGlance(app, "Delete while typing")
+        XCTAssertTrue(app.buttons["pin-undo"].isHittable, "Undo above the sheet")
+    }
+
+    /// The card's ✕ while the title has the keyboard.
+    @MainActor
+    func testCloseButtonWhileTypingATitle() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"] + Self.watchdog)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
+        app.typeText("Gate")
+        app.buttons["card-close"].tap()
+        assertGlance(app, "✕ while typing")
+    }
+
+    /// The pin deleted on the other device while its title has the
+    /// keyboard here (`-debugRemovePinAfter`: straight in the store).
+    @MainActor
+    func testPinRemovedUnderAFocusedCard() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugRemovePinAfter", "6"] + Self.watchdog)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
+        app.typeText("Gate")
+        XCTAssertTrue(title(app).hasFocus, "still typing when the delete arrives")
+        XCTAssertTrue(eventually(patience(10)) { !self.card(app).exists }, "the card goes with its pin")
+        assertGlance(app, "pin removed under the card")
+    }
+
+    /// The pin's project deleted from the Pins screen while the card's
+    /// title had the keyboard (the screen opened from the card's chip).
+    @MainActor
+    func testProjectDeletedWhileTheTitleWasFocused() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"] + Self.watchdog)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        // file the pin in a new project
+        app.buttons["pin-project"].tap()
+        app.buttons["New project…"].tap()
+        let name = app.textFields["project-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: patience(3)))
+        XCTAssertTrue(eventually(patience(3)) { name.hasFocus })
+        app.typeText("Bonnet Hill")
+        app.buttons["project-save"].tap()
+        XCTAssertTrue(eventually(patience(3)) { (app.buttons["pin-project"].value as? String) == "Bonnet Hill" })
+        // the title takes the keyboard again; the chip opens the Pins screen
+        title(app).tap()
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
+        app.typeText("Gate")
+        app.buttons["pin-project"].tap()
+        app.buttons["All pins…"].tap()
+        XCTAssertTrue(screen(app).waitForExistence(timeout: patience(5)))
+        app.buttons["pins-project-Bonnet Hill"].tap()
+        app.buttons["project-edit"].tap()
+        let delete = app.buttons["project-delete"]
+        XCTAssertTrue(delete.waitForExistence(timeout: patience(3)))
+        for _ in 0 ..< 3 where !delete.isHittable { app.swipeUp() }
+        delete.tap()
+        XCTAssertTrue(eventually(patience(3)) { !app.buttons["pins-project-Bonnet Hill"].exists })
+        XCTAssertEqual(app.state, .runningForeground, "no hang on the delete")
+        app.buttons["pins-done"].tap()
+        XCTAssertTrue(eventually(patience(3)) { !self.screen(app).exists })
+        assertGlance(app, "project deleted")
     }
 
     /// Typing a title, then the search field: search stays up (the sheet

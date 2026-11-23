@@ -64,6 +64,26 @@ struct PinCard: View {
                 #if DEBUG
                 // screenshots: `-debugPinNewProject YES` opens the editor
                 if UserDefaults.standard.bool(forKey: "debugPinNewProject") { model.pinProjectForm = true }
+                // UI tests, the card going while a field has the keyboard,
+                // S seconds after the first card opens:
+                // `-debugRemovePinAfter S` deletes its pin straight in the
+                // store (as a delete synced from the other device arrives);
+                // `-debugCloseCardAfter S` closes it from outside the card
+                // (what Escape or a map tap does — XCUITest's Escape never
+                // reaches the app in the simulator); `-debugDeletePinAfter
+                // S` is the card's Delete with the keyboard still up
+                let remove = UserDefaults.standard.double(forKey: "debugRemovePinAfter")
+                let close = UserDefaults.standard.double(forKey: "debugCloseCardAfter")
+                let delete = UserDefaults.standard.double(forKey: "debugDeletePinAfter")
+                if remove > 0 || close > 0 || delete > 0, !Self.debugCardGone {
+                    Self.debugCardGone = true
+                    Task { [model, store, pinID] in
+                        try? await Task.sleep(for: .seconds(max(remove, close, delete)))
+                        if remove > 0, let pin = store.pin(pinID) { store.delete(pin) }
+                        if close > 0, model.selection?.pinID == pinID { model.clearSelection() }
+                        if delete > 0 { model.deletePin(pinID) }
+                    }
+                }
                 #endif
             }
             // the editing state carries this pin's id: a card going away
@@ -92,6 +112,10 @@ struct PinCard: View {
 
     /// Between the card's sections (DESIGN.md §2 Space).
     static let section: CGFloat = 24
+
+    #if DEBUG
+    private static var debugCardGone = false
+    #endif
 
     private var projectEditorShown: Binding<Bool> {
         Binding(get: { model.pinProjectForm }, set: { if !$0 { model.pinProjectForm = false } })
@@ -478,24 +502,29 @@ private struct ProjectChip: View {
     let newProject: () -> Void
     let allPins: () -> Void
 
+    private var projectChoice: Binding<UUID?> {
+        Binding(get: { pin.project?.id }, set: { id in
+            store.setProject(pin, id.flatMap { id in store.activeProjects.first { $0.id == id } })
+        })
+    }
+
     var body: some View {
         Menu {
-            ForEach(store.activeProjects) { project in
-                Button {
-                    store.setProject(pin, project)
-                } label: {
+            // a picker: the system checks the pin's project (or Unfiled)
+            Picker("Project", selection: projectChoice) {
+                ForEach(store.activeProjects) { project in
                     Label {
                         Text(PinText.projectName(project.name))
                     } icon: {
                         Image(uiImage: PinColour.swatchImage(hex: PinColour.hex(forName: project.colour)))
                     }
+                    .tag(UUID?.some(project.id))
                 }
+                Label("Unfiled", systemImage: "tray")
+                    .tag(UUID?.none)
             }
-            Button {
-                store.setProject(pin, nil)
-            } label: {
-                Label("Unfiled", systemImage: pin.project == nil ? "checkmark" : "tray")
-            }
+            .pickerStyle(.inline)
+            .labelsHidden()
             Divider()
             Button(action: newProject) {
                 Label("New project…", systemImage: "plus")
