@@ -41,6 +41,11 @@ final class MapCoordinator: NSObject {
     private let spotlights: SpotlightPresenter
     /// The search pin and its flights (Search/SearchPinPresenter.swift).
     let searchPins: SearchPinPresenter
+    /// Saved pins' runtime layers (Pins/PinPresenter.swift).
+    let pinMarks = PinPresenter()
+    /// The pin the selection ring is drawn on, and where.
+    private var ringedPin: (id: UUID, latitude: Double, longitude: Double)?
+    private var appliedLocationRequest = 0
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Map")
 
     private struct OverlayAnchor {
@@ -59,6 +64,15 @@ final class MapCoordinator: NSObject {
             return v.count == 2 ? CGPoint(x: v[0], y: v[1]) : nil
         }
     private var tapStarted: ContinuousClock.Instant?
+    /// `-debugLongPress "0.5,0.4"`: a long-press there once the taps are done.
+    private var debugLongPress: CGPoint? = {
+        let v = (UserDefaults.standard.string(forKey: "debugLongPress") ?? "").split(separator: ",").compactMap { Double($0) }
+        return v.count == 2 ? CGPoint(x: v[0], y: v[1]) : nil
+    }()
+    /// `-debugPinsDemo YES`: one pin of each palette colour in a row across
+    /// the map at the first idle (palette screenshots; use `-pinsInMemory`).
+    private var seededDemoPins = false
+    private var debugTapsNotBefore = Date.distantPast
     private var openedLayers = false
     private let perfTour = PerfTour()
     private static let timing = Logger(subsystem: "org.gruenschloss.izzymap", category: "Timing")
@@ -124,6 +138,25 @@ final class MapCoordinator: NSObject {
             }
         }
         map.addGestureRecognizer(tap)
+
+        // Long-press drops a pin. MapLibre's own gestures, checked against
+        // MLNMapView 7.0.0: pan, pinch, rotate (two fingers), two-finger tap,
+        // double tap (zoom in) and quick zoom — a UILongPressGestureRecognizer
+        // with numberOfTapsRequired 1 and minimumPressDuration 0, i.e.
+        // double-tap-then-drag; pitch is off. None recognises simultaneously
+        // with ours (MLNMapView allows that only among its own pinch/rotate/
+        // pan set), so whichever begins first wins: a drag or a pinch moves
+        // more than `allowableMovement` or adds a finger before 0.5 s and
+        // this fails; the second tap of a quick zoom begins the quick zoom
+        // at once and this fails; a held, still finger begins this, which
+        // fails the pan and the feature tap in turn.
+        // (pins switched off: no recogniser at all)
+        if model.pins != nil {
+            let press = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+            press.minimumPressDuration = 0.5
+            press.delegate = self
+            map.addGestureRecognizer(press)
+        }
 
         // the live LIST sources follow the network path
         connectivity = Connectivity.shared.observe { [weak self] _ in self?.reloadStyleIfNeeded() }
@@ -219,6 +252,7 @@ final class MapCoordinator: NSObject {
 
     func clearSelectionShape() {
         anchor = nil
+        ringedPin = nil
         guard showsSelectionShape || selectionStyle != SelectionStyle(community: model.keyHighlight) else { return }
         showsSelectionShape = false
         selectionShape = nil
@@ -230,6 +264,7 @@ final class MapCoordinator: NSObject {
     /// `shape`: a tree, or the tap ring — never an overlay polygon's tile
     /// geometry (that is the id filter's job, across every tile).
     private func showSelection(featureID: UInt64?, shape: MLNShape?) {
+        if !(model.selection?.isPin ?? false) { ringedPin = nil }
         selectionStyle = model.selectionStyle(featureID: featureID)
         selectionShape = shape
         selectionSource?.shape = selectionShape
@@ -250,6 +285,69 @@ final class MapCoordinator: NSObject {
     private var selectionSource: MLNShapeSource? {
         map?.style?.source(withIdentifier: StyleBuilder.SourceID.selection) as? MLNShapeSource
     }
+
+    // MARK: Pins
+
+    /// The store changed or the selection did: the pins' source, and the
+    /// ring on a selected pin (placed by the model — a long-press, the pin
+    /// button, Undo — or moved). A selected pin that is gone (deleted on
+    /// the other device) closes its card.
+    func apply(pins store: PinStore?, selectedPin: UUID?, to map: MLNMapView) {
+        guard let store else { return }
+        pinMarks.apply(store, to: map)
+        guard let id = selectedPin else { return }
+        guard let pin = store.pin(id), pin.isOnMap else {
+            // (not during SwiftUI's view update)
+            Task { [model] in if model.selection?.pinID == id { model.clearSelection() } }
+            return
+        }
+        if ringedPin?.id != id || ringedPin?.latitude != pin.lat || ringedPin?.longitude != pin.lon { ringPin(id) }
+    }
+
+    private func ringPin(_ id: UUID) {
+        guard let pin = model.pins?.pin(id) else { return }
+        // a polygon tapped before must not get its outline back at the next idle
+        anchor = nil
+        ringedPin = (id, pin.lat, pin.lon)
+        showSelection(featureID: nil, shape: PinPresenter.selectionShape(pin))
+    }
+
+    private var appliedPinFocus: Int?
+
+    /// A pin placed out of sight (the pin button): the camera eases to it,
+    /// at the same zoom; one already in the uncovered map stays put.
+    func apply(pinFocus: AppModel.PinFocus?, framing: UIEdgeInsets, to map: MLNMapView,
+               animated: Bool = !UIAccessibility.isReduceMotionEnabled) {
+        guard let pinFocus, pinFocus.serial != appliedPinFocus else { return }
+        appliedPinFocus = pinFocus.serial
+        let coordinate = CLLocationCoordinate2D(latitude: pinFocus.latitude, longitude: pinFocus.longitude)
+        let visible = map.bounds.inset(by: framing).insetBy(dx: PinPresenter.hitRadius, dy: PinPresenter.hitRadius)
+        guard !visible.contains(map.convert(coordinate, toPointTo: map)) else { return }
+        camera.setCenter(map, coordinate, zoom: map.zoomLevel, animated: animated)
+    }
+
+    /// The pin button before location was ever allowed: the dot on, which
+    /// makes iOS ask (the dot stays once allowed, as from the Location button).
+    func apply(locationRequest: Int, to map: MLNMapView) {
+        guard locationRequest != appliedLocationRequest else { return }
+        appliedLocationRequest = locationRequest
+        if !map.showsUserLocation { map.showsUserLocation = true }
+    }
+
+    #if DEBUG
+    private func seedDemoPins(_ map: MLNMapView) {
+        guard let pins = model.pins else { return }
+        for (i, colour) in PinColour.allCases.enumerated() {
+            let point = CGPoint(x: map.bounds.width * (0.12 + 0.76 * Double(i) / 7), y: map.bounds.height * (i.isMultiple(of: 2) ? 0.3 : 0.38))
+            let c = map.convert(point, toCoordinateFrom: map)
+            let pin = pins.addPin(latitude: c.latitude, longitude: c.longitude, placedBy: .map)
+            pins.setTitle(pin, colour.title)
+            pins.setColour(pin, colour.rawValue)
+        }
+        // on the map now, so the next idle (a `-debugTaps` tap) finds them drawn
+        pinMarks.apply(pins, to: map)
+    }
+    #endif
 
     // MARK: Show on map
 
@@ -337,12 +435,46 @@ final class MapCoordinator: NSObject {
         tap(at: gesture.location(in: map))
     }
 
+    @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let map else { return }
+        longPress(at: gesture.location(in: map))
+    }
+
+    /// A pin where the finger rests — not while framing an area or moving
+    /// a pin (the map's one job then is the frame / the next tap). On an
+    /// existing pin it selects that one instead of stacking a second.
+    private func longPress(at point: CGPoint) {
+        guard let map, model.pins != nil, !model.isFraming, model.movingPin == nil else { return }
+        if let id = PinPresenter.hit(at: point, in: map) {
+            if model.selection?.pinID != id {
+                model.selectPin(id)
+                ringPin(id)
+            }
+            return
+        }
+        model.dropPin(at: map.convert(point, toCoordinateFrom: map))
+    }
+
     private func tap(at point: CGPoint) {
         guard let map, let style = map.style else { return }
         typealias L = StyleBuilder.LayerID
         #if DEBUG
         tapStarted = .now
         #endif
+
+        // moving a pin: this tap is its new spot
+        if model.movingPin != nil {
+            model.movePin(to: map.convert(point, toCoordinateFrom: map))
+            return
+        }
+        // a saved pin wins over trees and overlay fills
+        if let id = PinPresenter.hit(at: point, in: map) {
+            // the pin already open: leave its card (and keyboard) alone
+            guard model.selection?.pinID != id else { return }
+            model.selectPin(id)
+            ringPin(id)
+            return
+        }
 
         if style.layer(withIdentifier: L.treesPoint) != nil {
             let r = Self.treeHitRadius
@@ -623,9 +755,26 @@ extension MapCoordinator: MLNMapViewDelegate {
             model.startFraming()
         }
         perfTour.idle(mapView)
-        if !debugTaps.isEmpty {
+        if UserDefaults.standard.bool(forKey: "debugPinsDemo"), !seededDemoPins {
+            seededDemoPins = true
+            seedDemoPins(mapView)
+            // MapLibre may call idle again before drawing them: the scripted
+            // taps go a second later
+            debugTapsNotBefore = Date.now.addingTimeInterval(0.9)
+            Task { [weak self, weak mapView] in
+                try? await Task.sleep(for: .seconds(1))
+                if let self, let mapView { self.mapViewDidBecomeIdle(mapView) }
+            }
+            return
+        }
+        if Date.now < debugTapsNotBefore {
+            // (seeded pins not drawn yet)
+        } else if !debugTaps.isEmpty {
             let p = debugTaps.removeFirst()
             tap(at: CGPoint(x: p.x * mapView.bounds.width, y: p.y * mapView.bounds.height))
+        } else if let p = debugLongPress {
+            debugLongPress = nil
+            longPress(at: CGPoint(x: p.x * mapView.bounds.width, y: p.y * mapView.bounds.height))
         }
         #endif
     }
@@ -637,6 +786,7 @@ extension MapCoordinator: MLNMapViewDelegate {
         // … and with its own paint and none of the runtime layers: a soloed
         // community's fade and presence cells again
         spotlights.styleLoaded(mapView, model: model)
+        if let pins = model.pins { pinMarks.styleLoaded(mapView, store: pins) }
         refreshVisibleSources(mapView)
         model.map.zoom = mapView.zoomLevel
         Self.hideOrnaments(mapView)
@@ -671,7 +821,7 @@ extension MapCoordinator: MLNMapViewDelegate {
         // turning phone must not hide a lost fix from the "no fix" watch.
         guard let location = userLocation?.location, location.timestamp != lastFixTimestamp else { return }
         lastFixTimestamp = location.timestamp
-        model.locationUpdated()
+        model.locationUpdated(location)
         guard awaitingLaunchFix else { return }
         awaitingLaunchFix = false
         let coordinate = location.coordinate

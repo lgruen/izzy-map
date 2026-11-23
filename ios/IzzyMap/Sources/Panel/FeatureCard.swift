@@ -129,6 +129,9 @@ struct FeatureCard: View {
             KeyBox(hex: model.tables.soils?.units[s.code]?.color, opacity: 1)
         case .soilsUnmapped:
             SoilExtentMark()
+        case .pin:
+            // PinCard draws pins (PanelContent)
+            EmptyView()
         case .tree:
             // the map's disc on a key box's white plate: treeGreen stays
             // 9:1 against white in dark mode too (on #1C1C1E it's ~2:1)
@@ -154,6 +157,8 @@ struct FeatureCard: View {
             Text("Soils")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(DesignColor.secondaryInk)
+        case .pin:
+            EmptyView()
         case let .tree(t):
             Text(t.isArea ? "Hobart significant trees" : "Hobart significant tree")
                 .font(.footnote.weight(.semibold))
@@ -184,6 +189,8 @@ struct FeatureCard: View {
                     .font(.subheadline)
                     .foregroundStyle(DesignColor.secondaryInk)
             }
+        case .pin:
+            EmptyView()
         case let .tree(t):
             let ref = model.tables.trees?.refs[t.ref]
             VStack(alignment: .leading, spacing: 1) {
@@ -207,6 +214,7 @@ struct FeatureCard: View {
         case let .pre1750(mvs): "Pre-1750 vegetation, \(model.tables.pre1750[mvs].map { DisplayText.corrected($0.name) } ?? mvs)"
         case let .soils(s): "Soil unit \(s.code), \(model.tables.soils?.units[s.code]?.name ?? "")"
         case .soilsUnmapped: "No soil mapping here. \(Self.unmappedSoilsNote)"
+        case .pin: "Pin"
         case let .tree(t):
             "Hobart significant tree, \(model.tables.trees?.refs[t.ref].map { [$0.common, $0.name].filter { !$0.isEmpty }.joined(separator: ", ") } ?? t.ref)"
         }
@@ -293,7 +301,7 @@ struct FeatureCard: View {
             let ref = trees?.refs[t.ref]
             return rows([("Address", ref?.address), ("Trees", ref?.trees.map { "\($0)" }),
                          ("Register", t.ref), ("Position", DisplayText.treePosition(code: t.accuracy))])
-        case .soils, .soilsUnmapped:
+        case .soils, .soilsUnmapped, .pin:
             // SoilFacts; the unmapped card says it all in its header
             return []
         }

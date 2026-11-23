@@ -135,4 +135,39 @@ public enum MapText {
     public static func isLatin1(_ text: String) -> Bool {
         text.unicodeScalars.allSatisfy { $0.value <= 0xFF }
     }
+
+    /// User text (a pin's title) as a map label: composed (NFC, so a
+    /// decomposed "é" becomes the Latin-1 one), the typographer's
+    /// characters the keyboard inserts folded to ASCII — curly quotes,
+    /// primes, dashes and the minus sign, the ellipsis — every space
+    /// (no-break, thin, narrow) and line break a plain space, runs of
+    /// spaces collapsed, ends trimmed. Nil when nothing is left or the
+    /// result still is not Latin-1 (an emoji, Greek, CJK): such a title
+    /// gets no label rather than one the renderer drops silently.
+    public static func latin1Label(_ text: String) -> String? {
+        var out = String.UnicodeScalarView()
+        var pendingSpace = false
+        for scalar in text.precomposedStringWithCanonicalMapping.unicodeScalars {
+            let folded: String
+            switch scalar.value {
+            case 0x2018, 0x2019, 0x201A, 0x201B, 0x2032, 0x2035: folded = "'"
+            case 0x201C, 0x201D, 0x201E, 0x201F, 0x2033, 0x2036: folded = "\""
+            case 0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2015, 0x2212: folded = "-"
+            case 0x2026: folded = "..."
+            default:
+                if scalar.properties.isWhitespace || scalar.value < 0x20 || (0x7F ... 0x9F).contains(scalar.value) {
+                    // spaces of every width, line breaks, control characters
+                    pendingSpace = !out.isEmpty
+                    continue
+                }
+                folded = String(scalar)
+            }
+            if pendingSpace { out.append(" ") }
+            pendingSpace = false
+            out.append(contentsOf: folded.unicodeScalars)
+        }
+        let label = String(out)
+        guard !label.isEmpty, isLatin1(label) else { return nil }
+        return label
+    }
 }

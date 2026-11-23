@@ -121,4 +121,29 @@ struct WebFixture: Decodable {
         #expect(!MapText.isLatin1("Cafe\u{301}"))  // decomposed accent is U+0301
         #expect(MapText.isLatin1(""))
     }
+
+    /// Pin titles on the map: what the keyboard's smart punctuation types
+    /// folds to ASCII; anything still outside Latin-1 gets no label.
+    @Test func latin1Label() {
+        #expect(MapText.latin1Label("Plain title") == "Plain title")
+        #expect(MapText.latin1Label("Café Ñandú × ÿ") == "Café Ñandú × ÿ")  // Latin-1 stays as typed
+        #expect(MapText.latin1Label("Cafe\u{301}") == "Café")  // decomposed → composed
+        #expect(MapText.latin1Label("‘Italica’ poplar") == "'Italica' poplar")
+        #expect(MapText.latin1Label("“Big” tree, Smith’s gully") == "\"Big\" tree, Smith's gully")
+        #expect(MapText.latin1Label("Creek – north bank — 2 m") == "Creek - north bank - 2 m")
+        #expect(MapText.latin1Label("Slope −5°") == "Slope -5°")  // minus sign; ° is Latin-1
+        #expect(MapText.latin1Label("Wait…") == "Wait...")
+        #expect(MapText.latin1Label("12\u{00A0}m\u{202F}high") == "12 m high")  // no-break spaces
+        #expect(MapText.latin1Label("  two\n lines\t ") == "two lines")
+        #expect(MapText.latin1Label("Gate\u{0007}post") == "Gate post")  // control character
+        #expect(MapText.latin1Label("") == nil)
+        #expect(MapText.latin1Label(" \u{00A0}\n") == nil)
+        #expect(MapText.latin1Label("Nest 🐦") == nil)
+        #expect(MapText.latin1Label("Ελάτη") == nil)
+        #expect(MapText.latin1Label("桉树") == nil)
+        // every folded result is a label the renderer can draw
+        for s in ["‘a’", "“b”", "c–d", "e…", "f\u{2009}g"] {
+            #expect(MapText.latin1Label(s).map(MapText.isLatin1) == true, "\(s)")
+        }
+    }
 }

@@ -128,6 +128,11 @@ private struct WindowContent: View {
                 idleTimer.update(window: windowID, keepsAwake: on)
             }
             .onDisappear { idleTimer.remove(window: windowID) }
+            // typing in a pin's title or note is saved after a pause: leaving
+            // the foreground saves it now
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { model.pins?.flush() }
+            }
     }
 
     private var keepsAwake: Bool {

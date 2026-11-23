@@ -53,6 +53,8 @@ nonisolated enum SelectedFeature: Equatable, Sendable {
     /// card says the maps cover 11 sheets only (no outline to draw).
     case soilsUnmapped
     case tree(TreeSelection)
+    /// A saved pin, by its record id (Pins/).
+    case pin(UUID)
 }
 
 nonisolated struct FeatureSelection: Equatable, Identifiable, Sendable {
@@ -63,6 +65,14 @@ nonisolated struct FeatureSelection: Equatable, Identifiable, Sendable {
     var isTree: Bool {
         if case .tree = feature { return true }
         return false
+    }
+
+    /// A pin card belongs to no layer: overlay and tree changes keep it.
+    var isPin: Bool { pinID != nil }
+
+    var pinID: UUID? {
+        if case let .pin(id) = feature { return id }
+        return nil
     }
 
     /// The TASVEG code, for a community card.
@@ -79,16 +89,26 @@ nonisolated struct AppData: Sendable {
     let tables: MapTables
     /// Detailed areas (the style draws their finished layers).
     let areas: AreaStore
+    /// Saved pins and their projects (Pins/PinStore.swift); nil while
+    /// `Features.pins` is off (the store is then never opened).
+    let pins: PinStore?
 
-    @MainActor init(packs: PackStore, tables: MapTables, areas: AreaStore) {
+    @MainActor init(packs: PackStore, tables: MapTables, areas: AreaStore, pins: PinStore?) {
         self.packs = packs
         self.tables = tables
         self.areas = areas
+        self.pins = pins
     }
 
-    /// Tests and previews: fixed archives, no areas.
-    @MainActor init(location: DataLocation, tables: MapTables, areas: AreaStore? = nil) {
-        self.init(packs: PackStore(fixed: location), tables: tables, areas: areas ?? AreaStore(directory: nil, backgroundTask: false))
+    /// Tests and previews: fixed archives, no areas, pins in memory
+    /// (`pinsEnabled: false`: as with `Features.pins` off).
+    @MainActor init(location: DataLocation, tables: MapTables, areas: AreaStore? = nil, pins: PinStore? = nil,
+                    pinsEnabled: Bool = true) {
+        let store = pinsEnabled
+            ? pins ?? PinStore.inMemory(defaults: UserDefaults(suiteName: "izzymap-tests-\(UUID().uuidString)") ?? .standard)
+            : nil
+        self.init(packs: PackStore(fixed: location), tables: tables, areas: areas ?? AreaStore(directory: nil, backgroundTask: false),
+                  pins: store)
     }
 
     /// The archives readable now.
@@ -120,7 +140,7 @@ nonisolated struct AppData: Sendable {
         } else {
             logger.fault("bundled data folder missing")
         }
-        return AppData(packs: PackStore.launch(), tables: tables, areas: .shared)
+        return AppData(packs: PackStore.launch(), tables: tables, areas: .shared, pins: PinStore.launch(enabled: Features.pins))
     }
 }
 
@@ -190,6 +210,10 @@ nonisolated enum EscapeStep: Equatable, Sendable {
     case modalBack
     /// Framing a detailed area: Cancel.
     case cancelFraming
+    /// Moving a pin ("Tap the map at the new spot"): Cancel.
+    case cancelPinMove
+    /// A pin card's "New project…" form: close just that.
+    case closeProjectForm
     /// One view back in the card's stack (plant sheet → group list → card).
     case back
     case closeCard
@@ -206,6 +230,8 @@ nonisolated enum EscapeStep: Equatable, Sendable {
         case let .dismiss(presentation): "Close \(presentation.title)"
         case .modalBack: "Back"
         case .cancelFraming: "Cancel Framing"
+        case .cancelPinMove: "Cancel Move"
+        case .closeProjectForm: "Close New Project"
         case .back: "Back"
         case .closeCard: "Close Card"
         case .clearHighlight: "Clear Highlight"
@@ -248,7 +274,7 @@ final class AppModel {
             guard layers != oldValue else { return }
             if layers.overlay != oldValue.overlay {
                 keyHighlight = nil
-                if let selection, !selection.isTree { clearSelection() }
+                if let selection, !selection.isTree, !selection.isPin { clearSelection() }
             }
             if layers.trees != oldValue.trees, selection?.isTree == true { clearSelection() }
         }
@@ -298,7 +324,14 @@ final class AppModel {
     var trackingMode: TrackingMode = .off
     var selection: FeatureSelection? {
         // a new tap or a close drops the whole stack
-        didSet { if selection?.id != oldValue?.id { cardPath = [] } }
+        didSet {
+            if selection?.id != oldValue?.id {
+                cardPath = []
+                pinProjectForm = false
+            }
+            // closing the card or selecting something else ends a move
+            if let moving = movingPin, selection?.pinID != moving { movingPin = nil }
+        }
     }
     /// Views pushed over the card (group list, plant sheet), oldest first.
     var cardPath: [CardRoute] = [] {
@@ -359,6 +392,8 @@ final class AppModel {
     @ObservationIgnored private var trackingAwaitingPermission: TrackingMode?
     @ObservationIgnored private var noFixShown = false
     @ObservationIgnored private var lastFix: ContinuousClock.Instant?
+    /// The last position MapLibre reported (pins at the current location).
+    @ObservationIgnored private(set) var lastLocation: CLLocation?
     @ObservationIgnored private var noFixWatch: Task<Void, Never>?
     @ObservationIgnored private var noticeTimer: Task<Void, Never>?
     /// How long following may go without a position before saying so.
@@ -454,8 +489,10 @@ final class AppModel {
         if photoViewer != nil { return .closePhoto }
         if let modal { return modalDepth > 0 ? .modalBack : .dismiss(modal.presentation) }
         if isFraming { return .cancelFraming }
+        if movingPin != nil { return .cancelPinMove }
         if search.fieldFocused { return .leaveSearchField }
         if search.isActive { return .closeSearch }
+        if selection?.isPin == true, pinProjectForm { return .closeProjectForm }
         if selection != nil, !cardPath.isEmpty { return .back }
         if selection != nil { return .closeCard }
         if keyHighlight != nil { return .clearHighlight }
@@ -471,6 +508,8 @@ final class AppModel {
         case .modalBack: modalPopRequest += 1
         case .dismiss: modal = nil
         case .cancelFraming: cancelFraming()
+        case .cancelPinMove: cancelPinMove()
+        case .closeProjectForm: pinProjectForm = false
         case .back: cardPath.removeLast()
         case .closeCard: clearSelection()
         case .clearHighlight: keyHighlight = nil
@@ -519,6 +558,7 @@ final class AppModel {
     /// "Download an area…" (Storage, Layers): the modal goes, the map frames.
     func startFraming() {
         modal = nil
+        movingPin = nil
         endSpotlight()
         if search.isActive { search.end() }
         clearSelection()
@@ -554,6 +594,91 @@ final class AppModel {
         openStorage(at: StorageTarget.areas)
     }
 
+    // MARK: Pins (Pins/AppModel+Pins.swift)
+
+    /// nil while pins are switched off (`Features.pins`).
+    var pins: PinStore? { shared.pins }
+    /// Moving this pin: the next map tap is its new spot (a bar says so).
+    var movingPin: UUID?
+    /// A new pin's card opens with its title field focused (long-press).
+    var pinTitleFocus: UUID?
+    /// Bumped when a pin is placed (the light haptic's trigger).
+    private(set) var pinPlacedCount = 0
+    /// The pin whose card's title or note field has the keyboard (the
+    /// phone's sheet goes to its large detent meanwhile). An id, so the card
+    /// that goes away clears only its own state, never the next card's.
+    var pinEditing: UUID?
+    /// The "pins couldn't be opened" notice was put away (this session).
+    var pinStoreNoticeDismissed = false
+    /// The card's "New project…" form is open (Escape closes just that).
+    var pinProjectForm = false
+    /// The camera eases to a pin placed out of sight (the pin button).
+    private(set) var pinFocus: PinFocus?
+    /// The freshest position Core Location has (MapLibre 7.0.0 drops a
+    /// sample at an unchanged coordinate, so standing still its last
+    /// report grows old while the system keeps a fresh one).
+    @ObservationIgnored var systemLocation: @MainActor () -> CLLocation? = { SystemLocation.latest }
+    /// Wall-clock time, to judge a fix's age by its timestamp.
+    @ObservationIgnored var wallClock: @MainActor () -> Date = { Date() }
+    /// A pin just deleted: the Undo banner.
+    private(set) var pinUndo: PinUndo?
+    @ObservationIgnored var pinUndoTimer: Task<Void, Never>?
+    /// Bumped to ask for the user's location (the pin button before
+    /// location was ever allowed: the map turns its dot on, iOS asks).
+    private(set) var locationRequest = 0
+    /// How long the Undo banner stays up.
+    static let pinUndoDuration: Duration = .seconds(6)
+    /// A fix less accurate than this is no place for a pin.
+    static let pinMaxAccuracy: Double = 500
+
+    nonisolated struct PinFocus: Equatable, Sendable {
+        let latitude: Double
+        let longitude: Double
+        let serial: Int
+    }
+
+    func focusPin(latitude: Double, longitude: Double) {
+        pinFocus = PinFocus(latitude: latitude, longitude: longitude, serial: (pinFocus?.serial ?? 0) + 1)
+    }
+
+    nonisolated struct PinUndo: Equatable, Sendable {
+        let pin: UUID
+        let title: String
+        let serial: Int
+    }
+
+    func pinPlaced() { pinPlacedCount += 1 }
+    func requestLocation() { locationRequest += 1 }
+
+    func setPinUndo(_ undo: PinUndo?) {
+        pinUndoTimer?.cancel()
+        pinUndo = undo
+        guard let undo else { return }
+        pinUndoTimer = Task { [weak self, clock] in
+            do { try await clock.sleep(Self.pinUndoDuration) } catch { return }
+            guard !Task.isCancelled, let self, self.pinUndo == undo else { return }
+            self.pinUndo = nil
+        }
+    }
+
+    /// The freshest fix at hand — Core Location's own latest or the last one
+    /// MapLibre reported — when it is recent (taken less than
+    /// `fixStaleAfter` ago, by its timestamp) and accurate enough to put a
+    /// pin on (`pinMaxAccuracy`).
+    var usableFix: CLLocation? {
+        let now = wallClock()
+        return [systemLocation(), lastLocation].compactMap { $0 }
+            .filter { fix in
+                fix.horizontalAccuracy >= 0 && fix.horizontalAccuracy <= Self.pinMaxAccuracy
+                    && now.timeIntervalSince(fix.timestamp) < Double(Self.fixStaleAfter.components.seconds)
+            }
+            .max { $0.timestamp < $1.timestamp }
+    }
+
+    /// The pin button found no fix: say so, with the other way to place one.
+    func showNoFixForPin() { show(.noFixForPin) }
+    func showLocationDenied() { show(.denied) }
+
     // MARK: Location
 
     var isLocationDenied: Bool { authorization == .denied || authorization == .restricted }
@@ -583,8 +708,9 @@ final class AppModel {
         if mode == .off { noFixWatch?.cancel() }
     }
 
-    func locationUpdated() {
+    func locationUpdated(_ location: CLLocation? = nil) {
         lastFix = clock.now()
+        if let location { lastLocation = location }
         noFixWatch?.cancel()
         if notice == .noFix { dismissNotice() }
     }

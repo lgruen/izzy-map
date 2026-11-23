@@ -127,6 +127,17 @@ struct RootView: View {
                     .transition(.opacity)
             }
 
+            if model.movingPin != nil {
+                PinMoveBar(model: model)
+                    .frame(maxWidth: 440)
+                    .reportFrame(.framingBar, into: $chromeFrames)
+                    .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
+                    .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
+                    .padding(.top, Self.margin)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: usesSheet ? .topLeading : .top)
+                    .transition(.opacity)
+            }
+
             if model.isFraming, !showsSetupCard {
                 AreaFramingBar(model: model, map: model.map)
                     .frame(maxWidth: 520)
@@ -143,7 +154,8 @@ struct RootView: View {
             // controls; card layout: centred in the map area between the
             // card and the controls
             MapStatusStack(model: model, reduceMotion: reduceMotion,
-                           showsModeBar: model.spotlight != nil || model.isFraming, frames: $chromeFrames)
+                           showsModeBar: model.spotlight != nil || model.isFraming || model.movingPin != nil,
+                           frames: $chromeFrames)
                 .frame(maxWidth: 440)
                 .padding(.leading, usesSheet ? Self.margin : 2 * Self.margin + cardWidth)
                 .padding(.trailing, MapControls.buttonSize + 2 * Self.margin)
@@ -154,6 +166,9 @@ struct RootView: View {
         .animation(.snappy, value: model.isFraming)
         .animation(.snappy, value: showsSetupCard)
         .animation(.snappy, value: model.spotlight?.code)
+        .animation(.snappy, value: model.movingPin)
+        // a pin placed (long-press, the pin button): a light tap
+        .sensoryFeedback(.impact(weight: .light), trigger: model.pinPlacedCount)
         // card layout: modals hang off the root (the sheet layout's are on the panel sheet)
         .modifier(ModalHost(model: model, layout: .card))
         .modifier(ReaderHost(model: model, layout: .card))
@@ -334,7 +349,8 @@ private struct MapLayer: View {
     var body: some View {
         MapView(model: model, chrome: chrome, trackingMode: trackingMode, hasSelection: hasSelection,
                 layers: layers, keyHighlight: keyHighlight, spotlight: spotlight, searchPin: model.search.pin,
-                areaFocus: model.areaFocus)
+                areaFocus: model.areaFocus, pinsRevision: model.pins?.revision ?? 0, selectedPin: model.selection?.pinID,
+                locationRequest: model.locationRequest, pinFocus: model.pinFocus)
             .ignoresSafeArea()
             .accessibilityLabel("Map")
             // UI tests wait for "idle" (camera settled, tiles loaded) before tapping

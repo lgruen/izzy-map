@@ -23,9 +23,15 @@ struct PanelContent: View {
                 SearchResultsView(search: model.search)
                     .transition(.opacity)
             } else if let selection = model.selection {
-                FeatureCard(model: model, selection: selection) { model.clearSelection() }
-                    .id(selection.id)
-                    .transition(.opacity)
+                Group {
+                    if let pin = selection.pinID, let pins = model.pins {
+                        PinCard(model: model, store: pins, pinID: pin)
+                    } else {
+                        FeatureCard(model: model, selection: selection) { model.clearSelection() }
+                    }
+                }
+                .id(selection.id)
+                .transition(.opacity)
             } else if model.data.isEmpty, model.shared.packs.isResolved {
                 NoDataNotice()
             }

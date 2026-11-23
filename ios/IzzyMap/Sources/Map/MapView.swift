@@ -43,6 +43,14 @@ struct MapView: UIViewRepresentable {
     var searchPin: SearchModel.Pin?
     /// A detailed area to frame ("Show on map" in Storage).
     var areaFocus: AppModel.AreaFocus?
+    /// The pin store's change signal (`PinStore.revision`) and the selected
+    /// pin: the pins' runtime layers and the ring follow them.
+    var pinsRevision = 0
+    var selectedPin: UUID?
+    /// The pin button asking for the location (`AppModel.locationRequest`).
+    var locationRequest = 0
+    /// A pin to bring into view (`AppModel.pinFocus`).
+    var pinFocus: AppModel.PinFocus?
 
     func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
 
@@ -58,6 +66,9 @@ struct MapView: UIViewRepresentable {
         coordinator.apply(tracking: trackingMode, to: map)
         coordinator.apply(layers: layers, to: map)
         if !hasSelection { coordinator.clearSelectionShape() }
+        coordinator.apply(pins: model.pins, selectedPin: selectedPin, to: map)
+        coordinator.apply(locationRequest: locationRequest, to: map)
+        coordinator.apply(pinFocus: pinFocus, framing: chrome.framingInsets, to: map)
         coordinator.apply(keyHighlight: keyHighlight)
         coordinator.apply(spotlight: spotlight, to: map)
         coordinator.searchPins.apply(searchPin, framing: chrome.framingInsets, to: map)

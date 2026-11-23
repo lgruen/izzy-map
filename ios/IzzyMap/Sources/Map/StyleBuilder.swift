@@ -112,6 +112,13 @@ nonisolated enum StyleBuilder {
         static let spotlightPatch = "spotlight-patch"
         static let spotlight = [spotlightHalo, spotlightCells, spotlightInk, spotlightDots, spotlightSpots,
                                        spotlightPatchRing, spotlightPatch]
+
+        /// Saved pins (Pins/PinPresenter.swift): runtime layers, never in
+        /// the style JSON, between the trees and the selection.
+        static let pinsHalo = "pins-halo"
+        static let pinsMark = "pins-mark"
+        static let pinsLabel = "pins-label"
+        static let pins = [pinsHalo, pinsMark, pinsLabel]
     }
 
     enum SourceID {
@@ -142,6 +149,8 @@ nonisolated enum StyleBuilder {
         static let areaOutlines = "detail-outlines"
         /// "Show on map"'s presence cells (runtime GeoJSON source).
         static let spotlight = "spotlight"
+        /// Saved pins (runtime).
+        static let pins = "pins"
     }
 
     // MARK: Colours (DESIGN.md §2 roles, §4 cartography)
@@ -636,8 +645,12 @@ nonisolated enum StyleBuilder {
         layers.append(["id": LayerID.selectionOutline, "type": "line", "source": SourceID.selection, "filter": polygons,
                        "layout": ["line-join": "round"],
                        "paint": ["line-color": selectionRed, "line-width": selectionWidth] as [String: Any]])
-        // a tree ring (11 pt) or the smaller tap ring (`tap` property, 6 pt)
-        let radius: [Any] = ["case", ["has", "tap"], 6, 11]
+        // a tree ring (11 pt), the smaller tap ring (`tap` property, 6 pt)
+        // or a saved pin's (`pin`): just outside its keyline, which grows
+        // with the mark from z6 to z14 (PinPresenter)
+        let radius: [Any] = ["interpolate", ["linear"], ["zoom"],
+                             6, ["case", ["has", "tap"], 6, ["has", "pin"], 8, 11] as [Any],
+                             14, ["case", ["has", "tap"], 6, ["has", "pin"], 12, 11] as [Any]]
         layers.append(["id": LayerID.selectionPoint, "type": "circle", "source": SourceID.selection, "filter": points,
                        "paint": ["circle-radius": radius, "circle-color": "rgba(0,0,0,0)",
                                  "circle-stroke-color": selectionRed, "circle-stroke-width": selectionWidth] as [String: Any]])

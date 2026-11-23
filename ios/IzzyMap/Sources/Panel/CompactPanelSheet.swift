@@ -16,6 +16,8 @@ struct CompactPanelSheet: View {
 
     @State private var fitHeight: CGFloat = 80
     @State private var detent: PresentationDetent = .height(80)
+    /// Where the sheet was before a pin field took the keyboard.
+    @State private var detentBeforeEditing: PresentationDetent?
 
     @State private var contentHeight: CGFloat = 0
     /// The pinned search header's height, padding included.
@@ -63,6 +65,28 @@ struct CompactPanelSheet: View {
         }
         .onChange(of: model.selection?.id) { _, id in
             if id == nil { peek = 0; updateFit(contentHeight) }
+        }
+        // a pin card's title or note has the keyboard: room to type; after,
+        // the sheet goes back — undoing only our own change: not when
+        // search took over (its results live at large, and the fit detent
+        // would end it), she moved the sheet herself, or a pin is moving
+        .onChange(of: model.pinEditing != nil) { _, editing in
+            if editing {
+                if detentBeforeEditing == nil { detentBeforeEditing = detent }
+                detent = .large
+            } else if let before = detentBeforeEditing {
+                detentBeforeEditing = nil
+                guard !model.search.isActive, model.movingPin == nil, detent == .large else { return }
+                detent = before == .medium || before == .large ? before : fitDetent
+            }
+        }
+        // moving a pin: the map is where she taps, the sheet at its glance
+        // until the move ends (a field losing focus restores nothing)
+        .onChange(of: model.movingPin) { _, id in
+            if id != nil {
+                detentBeforeEditing = nil
+                detent = fitDetent
+            }
         }
         // "Show on map" from the card: the sheet drops to its glance so
         // the map shows the community statewide

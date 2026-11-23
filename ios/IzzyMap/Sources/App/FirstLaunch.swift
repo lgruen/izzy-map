@@ -214,9 +214,19 @@ struct MapStatusStack: View {
                 NoticeBanner(notice: notice) { model.dismissNotice() }
                     .transition(transition)
             }
+            if model.pins?.openFailed == true, !model.pinStoreNoticeDismissed {
+                PinStoreFailedBanner { model.pinStoreNoticeDismissed = true }
+                    .transition(transition)
+            }
+            if let undo = model.pinUndo {
+                PinUndoBanner(undo: undo) { model.undoPinDelete() } onDismiss: { model.setPinUndo(nil) }
+                    .transition(transition)
+            }
         }
-        .reportFrame(.notice, into: $frames, when: welcome || arrival != nil || model.notice != nil)
+        .reportFrame(.notice, into: $frames, when: welcome || arrival != nil || model.notice != nil || model.pinUndo != nil
+                         || (model.pins?.openFailed == true && !model.pinStoreNoticeDismissed))
         .animation(.snappy, value: model.notice)
+        .animation(.snappy, value: model.pinUndo)
         .animation(.snappy, value: welcome)
         .animation(.snappy, value: arrival == nil)
         .sensoryFeedback(.success, trigger: PackTally(packs)) { old, new in

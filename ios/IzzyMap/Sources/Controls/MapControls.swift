@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Floating glass controls at the top trailing edge (Maps pattern):
-/// Layers and Location in one vertical capsule. MapLibre's compass sits
+/// Layers, Location and "pin my location" in one vertical capsule. MapLibre's compass sits
 /// below it and appears once the map is rotated.
 struct MapControls: View {
     @Bindable var model: AppModel
@@ -44,6 +44,18 @@ struct MapControls: View {
             }
             .accessibilityValue(model.trackingMode.spokenState)
             .accessibilityIdentifier("location-button")
+
+            // a pin at the current location (a long-press places one
+            // anywhere); not while pins are switched off (`Features.pins`)
+            if model.pins != nil {
+                Divider()
+                    .frame(width: Self.buttonSize - 20)
+
+                MapControlButton(symbol: "mappin.and.ellipse", label: "Pin My Location") {
+                    model.pinCurrentLocation()
+                }
+                .accessibilityIdentifier("pin-button")
+            }
         }
         .glassEffect(.regular.interactive(), in: .capsule)
         .mapChrome()
