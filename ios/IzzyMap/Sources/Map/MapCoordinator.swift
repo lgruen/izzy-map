@@ -194,11 +194,12 @@ final class MapCoordinator: NSObject {
             camera.contentInsetChanged()
             camera.resume(interrupted, on: map)
         }
-        let insetsChanged = appliedChrome?.visibleInsets != chrome.visibleInsets
+        let panelChanged = appliedChrome?.panelFrame != chrome.panelFrame
         appliedChrome = chrome
         // the sheet changed detent, the card appeared or grew: the selected
-        // pin may now be under it
-        if insetsChanged { scheduleRevealPin(map) }
+        // pin may now be under it (a pill or a notice coming or going never
+        // moves the map: they change `visibleInsets`, not the panel)
+        if panelChanged, revealGate.panelChanged() { scheduleRevealPin(map) }
         let compassWidth = map.compassView.bounds.width > 0 ? map.compassView.bounds.width : 40
         map.compassViewMargins = CGPoint(
             x: max(0, chrome.controlsCentreFromTrailing - compassWidth / 2),
@@ -305,9 +306,11 @@ final class MapCoordinator: NSObject {
     func apply(pins store: PinStore?, selectedPin: UUID?, to map: MLNMapView) {
         guard let store else { return }
         pinMarks.apply(store, visible: model.layers.pins, selected: selectedPin, to: map)
-        if selectedPin != revealFor {
-            revealFor = selectedPin
+        if revealGate.selected(selectedPin) {
             scheduleRevealPin(map)
+        } else if selectedPin == nil {
+            revealWork?.cancel()
+            revealWork = nil
         }
         guard let id = selectedPin else { return }
         guard let pin = store.pin(id), pin.isOnMap else {
@@ -330,31 +333,52 @@ final class MapCoordinator: NSObject {
 
     // MARK: Keep the selected pin in sight
 
-    /// The pin selection the reveal last looked at.
-    private var revealFor: UUID?
+    /// When the reveal may run (a new selection, the panel changing for
+    /// it — until her first gesture).
+    private(set) var revealGate = PinFraming.RevealGate()
     private var revealWork: DispatchWorkItem?
+    /// The camera is moving (a flight, the pin button's ease-to, her
+    /// gesture): the reveal waits for it to end rather than cut it short.
+    private var cameraMoving = false
+    /// Reveals asked for (tests: which chrome changes ask for one).
+    private(set) var revealsScheduled = 0
     /// How long after the chrome last changed the reveal looks (the
     /// phone's sheet takes ~0.35 s to settle at a new detent).
     static let revealDelay: TimeInterval = 0.45
 
     /// A pin selected (a tap, a long-press, the pin button, Undo, a row in
-    /// Pins) or the chrome round it changed (the sheet's detent, the card
-    /// growing, a banner): once the chrome has settled, a selected pin
-    /// hidden under the sheet, the card or a pill comes back into the map
-    /// she can see. The comparison gesture needs the thing she tapped in
-    /// sight; a pin already comfortably visible never moves the map.
-    private func scheduleRevealPin(_ map: MLNMapView) {
+    /// Pins) or the panel round it changed (the sheet's detent, the card
+    /// growing): once the chrome has settled, a selected pin hidden under
+    /// the sheet, the card or a pill comes back into the map she can see.
+    /// The comparison gesture needs the thing she tapped in sight; a pin
+    /// already comfortably visible never moves the map, and once she has
+    /// moved the map herself it is hers (`RevealGate`).
+    private func scheduleRevealPin(_ map: MLNMapView, waits: Int = 0) {
         revealWork?.cancel()
         revealWork = nil
-        guard model.selection?.pinID != nil else { return }
+        guard model.selection?.pinID != nil, revealGate.armed else { return }
+        if waits == 0 { revealsScheduled += 1 }
         let item = DispatchWorkItem { [weak self, weak map] in
             MainActor.assumeIsolated {
                 guard let self, let map else { return }
+                // a camera still moving (the pin button's ease-to, a
+                // flight): look again once it has stopped
+                // (a few times: a camera change MapLibre never reports
+                // ended must not keep it waiting for good)
+                if self.cameraMoving || Self.fingerDown(on: map) {
+                    if waits < 8 { self.scheduleRevealPin(map, waits: waits + 1) }
+                    return
+                }
                 self.revealSelectedPin(map)
             }
         }
         revealWork = item
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealDelay, execute: item)
+    }
+
+    /// One of the map's gestures has a finger on it (began, not ended).
+    private static func fingerDown(on map: MLNMapView) -> Bool {
+        (map.gestureRecognizers ?? []).contains { $0.state == .began || $0.state == .changed }
     }
 
     /// The camera move itself (also called directly by tests): the
@@ -363,7 +387,7 @@ final class MapCoordinator: NSObject {
     /// or following holds the camera, or when the sheet leaves too little
     /// map to show it in (the large detent).
     func revealSelectedPin(_ map: MLNMapView, animated: Bool = !UIAccessibility.isReduceMotionEnabled) {
-        guard let id = model.selection?.pinID, let pin = model.pins?.pin(id), pin.isOnMap,
+        guard revealGate.armed, let id = model.selection?.pinID, let pin = model.pins?.pin(id), pin.isOnMap,
               model.movingPin == nil, model.trackingMode == .off, camera.flightUnderWay == nil,
               let framing = appliedChrome?.visibleInsets else { return }
         let free = map.bounds.inset(by: framing)
@@ -821,7 +845,9 @@ extension MapCoordinator: MLNMapViewDelegate {
             camera.gestureBegan()
             revealWork?.cancel()
             revealWork = nil
+            revealGate.gesture()
         }
+        cameraMoving = true
         if model.map.isIdle { model.map.isIdle = false }
     }
 
@@ -910,6 +936,7 @@ extension MapCoordinator: MLNMapViewDelegate {
     }
 
     func mapView(_ mapView: MLNMapView, regionDidChangeWith reason: MLNCameraChangeReason, animated: Bool) {
+        cameraMoving = false
         let centre = mapView.centerCoordinate
         model.map.centre = centre
         model.map.zoom = mapView.zoomLevel

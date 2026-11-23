@@ -63,6 +63,29 @@ import UIKit
         #expect(PinFraming.revealShift(pin: CGPoint(x: 160, y: 620), free: CGRect(x: 0, y: 47, width: 390, height: 60)) == nil)
     }
 
+    /// Review S2-1: a new selection arms the reveal, the panel changing
+    /// for it may run it, her first gesture disarms it until the next pin.
+    @Test func revealGateArmsOnSelectionAndStopsAtHerGesture() {
+        var gate = PinFraming.RevealGate()
+        let a = UUID(), b = UUID()
+        #expect(!gate.panelChanged(), "nothing selected")
+        var asks = gate.selected(a)
+        #expect(asks)
+        #expect(gate.panelChanged(), "the sheet rises for the new card")
+        asks = gate.selected(a)
+        #expect(!asks, "the same selection again asks for nothing")
+        gate.gesture()
+        #expect(!gate.panelChanged(), "after her pan the map is hers")
+        asks = gate.selected(a)
+        #expect(!asks)
+        asks = gate.selected(b)
+        #expect(asks, "a new pin arms it again")
+        #expect(gate.panelChanged())
+        asks = gate.selected(nil)
+        #expect(!asks)
+        #expect(!gate.panelChanged(), "no selection")
+    }
+
     @Test func iPadLandscapeKeepsClearOfTheCardAndOrnaments() {
         let bounds = CGRect(x: 0, y: 0, width: 1210, height: 834)
         let safe = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)

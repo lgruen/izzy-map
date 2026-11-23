@@ -65,6 +65,33 @@ nonisolated enum PinFraming {
         return CGVector(dx: target.x - pin.x, dy: target.y - pin.y)
     }
 
+    /// When keeping the selected pin in sight may move the camera (review
+    /// S2-1): when a pin becomes selected, and when the panel round that
+    /// selection changes shape (the phone's sheet detent, the iPad card's
+    /// height) — only until her first map gesture after the selection.
+    /// A pill, a notice or a banner coming or going never arms it.
+    struct RevealGate: Equatable, Sendable {
+        /// The selection it last looked at.
+        private(set) var pin: UUID?
+        /// Whether a reveal may still run for `pin`.
+        private(set) var armed = false
+
+        /// The selection changed (nil: none). True when a reveal should be
+        /// scheduled for the newly selected pin.
+        mutating func selected(_ id: UUID?) -> Bool {
+            guard id != pin else { return false }
+            pin = id
+            armed = id != nil
+            return armed
+        }
+
+        /// The panel's geometry changed: true while armed.
+        func panelChanged() -> Bool { armed }
+
+        /// She took the map: her camera from now on, until the next selection.
+        mutating func gesture() { armed = false }
+    }
+
     /// Absolute insets for the fit: the chrome (`framing`) plus a margin.
     static func margin(framing: UIEdgeInsets, in size: CGSize) -> UIEdgeInsets {
         let free = CGSize(width: max(0, size.width - framing.left - framing.right),

@@ -23,6 +23,10 @@ nonisolated struct MapChrome: Equatable, Sendable {
     /// The same, but nil when chrome covers the whole map (the phone's
     /// sheet at its large detent): what a selected pin is kept inside.
     var visibleInsets: UIEdgeInsets?
+    /// The panel's frame (global): the phone's sheet or the iPad card. Its
+    /// changes — a detent, the card growing — may bring the selected pin
+    /// back into sight; a pill or a notice (also in `visibleInsets`) never.
+    var panelFrame: CGRect?
     /// While framing a detailed area: the dashed frame, in the map view's
     /// coordinates (its box on the ground goes to `MapLiveState.framedBox`).
     var areaFrame: CGRect?

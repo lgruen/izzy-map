@@ -276,6 +276,7 @@ struct RootView: View {
             controlsCentreFromTrailing: Self.margin + MapControls.buttonSize / 2,
             framingInsets: framingInsets,
             visibleInsets: uncoveredInsets(collapsing: true),
+            panelFrame: usesSheet ? sheetFrame : (chromeFrames[.setupCard] ?? chromeFrames[.card]),
             areaFrame: model.isFraming && !showsSetupCard ? areaFrame : nil,
             areaDraft: showsSetupCard ? model.areaDraft : nil
         )
