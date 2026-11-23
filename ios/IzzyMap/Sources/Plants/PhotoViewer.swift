@@ -22,6 +22,11 @@ struct PhotoViewer: View {
     let title: AttributedString
     let photos: [ViewerPhoto]
     @Binding var page: Int
+    /// New York for names of living things; a pin's title is SF.
+    var serifTitle = true
+    /// Replaces the credit line for page i (a pin's photo: caption field,
+    /// date, Delete). Hidden with the rest of the chrome.
+    var footer: ((Int) -> AnyView)?
     @State private var chrome = true
     @FocusState private var focused: Bool
 
@@ -42,7 +47,19 @@ struct PhotoViewer: View {
             if chrome { topBar.transition(.opacity) }
         }
         .overlay(alignment: .bottom) {
-            if chrome, !photos.isEmpty { credit.transition(.opacity) }
+            if chrome, !photos.isEmpty {
+                if let footer {
+                    footer(min(max(page, 0), photos.count - 1))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 28)
+                        .padding(.bottom, 12)
+                        .background(alignment: .bottom) { shade }
+                        .transition(.opacity)
+                } else {
+                    credit.transition(.opacity)
+                }
+            }
         }
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
@@ -67,7 +84,7 @@ struct PhotoViewer: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
                     .font(.headline)
-                    .fontDesign(.serif)
+                    .fontDesign(serifTitle ? .serif : .default)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 if photos.count > 1 {
@@ -109,6 +126,17 @@ struct PhotoViewer: View {
             }
             .allowsHitTesting(false)
             .accessibilityIdentifier("photo-viewer-credit")
+    }
+
+    /// The gradient under a `footer` (only there — the credit keeps its own,
+    /// as before): darker, under the home indicator but never stretched under
+    /// the keyboard (a caption being typed would sit on its clear top over a
+    /// bright photo).
+    private var shade: some View {
+        LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.55), location: 0.4),
+                               .init(color: .black.opacity(0.7), location: 1)],
+                       startPoint: .top, endPoint: .bottom)
+            .ignoresSafeArea(.container, edges: .bottom)
     }
 
     private func toggleChrome() {

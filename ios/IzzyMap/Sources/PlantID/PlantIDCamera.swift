@@ -3,8 +3,13 @@ import UIKit
 
 /// The system camera, full screen (UIImagePickerController: the supported
 /// way to take one still photo without building a camera). nil = cancelled.
+/// Identify and the pin card's "Take Photo" share it; the pin card also
+/// keeps the capture's metadata (lens, exposure — `mediaMetadata`).
 struct PlantIDCamera: UIViewControllerRepresentable {
-    let done: (UIImage?) -> Void
+    let done: (UIImage?, [String: Any]?) -> Void
+
+    init(done: @escaping (UIImage?, [String: Any]?) -> Void) { self.done = done }
+    init(done: @escaping (UIImage?) -> Void) { self.done = { image, _ in done(image) } }
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
@@ -20,15 +25,15 @@ struct PlantIDCamera: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(done: done) }
 
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let done: (UIImage?) -> Void
-        init(done: @escaping (UIImage?) -> Void) { self.done = done }
+        let done: (UIImage?, [String: Any]?) -> Void
+        init(done: @escaping (UIImage?, [String: Any]?) -> Void) { self.done = done }
 
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            done(info[.originalImage] as? UIImage)
+            done(info[.originalImage] as? UIImage, info[.mediaMetadata] as? [String: Any])
         }
 
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { done(nil) }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { done(nil, nil) }
     }
 }
 

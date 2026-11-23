@@ -106,7 +106,7 @@ private struct PinsHome: View {
                     }
                     if store.unfiledCount > 0 {
                         NavigationLink(value: PinsRoute.unfiled) {
-                            PinsRowLabel(title: "Unfiled", status: Self.status(store.pins(in: nil))) {
+                            PinsRowLabel(title: "Unfiled", status: Self.status(store.pins(in: nil), in: store)) {
                                 GlyphSwatch(symbol: "tray")
                             }
                         }
@@ -166,17 +166,30 @@ private struct PinsHome: View {
                 }
                 .panelRows()
             }
+
+            // what it all takes on this device (photos are most of it)
+            if !store.pins.isEmpty || store.hasDeleted, let size = PinsStorageSection.size(bytes) {
+                Section {} footer: {
+                    Text("\(PinText.count(pins: store.pins.count, photos: store.photoCount(store.pins))) · \(size) on this \(DeviceNoun.current)")
+                        .monospacedDigit()
+                        .foregroundStyle(DesignColor.secondaryInk)
+                        .accessibilityIdentifier("pins-size")
+                }
+            }
         }
         .navigationTitle("Pins")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { DoneItem(model: model) }
+        .task(id: store.saves) { bytes = await store.bytesOnDisk() }
     }
 
-    /// "12 pins · 3–24 Nov", "No pins yet".
-    static func status(_ pins: [SavedPin]) -> String {
+    @State private var bytes = 0
+
+    /// "12 pins · 5 photos · 3–24 Nov", "12 pins · 3–24 Nov", "No pins yet".
+    static func status(_ pins: [SavedPin], in store: PinStore) -> String {
         guard !pins.isEmpty else { return "No pins yet" }
         let range = PinText.dateRange(pins.map(\.createdAt)).map { " · \($0)" } ?? ""
-        return PinText.count(pins.count) + range
+        return PinText.count(pins: pins.count, photos: store.photoCount(pins)) + range
     }
 
     static func deletedStatus(_ store: PinStore) -> String {
@@ -256,7 +269,7 @@ private struct ProjectRow: View {
 
     var body: some View {
         NavigationLink(value: PinsRoute.project(project.id)) {
-            PinsRowLabel(title: PinText.projectName(project.name), status: PinsHome.status(store.pins(in: project))) {
+            PinsRowLabel(title: PinText.projectName(project.name), status: PinsHome.status(store.pins(in: project), in: store)) {
                 KeyBox(hex: PinColour.hex(forName: project.colour), opacity: 1, width: PinsMetrics.swatch, height: PinsMetrics.swatch)
             }
         }
@@ -297,7 +310,7 @@ private struct ProjectPage: View {
                             .padding(.vertical, 4)
                     }
                     ForEach(list) { pin in
-                        PinRow(pin: pin, enabled: pin.isOnMap) { model.showPin(pin.id) }
+                        PinRow(store: store, pin: pin, enabled: pin.isOnMap) { model.showPin(pin.id) }
                     }
                 } header: {
                     if !list.isEmpty { Text("Pins").panelHeader() }
@@ -327,7 +340,7 @@ private struct ProjectPage: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("project-title")
                         .onScrollVisibilityChange(threshold: 0.5) { headerVisible = $0 }
-                    Text(archived ? "Archived · \(PinsHome.status(pins))" : PinsHome.status(pins))
+                    Text(archived ? "Archived · \(PinsHome.status(pins, in: store))" : PinsHome.status(pins, in: store))
                         .font(.subheadline)
                         .monospacedDigit()
                         .foregroundStyle(DesignColor.secondaryInk)
@@ -373,6 +386,7 @@ private struct ProjectPage: View {
 
 /// One pin: the map's mark, its name, the date, the note's first line.
 private struct PinRow: View {
+    let store: PinStore
     let pin: SavedPin
     /// Off the map (an archived project): shown, not a way to the map.
     let enabled: Bool
@@ -384,9 +398,12 @@ private struct PinRow: View {
         let noteLine = PinText.firstLine(pin.note)
         // an untitled pin is named by its note or its date: don't say it twice
         let date = hasTitle || noteLine != nil ? PinText.shortDate(pin.createdAt) : nil
+        let hasPhoto = store.coverPhoto(of: pin) != nil
         Button(action: show) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                PinMark(hex: PinColour.hex(forName: pin.effectiveColourName))
+            // a photo leads (square, centred on the text); else the mark,
+            // centred in the same box, on the first line
+            HStack(alignment: hasPhoto ? .center : .firstTextBaseline, spacing: 12) {
+                PinRowMark(store: store, pin: pin, side: PinPhotoMetrics.row)
                     .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -440,19 +457,19 @@ private struct RecentlyDeletedPage: View {
                         .padding(.vertical, 4)
                 }
                 ForEach(store.deletedProjects) { project in
+                    let gone = store.pinsDeleted(with: project)
                     DeletedRow(title: PinText.projectName(project.name),
-                               status: "\(PinText.count(store.pinsDeleted(with: project).count)) · \(daysLeft(project.deletedAt))",
+                               status: "\(PinText.count(pins: gone.count, photos: store.photoCount(gone))) · \(daysLeft(project.deletedAt))",
                                restore: { store.restoreProject(project) },
                                delete: { confirm = .project(project, in: store) }) {
                         KeyBox(hex: PinColour.hex(forName: project.colour), opacity: 1, width: PinsMetrics.swatch, height: PinsMetrics.swatch)
                     }
                 }
                 ForEach(store.deletedPins) { pin in
-                    DeletedRow(title: pin.displayTitle, status: "\(daysLeft(pin.deletedAt)) · \(Self.place(pin))",
+                    DeletedRow(title: pin.displayTitle, status: Self.status(pin, photos: store.photoCount(of: pin), daysLeft: daysLeft(pin.deletedAt)),
                                restore: { store.restore(pin) },
                                delete: { confirm = .pin(pin) }) {
-                        PinMark(hex: PinColour.hex(forName: pin.effectiveColourName))
-                            .frame(width: PinsMetrics.swatch)
+                        PinRowMark(store: store, pin: pin, side: PinsMetrics.swatch)
                     }
                 }
             } footer: {
@@ -495,6 +512,11 @@ private struct RecentlyDeletedPage: View {
     private func daysLeft(_ date: Date?) -> String {
         let n = store.daysLeft(date)
         return n == 1 ? "1 day left" : "\(n) days left"
+    }
+
+    /// "12 days left · Knocklofty · 3 photos" (no photo count without photos).
+    static func status(_ pin: SavedPin, photos: Int, daysLeft: String) -> String {
+        return "\(daysLeft) · \(place(pin))" + (photos > 0 ? " · \(PinText.photoCount(photos))" : "")
     }
 
     /// "Knocklofty", "Unfiled".
@@ -610,9 +632,10 @@ private struct DoneItem: ToolbarContent {
 
 // MARK: - Storage
 
-/// Storage → "Pins": how many, and what the store takes on this device
-/// (photos will add to it). A state row, like the others; nothing to remove
-/// here — pins are deleted in Pins.
+/// Storage → "Pins": how many, and what the store takes on this device,
+/// photos included (`PinStore.bytesOnDisk` walks the external-data folder).
+/// A state row, like the others; nothing to remove here — pins are deleted
+/// in Pins.
 struct PinsStorageSection: View {
     let store: PinStore
     /// The store on disk (StorageView measures it as the store saves).
@@ -648,7 +671,7 @@ struct PinsStorageSection: View {
         } header: {
             Text("Pins").panelHeader()
         } footer: {
-            Text("Your pins, notes and projects, kept on this \(DeviceNoun.current) and in its backups.")
+            Text("Your pins, notes, photos and projects, kept on this \(DeviceNoun.current) and in its backups.")
                 .foregroundStyle(DesignColor.secondaryInk)
         }
     }

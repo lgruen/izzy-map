@@ -3,9 +3,9 @@ import MapKit
 import SwiftUI
 import UIKit
 
-/// A saved pin's card (docs/PINS_PLAN.md §5, photos to come): the glance —
-/// the map's mark, the title edited in place, the project chip — then
-/// colour, note, facts and the actions Move / Open in Maps / Delete.
+/// A saved pin's card (docs/PINS_PLAN.md §5): the glance — the map's mark,
+/// the title edited in place, the project chip, the photos (`PinPhotos`) —
+/// then colour, note, facts and the actions Move / Open in Maps / Delete.
 /// Title and note save as she types (`PinStore`, flushed when the card
 /// goes); nothing here is a modal.
 struct PinCard: View {
@@ -23,11 +23,15 @@ struct PinCard: View {
         if let pin = store.pin(pinID) {
             VStack(alignment: .leading, spacing: 12) {
                 header(pin)
-                ProjectChip(store: store, pin: pin) {
-                    focus = nil
-                    model.pinProjectForm = true
-                } allPins: {
-                    model.present(.pins)
+                // the chip, then the photo strip (or, with no photos yet, a
+                // compact "Add photo" beside the chip): both above the fold
+                PinPhotos(model: model, store: store, pin: pin) {
+                    ProjectChip(store: store, pin: pin) {
+                        focus = nil
+                        model.pinProjectForm = true
+                    } allPins: {
+                        model.present(.pins)
+                    }
                 }
                 // the bottom of the glance: the compact sheet's resting height
                 Color.clear.frame(height: 0)

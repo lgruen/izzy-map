@@ -62,6 +62,14 @@ nonisolated enum PinText {
     /// "1 pin", "12 pins".
     static func count(_ n: Int) -> String { "\(n.formatted()) \(n == 1 ? "pin" : "pins")" }
 
+    /// "1 photo", "12 photos".
+    static func photoCount(_ n: Int) -> String { "\(n.formatted()) \(n == 1 ? "photo" : "photos")" }
+
+    /// "12 pins · 5 photos"; just "12 pins" while none has a photo.
+    static func count(pins: Int, photos: Int) -> String {
+        photos > 0 ? "\(count(pins)) · \(photoCount(photos))" : count(pins)
+    }
+
     /// A project's name, or a stand-in for an empty one.
     static func projectName(_ name: String) -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

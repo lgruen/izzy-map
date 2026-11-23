@@ -3,6 +3,7 @@ import Observation
 import IzzyKit
 import os
 import SwiftData
+import UIKit
 
 /// The pins and projects of this device (docs/PINS_PLAN.md §3), shared by
 /// every window (`AppData.pins`): one SwiftData store, local for now
@@ -36,6 +37,13 @@ final class PinStore {
     /// which lists those — most recently deleted first.
     private(set) var deletedPins: [SavedPin] = []
 
+    /// Photos being added, by pin id: how far the batch has got. A batch
+    /// that ended with failures stays until the card has said so
+    /// (`dismissPhotoImport`).
+    private(set) var photoImports: [UUID: PhotoImport] = [:]
+    /// Per pin id: its photo count and newest photo (`photoCount`, `coverPhoto`).
+    private(set) var photoIndex: [UUID: PhotoSummary] = [:]
+
     /// The store file couldn't be opened: this session's pins live in
     /// memory only (the file is left untouched). The map says so.
     let openFailed: Bool
@@ -50,7 +58,7 @@ final class PinStore {
     /// How long typing may go unsaved.
     static let saveDelay: Duration = .milliseconds(500)
     static let lastProjectKey = "pinsLastProject"
-    static let schema = Schema([PinProject.self, SavedPin.self])
+    static let schema = Schema([PinProject.self, SavedPin.self, PinPhoto.self, PinPhotoOriginal.self])
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Pins")
 
     private var context: ModelContext { container.mainContext }
@@ -132,6 +140,7 @@ final class PinStore {
             setNote(pin, notes[i % notes.count])
             if i % 9 == 4 { setColour(pin, PinColour.pink.rawValue) }
         }
+        seedPhotos()
         lastUsedProject = projects[0]
         let old = addPin(latitude: -42.2, longitude: 147.5, placedBy: .map, project: projects[3])
         setTitle(old, "Remnant grassland")
@@ -148,6 +157,24 @@ final class PinStore {
         }
         flush()
         reload()
+    }
+
+    /// `-debugSeedPhotos <folder>` (screenshots): the folder's JPEG/HEIC
+    /// files, through the real pipeline, onto two of every three seeded
+    /// pins (one to three each, cycling through the files).
+    private func seedPhotos() {
+        guard let path = UserDefaults.standard.string(forKey: "debugSeedPhotos"),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: path).sorted(), !names.isEmpty else { return }
+        var next = 0
+        for (i, pin) in pins.enumerated() where i % 3 != 1 {
+            for _ in 0 ..< 1 + i % 3 {
+                let url = URL(filePath: path).appending(path: names[next % names.count])
+                next += 1
+                if let data = try? Data(contentsOf: url), let imported = try? PinPhotoPipeline.library(data) {
+                    _ = try? addPhoto(imported, to: pin)
+                }
+            }
+        }
     }
 
     @discardableResult
@@ -324,6 +351,180 @@ final class PinStore {
         return (try? context.fetch(descriptor))?.first
     }
 
+    // MARK: Photos
+
+    /// Most photos one library pick adds.
+    static let photosPerPick = 20
+
+    /// A photo to add: a camera capture, or a file's bytes still to load
+    /// (PhotosPicker's `loadTransferable`, a test's generated image).
+    nonisolated enum PhotoSource: Sendable {
+        case camera(UIImage, metadata: CameraMetadata?, position: PinPhotoPipeline.Position?, date: Date)
+        case file(@Sendable () async throws -> Data)
+    }
+
+    /// UIImagePickerController's `mediaMetadata` (a property list, read only).
+    nonisolated struct CameraMetadata: @unchecked Sendable {
+        let values: [String: Any]
+    }
+
+    /// How a batch of photos is getting on.
+    nonisolated struct PhotoImport: Equatable, Sendable {
+        var total: Int
+        var done = 0
+        var failed = 0
+        /// Why the first photo that failed did (said once on the card).
+        var reason: String?
+        var finished: Bool { done + failed >= total }
+    }
+
+    /// Adds the photos one after another, each through the pipeline off
+    /// the main actor (one full image decoded at a time), each saved as it
+    /// is ready so the strip fills while she waits. A photo that fails is
+    /// counted (the card says so once) and the rest carry on. The batch
+    /// finishes even when the card closes; a pin purged meanwhile gets
+    /// nothing.
+    func importPhotos(_ sources: [PhotoSource], to pinID: UUID) {
+        let sources = Array(sources.prefix(Self.photosPerPick))
+        guard !sources.isEmpty else { return }
+        // a second batch while one runs adds to its count
+        var state = photoImports[pinID].flatMap { $0.finished ? nil : $0 } ?? PhotoImport(total: 0)
+        state.total += sources.count
+        photoImports[pinID] = state
+        let container = self.container
+        Task {
+            for source in sources {
+                // pending typing first: the photo's own save must not race it
+                flush()
+                let started = now()
+                let result = await Task.detached(priority: .userInitiated) { () async throws -> UUID? in
+                    let imported: PinPhotoImport = switch source {
+                    case let .camera(image, metadata, position, date):
+                        try PinPhotoPipeline.camera(image, metadata: metadata?.values, position: position, date: date)
+                    case let .file(load):
+                        try PinPhotoPipeline.library(try await load())
+                    }
+                    return try Self.insert(imported, pin: pinID, in: container, now: started)
+                }.result
+                switch result {
+                case .success(.some):
+                    reload()
+                    photoImports[pinID]?.done += 1
+                case .success(.none):
+                    photoImports[pinID]?.failed += 1
+                case let .failure(error):
+                    Self.logger.error("photo import failed: \(String(describing: error), privacy: .public)")
+                    if photoImports[pinID]?.reason == nil { photoImports[pinID]?.reason = error.localizedDescription }
+                    photoImports[pinID]?.failed += 1
+                }
+            }
+            if let state = photoImports[pinID], state.finished, state.failed == 0 { photoImports[pinID] = nil }
+        }
+    }
+
+    /// The card has reported a batch's failures.
+    func dismissPhotoImport(_ pinID: UUID) {
+        if photoImports[pinID]?.finished == true { photoImports[pinID] = nil }
+    }
+
+    /// A ready photo joins the pin, newest (highest `sort`), written and
+    /// saved in a context of its own: the original's bytes never sit in the
+    /// main context (which `pins` keeps alive), and from the import task the
+    /// external file is written off the main actor. The main context hears
+    /// of it through `ModelContext.didSave` and the importer's `reload()`.
+    /// nil: the pin is gone.
+    nonisolated static func insert(_ imported: PinPhotoImport, pin pinID: UUID, in container: ModelContainer,
+                                   now: Date) throws -> UUID? {
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        guard let pin = try context.fetch(FetchDescriptor<SavedPin>(predicate: #Predicate { $0.id == pinID })).first
+        else { return nil }
+        var last = FetchDescriptor<PinPhoto>(predicate: #Predicate { $0.pin?.id == pinID },
+                                             sortBy: [SortDescriptor(\.sort, order: .reverse)])
+        last.fetchLimit = 1
+        last.propertiesToFetch = [\.sort]
+        let next = (try context.fetch(last).first?.sort).map { $0 + 1 } ?? 0
+        let photo = PinPhoto(thumbnail: imported.thumbnail, sort: next, createdAt: imported.capturedAt ?? now,
+                             width: imported.width, height: imported.height, bytes: imported.bytes)
+        let original = PinPhotoOriginal(data: imported.original)
+        context.insert(photo)
+        context.insert(original)
+        photo.original = original
+        photo.pin = pin
+        pin.modifiedAt = now
+        try context.save()
+        return photo.id
+    }
+
+    /// `insert` from the main actor, then the lists re-read (tests, seeding).
+    @discardableResult
+    func addPhoto(_ imported: PinPhotoImport, to pin: SavedPin) throws -> UUID? {
+        flush()
+        let id = try Self.insert(imported, pin: pin.id, in: container, now: now())
+        reload()
+        return id
+    }
+
+    /// Typing a caption: saved after a pause (or on `flush`), like the note.
+    func setCaption(_ photo: PinPhoto, _ caption: String) {
+        guard photo.caption != caption else { return }
+        photo.caption = caption
+        if let pin = photo.pin { touched(pin, saveNow: false, signal: false) } else { scheduleSave() }
+    }
+
+    /// Deletes one photo for good (the viewer asks first; single photos
+    /// have no Recently deleted — they go with the pin's own soft delete).
+    func deletePhoto(_ photo: PinPhoto) {
+        let pin = photo.pin
+        saveTask?.cancel()
+        saveTask = nil
+        context.delete(photo)  // its original follows by cascade
+        if let pin { touched(pin) } else { commit() }
+    }
+
+    /// A photo by id (the viewer's pages hold ids, not records).
+    func photo(_ id: UUID) -> PinPhoto? {
+        let descriptor = FetchDescriptor<PinPhoto>(predicate: #Predicate { $0.id == id })
+        return (try? context.fetch(descriptor))?.first
+    }
+
+    /// How many photos these pins have — from `photoIndex`, re-read with the
+    /// lists, so rows never walk a pin's photos (each with its thumbnail).
+    func photoCount(_ pins: [SavedPin]) -> Int {
+        pins.reduce(0) { $0 + (photoIndex[$1.id]?.count ?? 0) }
+    }
+
+    func photoCount(of pin: SavedPin) -> Int { photoIndex[pin.id]?.count ?? 0 }
+
+    /// The newest photo's id (a row's thumbnail); nil without photos.
+    func coverPhoto(of pin: SavedPin) -> UUID? { photoIndex[pin.id]?.cover }
+
+    /// Per pin: how many photos, and the newest one's id.
+    nonisolated struct PhotoSummary: Equatable, Sendable {
+        var count: Int
+        var cover: UUID
+        var coverSort: Int
+    }
+
+    /// One light fetch per reload (id, sort and the pin link — never a
+    /// thumbnail or an original).
+    private func readPhotoIndex() -> [UUID: PhotoSummary] {
+        var descriptor = FetchDescriptor<PinPhoto>()
+        descriptor.propertiesToFetch = [\.id, \.sort, \.pin]
+        var index: [UUID: PhotoSummary] = [:]
+        for photo in (try? context.fetch(descriptor)) ?? [] {
+            guard let pinID = photo.pin?.id else { continue }
+            if var s = index[pinID] {
+                s.count += 1
+                if photo.sort > s.coverSort { s.cover = photo.id; s.coverSort = photo.sort }
+                index[pinID] = s
+            } else {
+                index[pinID] = PhotoSummary(count: 1, cover: photo.id, coverSort: photo.sort)
+            }
+        }
+        return index
+    }
+
     // MARK: Projects
 
     /// A new project; it becomes the one new pins join.
@@ -379,23 +580,27 @@ final class PinStore {
     /// "Delete now" in Recently deleted: the pin is gone for good.
     func deleteNow(_ pin: SavedPin) {
         guard pin.deletedAt != nil else { return }
-        context.delete(pin)
+        destroy(pin)
         commit()
     }
 
     /// "Delete now" for a deleted project: it and the pins that went with it.
     func deleteNow(_ project: PinProject) {
         guard project.deletedAt != nil else { return }
-        for pin in pinsDeleted(with: project) { context.delete(pin) }
+        let started = ContinuousClock.now
+        for pin in pinsDeleted(with: project) { destroy(pin) }
         context.delete(project)
         commit()
+        Self.logger.notice("deleted a project for good in \(started.duration(to: .now).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
     }
 
     /// "Delete all now": everything in Recently deleted.
     func deleteAllNow() {
+        let started = ContinuousClock.now
+        defer { Self.logger.notice("deleted all for good in \(started.duration(to: .now).formatted(.units(allowed: [.milliseconds])), privacy: .public)") }
         let allPins = (try? context.fetch(FetchDescriptor<SavedPin>())) ?? []
         let allProjects = (try? context.fetch(FetchDescriptor<PinProject>())) ?? []
-        for pin in allPins where pin.deletedAt != nil { context.delete(pin) }
+        for pin in allPins where pin.deletedAt != nil { destroy(pin) }
         for project in allProjects where project.deletedAt != nil { context.delete(project) }
         commit()
     }
@@ -444,7 +649,7 @@ final class PinStore {
         let allProjects = (try? context.fetch(FetchDescriptor<PinProject>())) ?? []
         var purged = 0
         for pin in allPins where expired(pin.deletedAt) {
-            context.delete(pin)
+            destroy(pin)
             purged += 1
         }
         for project in allProjects where expired(project.deletedAt) {
@@ -464,6 +669,12 @@ final class PinStore {
     }
 
     // MARK: Internals
+
+    /// Deletes a pin for good; its photos and their originals follow by
+    /// cascade (the save removes the external files without reading them).
+    private func destroy(_ pin: SavedPin) {
+        context.delete(pin)
+    }
 
     private func touched(_ pin: SavedPin, saveNow: Bool = true, signal: Bool = true) {
         pin.modifiedAt = now()
@@ -514,6 +725,7 @@ final class PinStore {
             guard let at = pin.deletedAt else { return false }
             return pin.project?.deletedAt != at
         }.sorted { $0.deletedAt! > $1.deletedAt! }
+        photoIndex = readPhotoIndex()
         revision += 1
     }
 
