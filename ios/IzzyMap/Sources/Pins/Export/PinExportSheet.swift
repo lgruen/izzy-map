@@ -16,6 +16,11 @@ struct PinExportSheet: View {
 
     @State private var model: PinExportModel
     @State private var drive = GoogleDrive.shared
+    /// The Share file button's frame in the actions' space: the share
+    /// popover's arrow points at it (kept while the button is replaced by
+    /// progress — the file is shared once it is back).
+    @State private var shareFrame: CGRect?
+    private static let actionsSpace = "export-actions"
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @Environment(\.openURL) private var openURL
 
@@ -37,11 +42,14 @@ struct PinExportSheet: View {
     var body: some View {
         let snapshot = snapshot
         NavigationStack {
-            List {
+            // plain sections on the sheet's own ground, as Storage
+            PinsList {
                 Section {
                     ExportSubject(store: store, project: project, isUnfiled: target.project == nil, snapshot: snapshot,
                                   of: target.pins == nil ? nil : store.pins(in: project).count)
+                        .listRowSeparator(.hidden)
                 }
+                .panelRows()
 
                 if snapshot.photoCount > 0 {
                     Section {
@@ -49,23 +57,32 @@ struct PinExportSheet: View {
                             model.includePhotos.toggle()
                         }
                         .disabled(model.isWorking)
+                        .listRowSeparator(.hidden)
+                    } header: {
+                        Text("Photos").panelHeader()
                     } footer: {
                         Text("Photos are made smaller (1,600 px on the long side), and their location and camera data are removed.")
                             .foregroundStyle(DesignColor.secondaryInk)
                     }
+                    .panelRows()
                 }
 
                 Section {
                     actions(snapshot)
                         .padding(.vertical, 4)
-                        // the share sheet's anchor (a popover on iPad) — one
-                        // stable view whatever the phase shows
-                        .background(ActivityPresenter(item: $model.shareRequest))
+                        // the share sheet's host (a popover on iPad, pointing
+                        // at the Share file button) — one stable view
+                        // whatever the phase shows
+                        .background(ActivityPresenter(item: $model.shareRequest, anchor: shareFrame))
+                        .coordinateSpace(.named(Self.actionsSpace))
+                        .listRowSeparator(.hidden)
+                } header: {
+                    Text("Destination").panelHeader()
                 } footer: {
                     footer
                 }
+                .panelRows()
             }
-            .listSectionSpacing(.compact)
             .navigationTitle("Export")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -122,9 +139,11 @@ struct PinExportSheet: View {
             case .signingIn:
                 ExportProgress(title: "Signing in to Google…", detail: nil, fraction: nil, cancel: model.cancel)
             case let .building(done, total):
+                // a bar only while photos count up; the text alone is one
+                // step with nothing to measure — a spinner, never an empty bar
                 ExportProgress(title: total > 1 && done < total - 1 ? "Preparing photos…" : "Writing the document…",
                                detail: total > 1 && done < total - 1 ? "\(done.formatted()) of \((total - 1).formatted())" : nil,
-                               fraction: total > 0 ? Double(done) / Double(total) : nil, cancel: model.cancel)
+                               fraction: total > 1 ? Double(done) / Double(total) : nil, cancel: model.cancel)
             case let .uploading(fraction):
                 ExportProgress(title: "Uploading to Google Drive…", detail: fraction.formatted(.percent.precision(.fractionLength(0))),
                                fraction: fraction, cancel: model.cancel)
@@ -165,6 +184,7 @@ struct PinExportSheet: View {
 
     private func shareButton(_ snapshot: PinExportSnapshot, prominent: Bool, title: String = "Share file…") -> some View {
         ExportCapsule(title: title, symbol: "square.and.arrow.up", prominent: prominent) { model.shareFile(snapshot) }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.actionsSpace)) } action: { shareFrame = $0 }
             .accessibilityIdentifier("export-share")
     }
 
@@ -198,12 +218,12 @@ struct PinExportSheet: View {
                     .accessibilityIdentifier("export-last-doc")
                 }
                 Text(drive.isConnected
-                     ? "Google Docs: each export is a new Doc in your Drive. Connected to Google Drive."
+                     ? "Google Docs: each export is a new Doc in your Drive. Signed in to Google."
                      : "Google Docs: each export is a new Doc in your Drive. The first time, you sign in to Google; IzzyMap can then see only the files it makes.")
                     .foregroundStyle(DesignColor.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if drive.isConnected {
-                    Button("Disconnect") {
+                    Button("Sign out of Google") {
                         Task { await drive.disconnect() }
                     }
                     .font(.footnote.weight(.semibold))
@@ -339,7 +359,15 @@ private struct ExportProgress: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                // nothing to measure yet (signing in, one writing step): a
+                // small spinner by the words, no empty track
+                if fraction == nil {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(DesignColor.ink)
+                        .accessibilityIdentifier("export-progress")
+                }
                 Text(title)
                     .foregroundStyle(DesignColor.ink)
                     .accessibilityIdentifier("export-progress-title")
@@ -353,11 +381,6 @@ private struct ExportProgress: View {
             }
             if let fraction {
                 RowProgress(fraction: fraction, identifier: "export-progress")
-            } else {
-                ProgressView()
-                    .progressViewStyle(.linear)
-                    .tint(DesignColor.ink)
-                    .accessibilityIdentifier("export-progress")
             }
             HStack {
                 Spacer()
@@ -405,6 +428,9 @@ private struct ExportOutcome: View {
 /// (a `ShareLink` needs its item up front). Clears `item` when it closes.
 struct ActivityPresenter: UIViewRepresentable {
     @Binding var item: ShareRequest?
+    /// Where in this view the popover points (the button that asked);
+    /// nil: the whole view.
+    var anchor: CGRect? = nil
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -423,6 +449,7 @@ struct ActivityPresenter: UIViewRepresentable {
         guard let request = item, context.coordinator.presented != request.id else { return }
         context.coordinator.presented = request.id
         let url = request.url
+        let anchor = anchor
         let binding = $item
         let coordinator = context.coordinator
         // after this layout pass, so the anchor is in its window
@@ -435,7 +462,7 @@ struct ActivityPresenter: UIViewRepresentable {
             while let next = host.presentedViewController, !next.isBeingDismissed { host = next }
             let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
             activity.popoverPresentationController?.sourceView = view
-            activity.popoverPresentationController?.sourceRect = view.bounds
+            activity.popoverPresentationController?.sourceRect = anchor.flatMap { view.bounds.intersects($0) ? $0 : nil } ?? view.bounds
             activity.completionWithItemsHandler = { _, _, _, _ in
                 coordinator.presented = nil
                 binding.wrappedValue = nil
