@@ -294,7 +294,7 @@ final class MapCoordinator: NSObject {
     /// the other device) closes its card.
     func apply(pins store: PinStore?, selectedPin: UUID?, to map: MLNMapView) {
         guard let store else { return }
-        pinMarks.apply(store, to: map)
+        pinMarks.apply(store, visible: model.layers.pins, to: map)
         guard let id = selectedPin else { return }
         guard let pin = store.pin(id), pin.isOnMap else {
             // (not during SwiftUI's view update)
@@ -326,6 +326,41 @@ final class MapCoordinator: NSObject {
         camera.setCenter(map, coordinate, zoom: map.zoomLevel, animated: animated)
     }
 
+    private var appliedPinsFit: Int?
+
+    /// The Pins screen's "Show on map" (frame the pins) and a picked pin
+    /// (bring it into view). The screen goes and, on a phone, the card's
+    /// sheet rises first: the camera moves once the chrome has settled,
+    /// with the insets it then has (`delay` 0: at once, for tests).
+    func apply(pinsFit: PinsFit?, to map: MLNMapView, delay: TimeInterval = 0.4,
+               animated: Bool = !UIAccessibility.isReduceMotionEnabled) {
+        guard let pinsFit, pinsFit.serial != appliedPinsFit else { return }
+        appliedPinsFit = pinsFit.serial
+        let move: @MainActor () -> Void = { [weak self, weak map] in
+            guard let self, let map, self.appliedPinsFit == pinsFit.serial else { return }
+            self.frame(pinsFit.target, on: map, animated: animated)
+        }
+        if delay > 0 { camera.schedule(after: delay, move) } else { move() }
+    }
+
+    private func frame(_ target: PinsFit.Target, on map: MLNMapView, animated: Bool) {
+        // (no animation: a cut, as under Reduce Motion)
+        let duration: TimeInterval? = animated ? nil : 0
+        let framing = appliedChrome?.framingInsets ?? .zero
+        let margin = PinFraming.margin(framing: framing, in: map.bounds.size)
+        switch target {
+        case let .box(box):
+            camera.move(map, to: MapCamera.fit(box, maxZoom: PinFraming.maxZoom, insets: margin, in: map), insets: margin, duration: duration)
+        case let .pin(latitude, longitude):
+            let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+            let visible = map.bounds.inset(by: margin)
+            let zoom = map.zoomLevel
+            guard zoom < PinFraming.pinMinZoom || !visible.contains(map.convert(coordinate, toPointTo: map)) else { return }
+            let target = zoom < PinFraming.pinMinZoom ? PinFraming.pinZoom : zoom
+            camera.move(map, to: MapCamera.looking(at: coordinate, zoom: target, in: map), insets: margin, duration: duration)
+        }
+    }
+
     /// The pin button before location was ever allowed: the dot on, which
     /// makes iOS ask (the dot stays once allowed, as from the Location button).
     func apply(locationRequest: Int, to map: MLNMapView) {
@@ -345,7 +380,7 @@ final class MapCoordinator: NSObject {
             pins.setColour(pin, colour.rawValue)
         }
         // on the map now, so the next idle (a `-debugTaps` tap) finds them drawn
-        pinMarks.apply(pins, to: map)
+        pinMarks.apply(pins, visible: model.layers.pins, to: map)
     }
     #endif
 
@@ -749,6 +784,11 @@ extension MapCoordinator: MLNMapViewDelegate {
             openedLayers = true
             model.present(.layers)
         }
+        // `-openPins YES`: the Pins screen once the map settles (screenshots)
+        if UserDefaults.standard.bool(forKey: "openPins"), !openedLayers {
+            openedLayers = true
+            model.present(.pins)
+        }
         // `-startFraming YES`: framing an area once the map settles (screenshots)
         if UserDefaults.standard.bool(forKey: "startFraming"), !openedLayers {
             openedLayers = true
@@ -786,7 +826,7 @@ extension MapCoordinator: MLNMapViewDelegate {
         // … and with its own paint and none of the runtime layers: a soloed
         // community's fade and presence cells again
         spotlights.styleLoaded(mapView, model: model)
-        if let pins = model.pins { pinMarks.styleLoaded(mapView, store: pins) }
+        if let pins = model.pins { pinMarks.styleLoaded(mapView, store: pins, visible: model.layers.pins) }
         refreshVisibleSources(mapView)
         model.map.zoom = mapView.zoomLevel
         Self.hideOrnaments(mapView)

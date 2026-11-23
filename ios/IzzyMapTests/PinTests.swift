@@ -242,11 +242,15 @@ private func freshDefaults() -> UserDefaults {
         let s = store()
         let pin = s.addPin(latitude: -42.9, longitude: 147.3, placedBy: .map)
         var r = s.revision
+        // untitled, the note's first line is its label (`PinText.title`)
         s.setNote(pin, "a note the map never shows")
-        #expect(s.revision == r)
+        #expect(s.revision > r)
+        r = s.revision
         s.setTitle(pin, "Gate")
         #expect(s.revision > r)
         r = s.revision
+        s.setNote(pin, "titled now: the map never shows the note")
+        #expect(s.revision == r)
         s.setTitle(pin, "Gate ")  // the folded label trims: same label
         #expect(s.revision == r)
         s.setTitle(pin, "Gate post")
@@ -257,7 +261,7 @@ private func freshDefaults() -> UserDefaults {
         r = s.revision
         s.setTitle(pin, "🐦🐦")  // still no label
         #expect(s.revision == r)
-        #expect(pin.title == "🐦🐦" && pin.note == "a note the map never shows")
+        #expect(pin.title == "🐦🐦" && pin.note == "titled now: the map never shows the note")
     }
 
     @Test func switchedOffThereIsNoStore() {

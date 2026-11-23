@@ -124,6 +124,124 @@ final class PinsTests: XCTestCase {
         let dontAllow = springboard.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Don'")).firstMatch
         if dontAllow.waitForExistence(timeout: patience(3)) { dontAllow.tap() }
     }
+
+    // MARK: Pins screen (slice 2)
+
+    @MainActor private func screen(_ app: XCUIApplication) -> XCUIElement { app.descendants(matching: .any)["pins-screen"].firstMatch }
+
+    /// The card's chip opens the Pins screen; a project made there takes
+    /// the pin (the chip); Layers opens the screen too; the project's page
+    /// lists the pin, and its row opens that pin's card on the map.
+    @MainActor
+    func testPinsScreenFromTheChipAndFromLayersToAPinsCard() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"])
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
+        app.typeText("Gate")
+
+        // the chip's menu: "All Pins…"
+        app.buttons["pin-project"].tap()
+        app.buttons["All Pins…"].tap()
+        XCTAssertTrue(screen(app).waitForExistence(timeout: patience(5)), "the Pins screen from the chip")
+        // a new project, confirmed with Return
+        app.buttons["pins-new-project"].tap()
+        let name = app.textFields["project-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: patience(3)))
+        XCTAssertTrue(eventually(patience(3)) { name.hasFocus }, "the name field is ready")
+        app.typeText("Knocklofty\n")
+        let row = app.buttons["pins-project-Knocklofty"]
+        XCTAssertTrue(row.waitForExistence(timeout: patience(3)), "the new project is listed")
+        app.buttons["pins-done"].tap()
+        XCTAssertTrue(eventually(patience(3)) { !self.screen(app).exists })
+
+        // file the pin in it from the card's chip
+        XCTAssertTrue(card(app).exists, "the card stayed open under the screen")
+        app.buttons["pin-project"].tap()
+        app.buttons["Knocklofty"].tap()
+        XCTAssertTrue(eventually(patience(3)) { (app.buttons["pin-project"].value as? String) == "Knocklofty" })
+        app.buttons["card-close"].tap()
+        XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists })
+
+        // Layers → Pins → the project → the pin's row → its card (once the
+        // panel sheet is back down off the controls)
+        sleep(1)
+        XCTAssertTrue(eventually(patience(5)) { app.buttons["layers-button"].isHittable })
+        app.buttons["layers-button"].tap()
+        XCTAssertTrue(app.navigationBars["Layers"].waitForExistence(timeout: patience(5)))
+        let layersRow = app.buttons["layers-pins"]
+        // (drag under the bar: a swipe on the medium sheet moves the sheet)
+        for _ in 0 ..< 6 where !(layersRow.exists && layersRow.isHittable) {
+            let bar = app.navigationBars["Layers"].frame
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let bottom = app.windows.firstMatch.frame.maxY - 60
+            origin.withOffset(CGVector(dx: bar.midX, dy: min(bar.maxY + 360, bottom)))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: bar.midX, dy: bar.maxY + 40)))
+        }
+        layersRow.tap()
+        XCTAssertTrue(screen(app).waitForExistence(timeout: patience(5)), "the Pins screen from Layers")
+        app.buttons["pins-project-Knocklofty"].tap()
+        let pinRow = app.buttons["pin-row-Gate"]
+        XCTAssertTrue(pinRow.waitForExistence(timeout: patience(3)), "the project lists its pin")
+        pinRow.tap()
+        XCTAssertTrue(eventually(patience(5)) { !self.screen(app).exists }, "the screen goes")
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "the pin's card opens")
+        XCTAssertEqual(title(app).value as? String, "Gate")
+    }
+
+    /// The card's "New Project…" is the same editor; Create files the pin.
+    @MainActor
+    func testNewProjectFromTheCardFilesThePin() {
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)"])
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
+        app.buttons["pin-project"].tap()
+        app.buttons["New Project…"].tap()
+        let name = app.textFields["project-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: patience(3)))
+        XCTAssertTrue(eventually(patience(3)) { name.hasFocus })
+        app.typeText("Bonnet Hill")
+        app.buttons["project-save"].tap()
+        XCTAssertTrue(eventually(patience(3)) { !name.exists }, "the editor closes")
+        XCTAssertTrue(eventually(patience(3)) { (app.buttons["pin-project"].value as? String) == "Bonnet Hill" })
+    }
+
+    /// Delete a project from its editor: Undo at the foot of the screen
+    /// brings it back; deleted again, Recently deleted restores it.
+    @MainActor
+    func testDeleteAProjectUndoAndRestoreFromRecentlyDeleted() {
+        let app = launch(["-debugSeedPins", "6", "-openPins", "YES"])
+        XCTAssertTrue(screen(app).waitForExistence(timeout: patience(8)))
+        let project = app.buttons["pins-project-Knocklofty Reserve"]
+        XCTAssertTrue(project.waitForExistence(timeout: patience(3)))
+
+        func deleteIt() {
+            project.tap()
+            app.buttons["project-edit"].tap()
+            let delete = app.buttons["project-delete"]
+            XCTAssertTrue(delete.waitForExistence(timeout: patience(3)))
+            for _ in 0 ..< 3 where !delete.isHittable { app.swipeUp() }
+            delete.tap()
+            XCTAssertTrue(eventually(patience(3)) { !project.exists }, "gone from the list (back on the screen's first page)")
+        }
+
+        deleteIt()
+        let undo = app.buttons["pin-undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: patience(3)))
+        undo.tap()
+        XCTAssertTrue(project.waitForExistence(timeout: patience(3)), "Undo brings the project back")
+
+        deleteIt()
+        let dismiss = app.buttons["Dismiss"].firstMatch
+        if dismiss.waitForExistence(timeout: patience(2)) { dismiss.tap() }
+        let bin = app.buttons["pins-deleted"]
+        for _ in 0 ..< 3 where !bin.isHittable { app.swipeUp() }
+        bin.tap()
+        let restore = app.buttons["deleted-restore-Knocklofty Reserve"]
+        XCTAssertTrue(restore.waitForExistence(timeout: patience(3)))
+        restore.tap()
+        XCTAssertTrue(eventually(patience(3)) { !restore.exists })
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(project.waitForExistence(timeout: patience(3)), "restored from Recently deleted")
+    }
 }
 
 private extension XCUIElement {

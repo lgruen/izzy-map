@@ -163,6 +163,10 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
     var reliefTouched = false
     /// City of Hobart significant trees on top of everything.
     var trees = false
+    /// Saved pins (Pins/), on by default. Off: not drawn and not tappable;
+    /// adding a pin turns them back on (a pin she just made is never
+    /// invisible).
+    var pins = true
 
     static let `default` = LayerState()
 
@@ -178,7 +182,7 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case base, season, overlay, strength, relief, reliefTouched, trees }
+    private enum CodingKeys: String, CodingKey { case base, season, overlay, strength, relief, reliefTouched, trees, pins }
     static let latestToken = "latest"
 
     /// Unknown or missing values fall back to the defaults one field at a
@@ -206,6 +210,7 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
             relief = true
         }
         trees = (try? c.decodeIfPresent(Bool.self, forKey: .trees)) ?? d.trees
+        pins = (try? c.decodeIfPresent(Bool.self, forKey: .pins)) ?? d.pins
         if let n = try? c.decodeIfPresent(Int.self, forKey: .season) {
             if Season.all.contains(where: { $0.year == n }) {
                 seasonYear = n == Season.all.last?.year ? nil : n
@@ -224,6 +229,7 @@ nonisolated struct LayerState: Codable, Equatable, Sendable {
         try c.encode(relief, forKey: .relief)
         try c.encode(reliefTouched, forKey: .reliefTouched)
         try c.encode(trees, forKey: .trees)
+        try c.encode(pins, forKey: .pins)
     }
 
     /// The strength actually drawn (pre-1750 has no Outlines).

@@ -47,6 +47,14 @@ struct LayersSheet: View {
                         Label("Key", systemImage: "list.bullet.rectangle")
                     }
                     .accessibilityIdentifier("legend-link")
+                    if PinsEntry.available(model) {
+                        Button { model.present(.pins) } label: {
+                            ChevronRow(label: Label("Pins", systemImage: "mappin.and.ellipse"))
+                        }
+                        .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
+                        .accessibilityIdentifier("layers-pins")
+                    }
                     storageLink
                         .accessibilityIdentifier("storage-link")
                     Button { model.startFraming() } label: {
@@ -97,6 +105,8 @@ struct LayersSheet: View {
             }
             .presentationSizing(.form)
         }
+        // a modal asked for from the popover (Pins) shows once it has gone
+        .onDisappear { model.layersDidDisappear() }
         .sensoryFeedback(.selection, trigger: model.layers)
         .packSpaceAlert($spaceRequest, store: model.shared.packs)
     }
@@ -106,16 +116,7 @@ struct LayersSheet: View {
     @ViewBuilder private var storageLink: some View {
         let label = Label("Offline maps & storage", systemImage: "internaldrive")
         if inPopover {
-            Button { storageSheet = true } label: {
-                HStack {
-                    label.foregroundStyle(DesignColor.ink)
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.forward")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(DesignColor.secondaryInk)
-                }
-                .contentShape(.rect)
-            }
+            Button { storageSheet = true } label: { ChevronRow(label: label) }
             .buttonStyle(.plain)
             .hoverEffect(.highlight)
         } else {
@@ -264,10 +265,40 @@ struct LayersSheet: View {
                 }
                 .accessibilityHint("City of Hobart significant tree register")
                 .accessibilityIdentifier("trees-row")
+                // saved pins (only while pins are switched on): over the
+                // current base, a few marks as the map draws them
+                if PinsEntry.available(model) {
+                    LayerTile(model: model, subject: .base(model.layers.base), title: "Pins", status: nil,
+                              symbol: "mappin.and.ellipse", isOn: model.layers.pins, pinMarks: true) {
+                        model.layers.pins.toggle()
+                    }
+                    .accessibilityHint("Your saved pins")
+                    .accessibilityIdentifier("pins-row")
+                }
             }
         } header: {
             Text("Also show").panelHeader()
         }
+    }
+}
+
+/// A row that opens something else (a sheet, another modal) drawn like
+/// the NavigationLink rows beside it: its label, then a chevron.
+private struct ChevronRow<L: View>: View {
+    let label: L
+
+    var body: some View {
+        HStack {
+            label.foregroundStyle(DesignColor.ink)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.forward")
+                .font(.footnote.weight(.semibold))
+                // hierarchical, as the system draws a NavigationLink's chevron (it
+                // turns vibrant on the popover's glass)
+                .foregroundStyle(.tertiary)
+                .padding(.trailing, 2)
+        }
+        .contentShape(.rect)
     }
 }
 
@@ -299,6 +330,8 @@ struct LayerTile: View {
     let isOn: Bool
     /// The pack isn't on the device: a badge on the thumbnail gets it.
     var download: TileDownload?
+    /// Saved pins' marks over the picture (the Pins tile).
+    var pinMarks = false
     let action: () -> Void
     @Environment(LayerThumbnails.self) private var thumbnails
     @Environment(\.displayScale) private var scale
@@ -318,6 +351,7 @@ struct LayerTile: View {
                             .scaledToFill()
                             .transition(.opacity)
                     }
+                    if pinMarks { PinTileMarks() }
                 }
                 .aspectRatio(4 / 3, contentMode: .fit)
                 .clipped()

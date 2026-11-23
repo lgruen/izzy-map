@@ -185,6 +185,9 @@ nonisolated enum Presentation: String, Identifiable, Sendable {
     case layers, plantID, attribution
     /// A framed area's setup: name, layers, detail, size (Next).
     case areaSetup
+    /// Pins and their projects (Pins/PinsScreen.swift); only while
+    /// `Features.pins` is on.
+    case pins
     var id: String { rawValue }
 
     var title: String {
@@ -193,6 +196,7 @@ nonisolated enum Presentation: String, Identifiable, Sendable {
         case .plantID: "Identify a Plant"
         case .attribution: "Map Credits"
         case .areaSetup: "Detailed area"
+        case .pins: "Pins"
         }
     }
 }
@@ -277,6 +281,11 @@ final class AppModel {
                 if let selection, !selection.isTree, !selection.isPin { clearSelection() }
             }
             if layers.trees != oldValue.trees, selection?.isTree == true { clearSelection() }
+            // pins hidden: not tappable, so no pin card stays open (nor a move)
+            if layers.pins != oldValue.pins, !layers.pins {
+                movingPin = nil
+                if selection?.isPin == true { clearSelection() }
+            }
         }
     }
 
@@ -463,9 +472,38 @@ final class AppModel {
     // MARK: Modals and Escape
 
     func present(_ presentation: Presentation) {
+        // the Pins screen exists only while pins are switched on, and never
+        // over a sheet of the card's own (its project editor), the reader or
+        // a photo: UIKit would refuse it, leaving `modal` set with nothing up
+        if presentation == .pins, !canPresentPins { return }
+        // the iPad's Layers popover goes first; its sheet follows once the
+        // popover has gone (`layersDidDisappear`) — presenting the root's
+        // sheet while the popover is still dismissing can be refused
+        if let current = modal, current.layout == .card, current.presentation == .layers, presentation != .layers {
+            pendingPresentation = presentation
+            modal = nil
+            return
+        }
+        pendingPresentation = nil
         if presentation == .layers || presentation == .plantID { dismissWelcome() }
         if presentation == .plantID, modal?.presentation != .plantID { PlantIDOpenTiming.begin() }
         modal = ModalRequest(presentation: presentation, layout: panelLayout)
+    }
+
+    /// Pins can open now (⌘P, the chip, Layers): switched on, and nothing
+    /// on screen that a sheet can't go over.
+    var canPresentPins: Bool {
+        pins != nil && !pinProjectForm && !documents.isReading && photoViewer == nil
+    }
+
+    /// A modal asked for while the Layers popover was up (iPad).
+    @ObservationIgnored private var pendingPresentation: Presentation?
+
+    /// The Layers popover has gone: the modal asked for from it shows now.
+    func layersDidDisappear() {
+        guard let next = pendingPresentation else { return }
+        pendingPresentation = nil
+        present(next)
     }
 
     func dismissModal() { modal = nil }
@@ -476,6 +514,7 @@ final class AppModel {
         guard layout != panelLayout else { return }
         panelLayout = layout
         modal = nil
+        pendingPresentation = nil
     }
 
     /// Whether `presentation` is up in `layout` (hosts ask this).
@@ -614,6 +653,9 @@ final class AppModel {
     var pinProjectForm = false
     /// The camera eases to a pin placed out of sight (the pin button).
     private(set) var pinFocus: PinFocus?
+    /// "Show on map" and a pin picked in the Pins screen: the camera frames
+    /// them once the screen has gone (`PinsFit`).
+    var pinsFit: PinsFit?
     /// The freshest position Core Location has (MapLibre 7.0.0 drops a
     /// sample at an unchanged coordinate, so standing still its last
     /// report grows old while the system keeps a fresh one).
@@ -641,9 +683,15 @@ final class AppModel {
         pinFocus = PinFocus(latitude: latitude, longitude: longitude, serial: (pinFocus?.serial ?? 0) + 1)
     }
 
+    /// What the Undo banner brings back: a pin, or a project with the pins
+    /// that went with it.
     nonisolated struct PinUndo: Equatable, Sendable {
-        let pin: UUID
+        let pin: UUID?
+        var project: UUID? = nil
+        /// The pin's or the project's name.
         let title: String
+        /// A project's pins that went with it.
+        var pinCount = 0
         let serial: Int
     }
 

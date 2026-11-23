@@ -198,6 +198,8 @@ struct MapStatusStack: View {
 
     private var welcome: Bool { model.showsWelcome && !showsModeBar }
 
+    private var mapUndo: AppModel.PinUndo? { model.modal?.presentation == .pins ? nil : model.pinUndo }
+
     var body: some View {
         let arrival = showsModeBar ? nil : arrival
         let transition: AnyTransition = reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
@@ -218,15 +220,16 @@ struct MapStatusStack: View {
                 PinStoreFailedBanner { model.pinStoreNoticeDismissed = true }
                     .transition(transition)
             }
-            if let undo = model.pinUndo {
+            // (while the Pins screen is up it shows the banner itself)
+            if let undo = mapUndo {
                 PinUndoBanner(undo: undo) { model.undoPinDelete() } onDismiss: { model.setPinUndo(nil) }
                     .transition(transition)
             }
         }
-        .reportFrame(.notice, into: $frames, when: welcome || arrival != nil || model.notice != nil || model.pinUndo != nil
+        .reportFrame(.notice, into: $frames, when: welcome || arrival != nil || model.notice != nil || mapUndo != nil
                          || (model.pins?.openFailed == true && !model.pinStoreNoticeDismissed))
         .animation(.snappy, value: model.notice)
-        .animation(.snappy, value: model.pinUndo)
+        .animation(.snappy, value: mapUndo)
         .animation(.snappy, value: welcome)
         .animation(.snappy, value: arrival == nil)
         .sensoryFeedback(.success, trigger: PackTally(packs)) { old, new in

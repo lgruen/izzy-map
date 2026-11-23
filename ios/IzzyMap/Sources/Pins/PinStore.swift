@@ -23,11 +23,18 @@ final class PinStore {
     let container: ModelContainer
     /// Bumped whenever what the store holds may have changed.
     private(set) var revision = 0
+    /// Bumped after each save that wrote something (the size on disk follows).
+    private(set) var saves = 0
     /// Pins not deleted, oldest first (including archived projects' pins:
     /// `mapPins` leaves those out).
     private(set) var pins: [SavedPin] = []
     /// Projects not deleted, by name.
     private(set) var projects: [PinProject] = []
+    /// Soft-deleted projects, most recently deleted first (Recently deleted).
+    private(set) var deletedProjects: [PinProject] = []
+    /// Pins soft-deleted on their own — not together with their project,
+    /// which lists those — most recently deleted first.
+    private(set) var deletedPins: [SavedPin] = []
 
     /// The store file couldn't be opened: this session's pins live in
     /// memory only (the file is left untouched). The map says so.
@@ -88,8 +95,68 @@ final class PinStore {
         let store = PinStore(container: opened.container, openFailed: opened.failed)
         // never purge (or otherwise write) when the real store didn't open
         if !opened.failed { store.purge() }
+        #if DEBUG
+        let seed = UserDefaults.standard.integer(forKey: "debugSeedPins")
+        if seed > 0, store.pins.isEmpty, store.projects.isEmpty { store.seedDemo(pins: seed) }
+        #endif
         return store
     }
+
+    #if DEBUG
+    /// `-debugSeedPins N` (screenshots, UI tests; with `-pinsInMemory` or a
+    /// `-pinsStore` of its own): four projects round Hobart — one with a
+    /// long name, one archived — about N pins spread over them and
+    /// Unfiled, titled, untitled with a note, untitled bare, over a few
+    /// weeks; one project and two pins in Recently deleted.
+    func seedDemo(pins count: Int) {
+        let base = now()
+        let projects = [
+            addProject(name: "Knocklofty Reserve", colour: .teal),
+            addProject(name: "Waterworks Reserve — creek line revegetation, stage 2 planting plan", colour: .gold),
+            addProject(name: "Bonnet Hill", colour: .violet),
+            addProject(name: "Old Midlands survey", colour: .brown),
+        ]
+        let titles = ["Seep below the track", "", "Big E. viminalis", "Gate", "", "Bracken front", "Gorse patch",
+                      "Lookout", "", "Spring", "Fence line", "Creek crossing", "Old quarry", "Dolerite outcrop"]
+        let notes = ["Sphagnum, Richea\nCheck again in spring", "Wattle regrowth along the fire trail — mostly Acacia dealbata",
+                     "", "Locked; key at the depot", "", "", "Spray in March", "", "", "Running after rain", "",
+                     "", "", "Dense Allocasuarina"]
+        for i in 0 ..< count {
+            let project: PinProject? = i % 6 == 5 ? nil : projects[i % 6 < 3 ? 0 : (i % 6 == 3 ? 1 : 2)]
+            lastUsedProject = project
+            let lat = -42.88 + Double(i % 7) * 0.003 - Double(i / 7) * 0.002
+            let lon = 147.30 + Double(i % 5) * 0.004 + (project === projects[1] ? 0.02 : 0)
+            let pin = addPin(latitude: lat, longitude: lon, placedBy: i % 3 == 0 ? .gps : .map, accuracy: 6, altitude: 120)
+            pin.createdAt = base.addingTimeInterval(-Double(count - i) * 86_400 * 0.9)
+            setTitle(pin, titles[i % titles.count])
+            setNote(pin, notes[i % notes.count])
+            if i % 9 == 4 { setColour(pin, PinColour.pink.rawValue) }
+        }
+        lastUsedProject = projects[0]
+        let old = addPin(latitude: -42.2, longitude: 147.5, placedBy: .map, project: projects[3])
+        setTitle(old, "Remnant grassland")
+        setArchived(projects[3], true)
+        let gone = addProject(name: "Mt Nelson", colour: .magenta)
+        lastUsedProject = gone
+        addPin(latitude: -42.92, longitude: 147.32, placedBy: .map)
+        deleteProject(gone)
+        lastUsedProject = projects[0]
+        for title in ["Wrong spot", ""] {
+            let pin = addPin(latitude: -42.87, longitude: 147.31, placedBy: .map)
+            setTitle(pin, title)
+            delete(pin)
+        }
+        flush()
+        reload()
+    }
+
+    @discardableResult
+    private func addPin(latitude: Double, longitude: Double, placedBy: SavedPin.Placement, project: PinProject?) -> SavedPin {
+        let pin = addPin(latitude: latitude, longitude: longitude, placedBy: placedBy)
+        setProject(pin, project)
+        return pin
+    }
+    #endif
 
     static func defaultStoreURL() -> URL {
         #if DEBUG
@@ -127,6 +194,33 @@ final class PinStore {
 
     /// Projects a pin can join (not archived), by name.
     var activeProjects: [PinProject] { projects.filter { $0.archivedAt == nil } }
+
+    /// Archived projects, by name.
+    var archivedProjects: [PinProject] { projects.filter { $0.archivedAt != nil } }
+
+    /// A project's pins (not deleted), newest first; nil: the Unfiled ones.
+    func pins(in project: PinProject?) -> [SavedPin] {
+        pins.filter { $0.project?.id == project?.id }.reversed()
+    }
+
+    /// Pins in no project (not deleted).
+    var unfiledCount: Int { pins.count { $0.project == nil } }
+
+    /// The pins that went with a deleted project (deleted at its moment).
+    func pinsDeleted(with project: PinProject) -> [SavedPin] {
+        guard let at = project.deletedAt else { return [] }
+        return (project.pins ?? []).filter { $0.deletedAt == at }
+    }
+
+    /// Anything in Recently deleted.
+    var hasDeleted: Bool { !deletedProjects.isEmpty || !deletedPins.isEmpty }
+
+    /// Whole days left before a soft-deleted item is purged (at least 1).
+    func daysLeft(_ deletedAt: Date?) -> Int {
+        guard let deletedAt else { return 0 }
+        let left = deletedAt.addingTimeInterval(Self.retention).timeIntervalSince(now())
+        return max(1, Int((left / 86_400).rounded(.up)))
+    }
 
     /// The project new pins join: the one used last, while it exists and
     /// isn't archived or deleted.
@@ -168,17 +262,19 @@ final class PinStore {
     /// its own text through the record (a model is observable).
     func setTitle(_ pin: SavedPin, _ title: String) {
         guard pin.title != title else { return }
-        let label = MapText.latin1Label(pin.title)
+        let label = PinPresenter.label(pin)
         pin.title = title
-        touched(pin, saveNow: false, signal: MapText.latin1Label(title) != label)
+        touched(pin, saveNow: false, signal: PinPresenter.label(pin) != label)
     }
 
     /// Typing in the note: saved after a pause (or on `flush`). The map
-    /// never draws the note: no signal.
+    /// hears of it only when an untitled pin's label (the note's first
+    /// line, `PinText.title`) changes.
     func setNote(_ pin: SavedPin, _ note: String) {
         guard pin.note != note else { return }
+        let label = PinPresenter.label(pin)
         pin.note = note
-        touched(pin, saveNow: false, signal: false)
+        touched(pin, saveNow: false, signal: PinPresenter.label(pin) != label)
     }
 
     /// A colour of its own, or nil for the project's.
@@ -214,8 +310,11 @@ final class PinStore {
         touched(pin)
     }
 
+    /// Back from Recently deleted. A pin whose project is itself deleted
+    /// comes back Unfiled (it would otherwise stay invisible).
     func restore(_ pin: SavedPin) {
         pin.deletedAt = nil
+        if pin.project?.deletedAt != nil { pin.project = nil }
         touched(pin)
     }
 
@@ -275,10 +374,70 @@ final class PinStore {
         commit()
     }
 
+    // MARK: Deleting for real
+
+    /// "Delete now" in Recently deleted: the pin is gone for good.
+    func deleteNow(_ pin: SavedPin) {
+        guard pin.deletedAt != nil else { return }
+        context.delete(pin)
+        commit()
+    }
+
+    /// "Delete now" for a deleted project: it and the pins that went with it.
+    func deleteNow(_ project: PinProject) {
+        guard project.deletedAt != nil else { return }
+        for pin in pinsDeleted(with: project) { context.delete(pin) }
+        context.delete(project)
+        commit()
+    }
+
+    /// "Delete all now": everything in Recently deleted.
+    func deleteAllNow() {
+        let allPins = (try? context.fetch(FetchDescriptor<SavedPin>())) ?? []
+        let allProjects = (try? context.fetch(FetchDescriptor<PinProject>())) ?? []
+        for pin in allPins where pin.deletedAt != nil { context.delete(pin) }
+        for project in allProjects where project.deletedAt != nil { context.delete(project) }
+        commit()
+    }
+
+    // MARK: Size on disk
+
+    /// The store's files on disk (the store, its journal, and the support
+    /// folder SwiftData keeps external data in — photos, later); 0 in memory.
+    /// Walked off the main actor: with photos the folder grows large.
+    func bytesOnDisk() async -> Int {
+        guard let url = container.configurations.first?.url, url.path != "/dev/null" else { return 0 }
+        return await Task.detached(priority: .utility) { Self.bytes(of: url) }.value
+    }
+
+    /// Everything beside `store` whose name starts with its stem
+    /// ("Pins.store", "Pins.store-wal", ".Pins_SUPPORT/…").
+    nonisolated static func bytes(of store: URL) -> Int {
+        let stem = store.deletingPathExtension().lastPathComponent
+        let folder = store.deletingLastPathComponent()
+        let fm = FileManager.default
+        guard let top = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return 0 }
+        var total = 0
+        for item in top where item.lastPathComponent.hasPrefix(stem) || item.lastPathComponent.hasPrefix(".\(stem)") {
+            let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isRegularFileKey]
+            func size(_ u: URL) -> Int {
+                guard let v = try? u.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { return 0 }
+                return v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0
+            }
+            total += size(item)
+            if let walker = fm.enumerator(at: item, includingPropertiesForKeys: keys) {
+                for case let file as URL in walker { total += size(file) }
+            }
+        }
+        return total
+    }
+
     // MARK: Purge and saving
 
     /// Deletes for real what was soft-deleted more than `retention` ago.
     func purge() {
+        // never write to a store that didn't open (this session's pins are in memory)
+        guard !openFailed else { return }
         let cutoff = now().addingTimeInterval(-Self.retention)
         func expired(_ date: Date?) -> Bool { date.map { $0 < cutoff } ?? false }
         let allPins = (try? context.fetch(FetchDescriptor<SavedPin>())) ?? []
@@ -336,7 +495,10 @@ final class PinStore {
 
     private func save() {
         guard context.hasChanges else { return }
-        do { try context.save() } catch {
+        do {
+            try context.save()
+            saves += 1
+        } catch {
             Self.logger.error("pin save failed: \(String(describing: error), privacy: .public)")
         }
     }
@@ -347,6 +509,11 @@ final class PinStore {
         let allProjects = (try? context.fetch(FetchDescriptor<PinProject>(sortBy: [SortDescriptor(\.name)]))) ?? []
         pins = allPins.filter { $0.deletedAt == nil }
         projects = allProjects.filter { $0.deletedAt == nil }
+        deletedProjects = allProjects.filter { $0.deletedAt != nil }.sorted { $0.deletedAt! > $1.deletedAt! }
+        deletedPins = allPins.filter { pin in
+            guard let at = pin.deletedAt else { return false }
+            return pin.project?.deletedAt != at
+        }.sorted { $0.deletedAt! > $1.deletedAt! }
         revision += 1
     }
 

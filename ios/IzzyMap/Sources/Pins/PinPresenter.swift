@@ -12,12 +12,16 @@ import UIKit
 /// Paint order: … trees → pins → selection (the red ring stays last and
 /// marks the selected pin). The mark is printed matter: a disc in the pin's
 /// colour inside a white halo and a thin ink keyline, 4 pt at z6 growing to
-/// 8 pt from z14; no clustering (colour is the data). From z14 the title,
-/// folded to Latin-1 (`MapText.latin1Label`), sits under the mark.
+/// 8 pt from z14; no clustering (colour is the data). From z14 its name,
+/// folded to Latin-1 (`label`), sits under the mark: the title, else
+/// the note's first line, else nothing (`PinText.name`).
 final class PinPresenter {
     typealias L = StyleBuilder.LayerID
-    private var applied: Int?
-    private var features: [MLNPointFeature] = []
+    /// What the source holds now: the store's revision and whether the
+    /// Pins tile is on (Layers → Also show).
+    private var applied: (revision: Int, visible: Bool)?
+    /// What the source holds (empty while the Pins tile is off).
+    private(set) var features: [MLNPointFeature] = []
 
     /// The disc's radius by zoom (the halo and keyline add `outerExtra`).
     static let radius: [Any] = ["interpolate", ["linear"], ["zoom"], 6, 4, 14, 8]
@@ -28,11 +32,14 @@ final class PinPresenter {
     /// Half the side of the box a tap looks for a pin in (fingertip).
     static let hitRadius: CGFloat = 16
 
-    /// The store changed (`PinStore.revision`), or a first look.
-    func apply(_ store: PinStore, to map: MLNMapView) {
-        guard store.revision != applied else { return }
-        applied = store.revision
-        features = Self.features(store.mapPins)
+    /// The store changed (`PinStore.revision`), the Pins tile was switched,
+    /// or a first look. Switched off, the source is empty: nothing drawn,
+    /// nothing a tap can hit (the layers stay, so switching back needs no
+    /// style work).
+    func apply(_ store: PinStore, visible: Bool, to map: MLNMapView) {
+        guard applied?.revision != store.revision || applied?.visible != visible else { return }
+        applied = (store.revision, visible)
+        features = visible ? Self.features(store.mapPins) : []
         if let source = map.style?.source(withIdentifier: StyleBuilder.SourceID.pins) as? MLNShapeSource {
             source.shape = MLNShapeCollectionFeature(shapes: features)
         } else {
@@ -41,10 +48,17 @@ final class PinPresenter {
     }
 
     /// A reloaded style starts without our layers.
-    func styleLoaded(_ map: MLNMapView, store: PinStore) {
-        features = Self.features(store.mapPins)
-        applied = store.revision
+    func styleLoaded(_ map: MLNMapView, store: PinStore, visible: Bool) {
+        features = visible ? Self.features(store.mapPins) : []
+        applied = (store.revision, visible)
         addLayers(map)
+    }
+
+    /// A pin's map label: its title, else its note's first line
+    /// (`PinText.name` — no date stand-in), folded to Latin-1; nil for none,
+    /// or when even folded it isn't (no label rather than a dropped one).
+    static func label(_ pin: SavedPin) -> String? {
+        PinText.name(title: pin.title, note: pin.note).flatMap(MapText.latin1Label)
     }
 
     /// Point features: `id` (the record's UUID), `color` (hex) and `label`
@@ -56,7 +70,7 @@ final class PinPresenter {
             f.attributes = [
                 "id": pin.id.uuidString,
                 "color": PinColour.hex(forName: pin.effectiveColourName),
-                "label": MapText.latin1Label(pin.title) ?? "",
+                "label": label(pin) ?? "",
             ]
             return f
         }

@@ -21,6 +21,9 @@ final class StorageModel {
     private(set) var extrasStatus: [ExtraKind: ExtrasBatch] = [:]
     /// Bytes of each installed pack (file sizes).
     private(set) var packBytes: [Pack: Int] = [:]
+    /// What the pin store takes on disk (StorageView measures it off the
+    /// main actor as the store saves).
+    var pinsBytes: Int64 = 0
     @ObservationIgnored private var volumeRead = ContinuousClock.now
 
     init(packs: PackStore, extras: ExtrasDownloads = .shared, trees: TreesData?, areas: AreaStore? = nil) {
@@ -151,6 +154,7 @@ final class StorageModel {
         // what a running batch has stored so far counts as it arrives
         parts[.extras] = Int64(extrasStatus.values.reduce(0) { $0 + $1.bytesPresent })
         parts[.areas] = areas?.bytes ?? 0
+        parts[.pins] = pinsBytes
         return StorageGauge(parts: parts, capacity: volume.capacity, free: volume.free)
     }
 

@@ -303,10 +303,11 @@ nonisolated enum StorageText {
 /// said in words. It is the screen's ONE picture of space: four fills, each
 /// with one meaning (`GaugeFill`), and free space the empty remainder.
 nonisolated struct StorageGauge: Equatable, Sendable {
-    /// Where bytes come from. The field guide and detailed areas share one
-    /// segment (both are fetched by the device for a place or a topic).
+    /// Where bytes come from. The field guide, detailed areas and pins share
+    /// one segment (what the device keeps for her: fetched for a place or a
+    /// topic, or her own notes).
     nonisolated enum Category: String, CaseIterable, Sendable {
-        case maps, moreMaps, plantID, extras, areas
+        case maps, moreMaps, plantID, extras, areas, pins
         var title: String {
             switch self {
             case .maps: "Core maps"
@@ -314,11 +315,22 @@ nonisolated struct StorageGauge: Equatable, Sendable {
             case .plantID: "Plant identification"
             case .extras: "Field guide"
             case .areas: "Detailed areas"
+            case .pins: "Pins"
+            }
+        }
+
+        /// Its word inside a shared segment's title ("Field guide, areas & pins").
+        var shortTitle: String {
+            switch self {
+            case .extras: "Field guide"
+            case .areas: "areas"
+            case .pins: "pins"
+            default: title
             }
         }
 
         /// The segment it is drawn in.
-        var segment: Category { self == .areas ? .extras : self }
+        var segment: Category { self == .areas || self == .pins ? .extras : self }
         /// The four segments, in bar order.
         static let segments: [Category] = [.maps, .moreMaps, .plantID, .extras]
     }
@@ -351,7 +363,7 @@ nonisolated struct StorageGauge: Equatable, Sendable {
             let bytes = members.reduce(Int64(0)) { $0 + max(0, parts[$1] ?? 0) }
             izzy += bytes
             guard bytes > 0 else { continue }
-            let title = members.count > 1 ? "Field guide & areas" : members[0].title
+            let title = members.count > 1 ? Self.joined(members.map(\.shortTitle)) : members[0].title
             segments.append(Segment(kind: .izzy(segment), bytes: bytes, title: title))
         }
         let free = free.map { max(0, $0) }
@@ -360,6 +372,14 @@ nonisolated struct StorageGauge: Equatable, Sendable {
         izzyBytes = izzy
         freeBytes = free
         capacityBytes = capacity
+    }
+
+    /// "A & B", "A, B & C".
+    private static func joined(_ words: [String]) -> String {
+        guard words.count > 1 else { return words.first ?? "" }
+        let head = words.dropLast().joined(separator: ", ")
+        let first = head.prefix(1).uppercased() + head.dropFirst()
+        return "\(first) & \(words.last!)"
     }
 
     /// The bar's span: IzzyMap plus free space.

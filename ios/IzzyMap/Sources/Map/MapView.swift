@@ -51,6 +51,8 @@ struct MapView: UIViewRepresentable {
     var locationRequest = 0
     /// A pin to bring into view (`AppModel.pinFocus`).
     var pinFocus: AppModel.PinFocus?
+    /// Pins to frame, or a picked pin to show (`AppModel.pinsFit`).
+    var pinsFit: PinsFit?
 
     func makeCoordinator() -> MapCoordinator { MapCoordinator(model: model) }
 
@@ -69,6 +71,7 @@ struct MapView: UIViewRepresentable {
         coordinator.apply(pins: model.pins, selectedPin: selectedPin, to: map)
         coordinator.apply(locationRequest: locationRequest, to: map)
         coordinator.apply(pinFocus: pinFocus, framing: chrome.framingInsets, to: map)
+        coordinator.apply(pinsFit: pinsFit, to: map)
         coordinator.apply(keyHighlight: keyHighlight)
         coordinator.apply(spotlight: spotlight, to: map)
         coordinator.searchPins.apply(searchPin, framing: chrome.framingInsets, to: map)

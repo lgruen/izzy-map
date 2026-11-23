@@ -15,11 +15,16 @@ struct TasmaniaMiniMap: View {
         case squares([GridSquare], size: (lon: Double, lat: Double))
         /// A community's presence cells (centre, level 1…4), graded in ink.
         case presence([(latitude: Double, longitude: Double, level: Int)], cellSize: (lon: Double, lat: Double))
+        /// Saved pins as the map draws them: a disc in its colour (`hex`)
+        /// inside a white halo and an ink keyline, `radius` pt.
+        case pins([(latitude: Double, longitude: Double, hex: String)], radius: CGFloat)
     }
 
     let outline: TasmaniaOutline
     let marks: Marks
     var ring: (latitude: Double, longitude: Double)?
+    /// The 100 km tick (off on a thumbnail, where it would be clutter).
+    var scaleBar = true
 
     /// The frame in degrees: the silhouette's box plus a hair of sea.
     private var box: (w: Double, s: Double, e: Double, n: Double) {
@@ -78,20 +83,34 @@ struct TasmaniaMiniMap: View {
                     }
                     ctx.fill(path, with: .color(Self.ink.opacity(Self.presenceInk[level])))
                 }
+            case .pins:
+                break  // over the coast, below
             }
             ctx.stroke(land, with: .color(Self.coast), lineWidth: 0.5)
-            // 100 km tick in the south-west sea
-            let km100 = 100 / (111.32 * Self.xScale)
-            let a = pt(b.s + 0.2, b.w + 0.12), e = pt(b.s + 0.2, b.w + 0.12 + km100)
-            var bar = Path()
-            bar.move(to: a); bar.addLine(to: e)
-            for p in [a, e] {
-                bar.move(to: CGPoint(x: p.x, y: p.y - 2.5))
-                bar.addLine(to: CGPoint(x: p.x, y: p.y))
+            if case let .pins(pins, r) = marks {
+                for pin in pins {
+                    let p = pt(pin.latitude, pin.longitude)
+                    let halo = Path(ellipseIn: CGRect(x: p.x - r - 1.5, y: p.y - r - 1.5, width: 2 * r + 3, height: 2 * r + 3))
+                    ctx.fill(halo, with: .color(.white))
+                    ctx.stroke(halo, with: .color(Self.ink), lineWidth: 0.75)
+                    let disc = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+                    ctx.fill(disc, with: .color(Color(uiColor: PinColour.uiColor(hex: pin.hex))))
+                }
             }
-            ctx.stroke(bar, with: .color(Self.ink.opacity(0.7)), lineWidth: 0.75)
-            ctx.draw(Text("100 km").font(.system(size: 9)).monospacedDigit().foregroundStyle(Self.ink.opacity(0.7)),
-                     at: CGPoint(x: (a.x + e.x) / 2, y: a.y - 4), anchor: .bottom)
+            // 100 km tick in the south-west sea
+            if scaleBar {
+                let km100 = 100 / (111.32 * Self.xScale)
+                let a = pt(b.s + 0.2, b.w + 0.12), e = pt(b.s + 0.2, b.w + 0.12 + km100)
+                var bar = Path()
+                bar.move(to: a); bar.addLine(to: e)
+                for p in [a, e] {
+                    bar.move(to: CGPoint(x: p.x, y: p.y - 2.5))
+                    bar.addLine(to: CGPoint(x: p.x, y: p.y))
+                }
+                ctx.stroke(bar, with: .color(Self.ink.opacity(0.7)), lineWidth: 0.75)
+                ctx.draw(Text("100 km").font(.system(size: 9)).monospacedDigit().foregroundStyle(Self.ink.opacity(0.7)),
+                         at: CGPoint(x: (a.x + e.x) / 2, y: a.y - 4), anchor: .bottom)
+            }
             if let ring {
                 let p = pt(ring.latitude, ring.longitude)
                 let r = 5.0

@@ -122,6 +122,7 @@ private struct WindowContent: View {
             // model's own properties — a pin dropped after the menu last
             // rendered left Escape disabled)
             .focusedSceneValue(\.escapeStep, model.escapeStep)
+            .focusedSceneValue(\.canOpenPins, model.canPresentPins)
             // Keep the screen on only while this window follows and is in
             // the foreground; the coordinator ORs all windows.
             .onChange(of: keepsAwake, initial: true) { _, on in
@@ -132,6 +133,8 @@ private struct WindowContent: View {
             // the foreground saves it now
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { model.pins?.flush() }
+                // back in front: what is now more than 30 days deleted goes
+                if phase == .active { model.purgePins() }
             }
     }
 
@@ -145,4 +148,6 @@ extension FocusedValues {
     @Entry var appModel: AppModel?
     /// What Escape closes next in the focused window (nil: nothing).
     @Entry var escapeStep: EscapeStep?
+    /// ⌘P can open Pins in the focused window (`AppModel.canPresentPins`).
+    @Entry var canOpenPins: Bool?
 }

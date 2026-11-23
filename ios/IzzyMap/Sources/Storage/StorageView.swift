@@ -145,6 +145,12 @@ struct StorageView: View {
                     .foregroundStyle(DesignColor.secondaryInk)
             }
             .panelRows()
+
+            // her own data (only while pins are switched on)
+            if let pins = model.pins {
+                PinsStorageSection(store: pins, bytes: storage.pinsBytes)
+                    .panelRows()
+            }
         }
         .panelListSurface()
         .listSectionSpacing(.compact)
@@ -173,6 +179,12 @@ struct StorageView: View {
                 await packs.resync()
                 storage.refreshPacks()
             }
+        }
+        // the pin store's size, measured off the main actor after each save
+        // (typing saves after a pause), for its row and the gauge
+        .task(id: model.pins?.saves) {
+            guard let pins = model.pins else { return }
+            storage.pinsBytes = Int64(await pins.bytesOnDisk())
         }
         .onChange(of: packs.location) {
             storage.refresh()
@@ -452,7 +464,7 @@ struct GaugeFill: View {
                         row += 1
                     }
                     ctx.fill(p, with: .foreground)
-                case .extras, .areas:
+                case .extras, .areas, .pins:
                     var p = Path()
                     var y: CGFloat = 2
                     while y < size.height {

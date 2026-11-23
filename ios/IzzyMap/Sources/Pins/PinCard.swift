@@ -14,24 +14,21 @@ struct PinCard: View {
     let pinID: UUID
     @Environment(\.panelActions) private var actions
     @FocusState private var focus: Field?
-    /// "New project…": the inline form (name + colour) while it is open.
-    @State private var draft: ProjectDraft?
     /// Which fact was just copied ("Copied" stands in for it briefly).
     @State private var copied: String?
 
-    private enum Field: Hashable { case title, note, projectName }
-
-    struct ProjectDraft: Equatable {
-        var name = ""
-        var colour: PinColour
-    }
+    private enum Field: Hashable { case title, note }
 
     var body: some View {
         if let pin = store.pin(pinID) {
             VStack(alignment: .leading, spacing: 12) {
                 header(pin)
-                ProjectChip(store: store, pin: pin) { openProjectForm() }
-                if let draft { newProjectForm(pin, draft) }
+                ProjectChip(store: store, pin: pin) {
+                    focus = nil
+                    model.pinProjectForm = true
+                } allPins: {
+                    model.present(.pins)
+                }
                 // the bottom of the glance: the compact sheet's resting height
                 Color.clear.frame(height: 0)
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(PanelContent.space)).minY } action: {
@@ -51,8 +48,8 @@ struct PinCard: View {
                     focus = .title
                 }
                 #if DEBUG
-                // screenshots: `-debugPinNewProject YES` opens the form
-                if UserDefaults.standard.bool(forKey: "debugPinNewProject") { openProjectForm() }
+                // screenshots: `-debugPinNewProject YES` opens the editor
+                if UserDefaults.standard.bool(forKey: "debugPinNewProject") { model.pinProjectForm = true }
                 #endif
             }
             // the editing state carries this pin's id: a card going away
@@ -65,15 +62,22 @@ struct PinCard: View {
                     model.pinEditing = nil
                 }
             }
-            // Escape closes just the form (`EscapeStep.closeProjectForm`)
-            .onChange(of: model.pinProjectForm) { _, open in
-                if !open { closeProjectForm() }
+            // "New project…": the one project editor; Escape closes just
+            // that (`EscapeStep.closeProjectForm`)
+            .sheet(isPresented: projectEditorShown) {
+                ProjectEditor(model: model, store: store, mode: .new, created: { store.setProject(pin, $0) },
+                              close: { model.pinProjectForm = false })
+                    .projectEditorPresentation()
             }
             .onDisappear {
                 store.flush()
                 if model.pinEditing == pinID { model.pinEditing = nil }
             }
         }
+    }
+
+    private var projectEditorShown: Binding<Bool> {
+        Binding(get: { model.pinProjectForm }, set: { if !$0 { model.pinProjectForm = false } })
     }
 
     // MARK: Header
@@ -83,7 +87,9 @@ struct PinCard: View {
             PinMark(hex: PinColour.hex(forName: pin.effectiveColourName))
                 .padding(.top, 6)
             TextField("Title", text: Binding(get: { pin.title }, set: { store.setTitle(pin, $0) }),
-                      prompt: Text("Add a title").foregroundStyle(DesignColor.secondaryInk), axis: .vertical)
+                      // the name it goes by meanwhile (the note's first line, or
+                      // "Pin · 24 Nov") — the same as the map label and the lists
+                      prompt: Text(pin.displayTitle).foregroundStyle(DesignColor.secondaryInk), axis: .vertical)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DesignColor.ink)
                 .lineLimit(1 ... 3)
@@ -101,64 +107,6 @@ struct PinCard: View {
             Spacer(minLength: 0)
             CloseButton { model.clearSelection() }
         }
-    }
-
-    // MARK: New project
-
-    private func newProjectForm(_ pin: SavedPin, _ form: ProjectDraft) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("New project")
-                .font(.headline)
-                .foregroundStyle(DesignColor.ink)
-            TextField("Project name", text: Binding(get: { draft?.name ?? "" }, set: { draft?.name = $0 }),
-                      prompt: Text("Name, e.g. the site").foregroundStyle(DesignColor.secondaryInk))
-                .font(.body)
-                .foregroundStyle(DesignColor.ink)
-                .focused($focus, equals: .projectName)
-                .submitLabel(.done)
-                .onSubmit { create(pin) }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 44)
-                .overlay { Capsule().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
-                .accessibilityIdentifier("project-name")
-            SwatchRow(selected: form.colour.rawValue) { draft?.colour = $0 }
-            HStack(spacing: 12) {
-                Button("Cancel") { model.pinProjectForm = false }
-                .font(.body)
-                .foregroundStyle(DesignColor.ink)
-                .frame(minHeight: 44)
-                .buttonStyle(.plain)
-                .hoverEffect(.highlight)
-                Spacer()
-                Button("Create Project") { create(pin) }
-                    .font(.body.weight(.semibold))
-                    .buttonStyle(.glassProminent)
-                    .disabled(form.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("project-create")
-            }
-        }
-        .padding(.vertical, 4)
-        .onAppear { focus = .projectName }
-    }
-
-    private func openProjectForm() {
-        draft = ProjectDraft(colour: store.nextProjectColour())
-        model.pinProjectForm = true
-    }
-
-    private func closeProjectForm() {
-        draft = nil
-        if focus == .projectName { focus = nil }
-        if model.pinProjectForm { model.pinProjectForm = false }
-    }
-
-    private func create(_ pin: SavedPin) {
-        guard let form = draft else { return }
-        let name = form.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let project = store.addProject(name: name, colour: form.colour)
-        store.setProject(pin, project)
-        closeProjectForm()
     }
 
     // MARK: Colour
@@ -332,9 +280,10 @@ struct PinCard: View {
     }
 }
 
-/// An action under the card: glyph over a one-line caption, on a quiet
-/// fill — chrome, so concentric and ink (Delete in the system's red).
-private struct ActionLabel: View {
+/// An action under the card (and in a project's header): glyph over a
+/// one-line caption, on a quiet fill — chrome, so concentric and ink
+/// (Delete in the system's red).
+struct ActionLabel: View {
     let title: String
     let symbol: String
     var destructive = false
@@ -343,6 +292,8 @@ private struct ActionLabel: View {
         VStack(spacing: 4) {
             Image(systemName: symbol)
                 .font(.body.weight(.medium))
+                // one glyph box, so every caption sits on the same line
+                .frame(height: 22)
                 .accessibilityHidden(true)
             Text(title)
                 .font(.footnote.weight(.medium))
@@ -372,6 +323,31 @@ struct PinMark: View {
             .background(DesignColor.keyPlate)
             .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
             .accessibilityHidden(true)
+    }
+}
+
+/// The Layers sheet's Pins tile: three marks over the base map's picture,
+/// drawn as the map draws them (disc, white halo, ink keyline) — the tile
+/// previews what the switch shows.
+struct PinTileMarks: View {
+    private static let marks: [(x: CGFloat, y: CGFloat, colour: PinColour)] = [
+        (0.24, 0.42, .orange), (0.50, 0.26, .violet), (0.64, 0.70, .teal),
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ForEach(Array(Self.marks.enumerated()), id: \.offset) { _, mark in
+                Circle()
+                    .fill(mark.colour.color)
+                    .overlay { Circle().strokeBorder(.black.opacity(0.22), lineWidth: 0.5) }
+                    .padding(2)
+                    .background(Circle().fill(.white))
+                    .overlay { Circle().strokeBorder(Color(uiColor: PinPresenter.ink), lineWidth: 0.75) }
+                    .frame(width: 13, height: 13)
+                    .position(x: proxy.size.width * mark.x, y: proxy.size.height * mark.y)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -444,11 +420,13 @@ nonisolated struct SwatchLayout: Layout {
 }
 
 /// The pin's project as a chip: a menu of projects (swatch + name),
-/// Unfiled, and "New project…" (the projects screen comes later).
+/// Unfiled, "New project…" (the project editor) and "All pins…" (the Pins
+/// screen).
 private struct ProjectChip: View {
     let store: PinStore
     let pin: SavedPin
     let newProject: () -> Void
+    let allPins: () -> Void
 
     var body: some View {
         Menu {
@@ -457,7 +435,7 @@ private struct ProjectChip: View {
                     store.setProject(pin, project)
                 } label: {
                     Label {
-                        Text(project.name.isEmpty ? "Untitled project" : project.name)
+                        Text(PinText.projectName(project.name))
                     } icon: {
                         Image(uiImage: PinColour.swatchImage(hex: PinColour.hex(forName: project.colour)))
                     }
@@ -472,6 +450,9 @@ private struct ProjectChip: View {
             Button(action: newProject) {
                 Label("New Project…", systemImage: "plus")
             }
+            Button(action: allPins) {
+                Label("All Pins…", systemImage: "list.bullet")
+            }
         } label: {
             HStack(spacing: 8) {
                 if let project = pin.project {
@@ -479,7 +460,7 @@ private struct ProjectChip: View {
                         .fill(Color(uiColor: PinColour.uiColor(hex: PinColour.hex(forName: project.colour))))
                         .overlay { Rectangle().strokeBorder(DesignColor.keyline, lineWidth: 0.5) }
                         .frame(width: 12, height: 12)
-                    Text(project.name.isEmpty ? "Untitled project" : project.name)
+                    Text(PinText.projectName(project.name))
                         .foregroundStyle(DesignColor.ink)
                 } else {
                     Image(systemName: "tray")

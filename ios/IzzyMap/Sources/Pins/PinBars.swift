@@ -39,10 +39,15 @@ struct PinMoveBar: View {
     }
 }
 
-/// "Pin deleted · Undo", for a few seconds after a delete (the notice
-/// banner's form, in the same top slot).
+/// "Pin deleted · Undo" (or "Project deleted"), for a few seconds after a
+/// delete (the notice banner's form, in the same top slot — or at the foot
+/// of the Pins screen while that is up).
 struct PinUndoBanner: View {
     let undo: AppModel.PinUndo
+    /// Over the map (light chrome, `mapChrome`), or inside the Pins screen
+    /// (follows the sheet's appearance).
+    var onMap = true
+    @Environment(\.colorScheme) private var colorScheme
     let onUndo: () -> Void
     let onDismiss: () -> Void
 
@@ -53,11 +58,11 @@ struct PinUndoBanner: View {
                 .foregroundStyle(DesignColor.secondaryInk)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Pin deleted")
+                Text(undo.project == nil ? "Pin deleted" : "Project deleted")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DesignColor.ink)
                 if !undo.title.isEmpty {
-                    Text(undo.title)
+                    Text(undo.project == nil || undo.pinCount == 0 ? undo.title : "\(undo.title) · \(PinText.count(undo.pinCount))")
                         .font(.footnote)
                         .foregroundStyle(DesignColor.secondaryInk)
                         .lineLimit(1)
@@ -83,7 +88,7 @@ struct PinUndoBanner: View {
         .padding(.trailing, 4)
         .padding(.vertical, 6)
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
-        .mapChrome()
+        .environment(\.colorScheme, onMap ? .light : colorScheme)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pin-undo-banner")
     }

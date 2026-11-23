@@ -350,7 +350,7 @@ private struct MapLayer: View {
         MapView(model: model, chrome: chrome, trackingMode: trackingMode, hasSelection: hasSelection,
                 layers: layers, keyHighlight: keyHighlight, spotlight: spotlight, searchPin: model.search.pin,
                 areaFocus: model.areaFocus, pinsRevision: model.pins?.revision ?? 0, selectedPin: model.selection?.pinID,
-                locationRequest: model.locationRequest, pinFocus: model.pinFocus)
+                locationRequest: model.locationRequest, pinFocus: model.pinFocus, pinsFit: model.pinsFit)
             .ignoresSafeArea()
             .accessibilityLabel("Map")
             // UI tests wait for "idle" (camera settled, tiles loaded) before tapping

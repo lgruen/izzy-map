@@ -12,11 +12,13 @@ import SwiftUI
 /// nothing to close the command is disabled, so Escape stays free for the
 /// system (e.g. a text field or a popover's own dismissal).
 ///
-/// ⌘L is the Location button (locate → follow with heading → stop);
+/// ⌘L is the Location button (locate → follow with heading → stop); ⌘P
+/// opens Pins (while pins are switched on);
 /// ⌘1–4 pick the base map, in the Layers sheet's order.
 struct MapCommands: Commands {
     @FocusedValue(\.appModel) private var model
     @FocusedValue(\.escapeStep) private var escapeStep
+    @FocusedValue(\.canOpenPins) private var canOpenPins
 
     var body: some Commands {
         CommandMenu("Map") {
@@ -26,6 +28,12 @@ struct MapCommands: Commands {
             Button(locationTitle) { model?.cycleTracking() }
                 .keyboardShortcut("l")
                 .disabled(model == nil)
+            if Features.pins {
+                Button("Pins") { model?.present(.pins) }
+                    .keyboardShortcut("p")
+                    // off while a sheet the Pins screen can't go over is up
+                    .disabled(!(canOpenPins ?? false))
+            }
             Section("Base Map") {
                 ForEach(Array(BaseMap.allCases.enumerated()), id: \.element) { i, base in
                     Button(base.title) { model?.layers.base = base }

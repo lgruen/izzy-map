@@ -59,6 +59,14 @@ struct ModalContent: View {
             AreaSetupSheet(model: model)
                 .presentationDetents([.large])
                 .presentationSizing(.form)
+        case .pins:
+            // a list of names and figures: where the system's sheet is
+            // opaque, as for Storage (large on a phone, a form sheet on iPad)
+            if let pins = model.pins {
+                PinsScreen(model: model, store: pins)
+                    .presentationDetents([.large])
+                    .presentationSizing(.form)
+            }
         }
     }
 }
