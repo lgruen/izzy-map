@@ -16,6 +16,9 @@ final class MapCoordinator: NSObject {
     private var awaitingLaunchFix = false
     private let launchFixDeadline = Date.now.addingTimeInterval(8)
     private var userMovedCamera = false
+    /// When the last location MapLibre reported was taken (`didUpdate
+    /// userLocation`): a heading comes with the same one.
+    private var lastFixTimestamp: Date?
     /// Whether the selection source holds a shape (its getter doesn't say).
     private var showsSelectionShape = false
     /// The style as loaded, built without selection (the selection lives in
@@ -108,7 +111,7 @@ final class MapCoordinator: NSObject {
         model.authorizationChanged(to: status)
         if status == .authorizedWhenInUse || status == .authorizedAlways {
             awaitingLaunchFix = true
-            map.showsUserLocation = true
+            Self.showUserLocation(on: map)
         }
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
@@ -166,6 +169,28 @@ final class MapCoordinator: NSObject {
         if wanted != .none { camera.trackingStarted() }
         // Reduce Motion: the camera cuts to the position (DESIGN.md "Motion")
         map.setUserTrackingMode(wanted, animated: !UIAccessibility.isReduceMotionEnabled, completionHandler: nil)
+    }
+
+    /// The user dot with its heading arrow, only once location is authorised:
+    /// either switch makes MapLibre ask for permission (the heading one turns
+    /// `showsUserLocation` on itself). MapLibre 7.0.0 draws the arrow in the
+    /// dot's own colour with a white edge once a valid heading has arrived —
+    /// none on the simulator or without a compass reading: no arrow, nothing
+    /// else — and swaps it for its beam in heading-up mode. Neither switch
+    /// touches the tracking mode.
+    private static func showUserLocation(on map: MLNMapView) {
+        allowHeadingCalibration(on: map)
+        map.showsUserLocation = true
+        map.showsUserHeadingIndicator = true
+    }
+
+    /// iOS's compass-calibration prompt only in heading-up mode, as before
+    /// the arrow: the arrow keeps headings coming whenever the dot shows,
+    /// and browsing the map must not raise a prompt. MapLibre reads the
+    /// switch each time Core Location asks; every mode change (ours, a pan
+    /// ending following, a denial) passes `didChange mode`.
+    private static func allowHeadingCalibration(on map: MLNMapView) {
+        map.displayHeadingCalibration = map.userTrackingMode == .followWithHeading
     }
 
     /// A layer change re-sets the whole style: hidden layers and their
@@ -640,7 +665,12 @@ extension MapCoordinator: MLNMapViewDelegate {
     }
 
     func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {
-        guard let location = userLocation?.location else { return }
+        // MapLibre also calls this for every compass heading, with the
+        // location it already had — and the heading arrow keeps headings
+        // coming whenever the dot shows. Only a new sample is a fix: a
+        // turning phone must not hide a lost fix from the "no fix" watch.
+        guard let location = userLocation?.location, location.timestamp != lastFixTimestamp else { return }
+        lastFixTimestamp = location.timestamp
         model.locationUpdated()
         guard awaitingLaunchFix else { return }
         awaitingLaunchFix = false
@@ -665,13 +695,14 @@ extension MapCoordinator: MLNMapViewDelegate {
     }
 
     func mapView(_ mapView: MLNMapView, didChange mode: MLNUserTrackingMode, animated: Bool) {
+        Self.allowHeadingCalibration(on: mapView)
         model.mapChangedTracking(to: Self.trackingMode(mode))
     }
 
     func mapView(_ mapView: MLNMapView, didChangeLocationManagerAuthorization manager: any MLNLocationManager) {
         let status = manager.authorizationStatus
         model.authorizationChanged(to: status)
-        if status == .authorizedWhenInUse || status == .authorizedAlways { mapView.showsUserLocation = true }
+        if status == .authorizedWhenInUse || status == .authorizedAlways { Self.showUserLocation(on: mapView) }
     }
 }
 

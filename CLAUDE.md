@@ -762,6 +762,14 @@ milestones, map-proof results); the design brief and language is
   (Metal textures are created un-mipmapped); `raster-resampling` linear
   is the only filter choice. `-rasterTileSize[Topo|Tasmap|Aerial]` and
   `-perfTour YES` are DEBUG tools.
+- **MapLibre calls `didUpdate userLocation` for every compass heading**,
+  with the location it already had (2026-11-23). With the heading arrow
+  (`showsUserHeadingIndicator`, on whenever the dot shows) headings arrive
+  constantly, so only a location with a NEW timestamp counts as a GPS fix
+  — otherwise a turning phone hides the "no fix" notice. iOS's
+  compass-calibration prompt is allowed only in heading-up mode
+  (`displayHeadingCalibration`, re-set in `didChange mode`). The arrow
+  needs a valid heading: none on the simulator, so only a device shows it.
 - **Never do work on the main thread when Identify opens** (pack URL
   lookups, CLLocationManager creation, camera availability checks cost
   ~1 s on the device before build 12).
