@@ -192,8 +192,10 @@ nonisolated enum StyleBuilder {
     static let selectionRed = "#FF3B30"
     static let selectionWidth = 3.0
     /// A selected saved pin's ring: just outside the selected pin's larger
-    /// disc (15 pt + 2 pt halo + keyline, PinPresenter), at every zoom.
-    static let pinRingRadius = 19.0
+    /// disc (13 pt + 2 pt halo + 0.75 pt keyline, PinPresenter) with the
+    /// same 1.25 pt of air as before, at every zoom (the stroke lies outside
+    /// the radius).
+    static let pinRingRadius = 17.0
     /// Community boundaries over cartography and over photos.
     static let graphite = "rgba(0,0,0,0.2)"
     static let paper = "rgba(255,255,255,0.45)"

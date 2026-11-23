@@ -14,7 +14,7 @@ import UIKit
 /// disc in the pin's colour inside a white halo and a thin ink keyline,
 /// 2.5 pt at z8 growing steeply to 8 pt at z14 (a cluster of pins stays a
 /// cluster of colours at z9); no clustering (colour is the data). The
-/// selected pin is drawn larger (15 pt) on top, so its colour still rings
+/// selected pin is drawn larger (13 pt) on top, so its colour still rings
 /// the blue location dot when she pins where she stands. From z14 the
 /// title, folded to Latin-1, is printed beside the mark — below it where
 /// there is room, else above, right or left — in the tree names' face; the
@@ -35,9 +35,10 @@ final class PinPresenter {
     static let haloRadius: [Any] = ["interpolate", ["exponential", 1.5], ["zoom"], 8, 3.5, 11, 6.5, 14, 10]
     static let keyline = 0.75
     /// The selected pin's disc, at every zoom: larger than the location
-    /// dot (~11 pt with its white rim), so a 4 pt band of the pin's colour
-    /// shows round it when she pins where she stands.
-    static let selectedRadius = 15.0
+    /// dot (~11 pt with its white rim), so a 2 pt band of the pin's colour
+    /// shows round it when she pins where she stands — no heavier (at 15 pt
+    /// it read as a blob beside its 8 pt neighbours, L-02).
+    static let selectedRadius = 13.0
     static let selectedHalo = 2.0
     /// The selection ring's radius for a pin (StyleBuilder's ring layer):
     /// just outside the selected disc's keyline.

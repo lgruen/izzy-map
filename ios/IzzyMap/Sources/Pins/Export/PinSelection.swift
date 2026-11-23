@@ -66,7 +66,8 @@ struct ExportSelectionBar: View {
             .padding(.leading, leading)
             .padding(.trailing, trailing)
             .padding(.top, 8)
-            .padding(.bottom, 12)
+            // the list's own 24 pt foot (L-10)
+            .padding(.bottom, 24)
             .background(.bar)
             .accessibilityIdentifier("pins-export-selected")
     }

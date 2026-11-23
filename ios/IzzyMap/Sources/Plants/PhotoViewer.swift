@@ -69,6 +69,9 @@ struct PhotoViewer: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            // the photo crisp to its edges: no soft scroll-edge band under
+            // the status bar (the black margins carry the bars)
+            .scrollEdgeEffectHidden(true, for: .all)
             .ignoresSafeArea()
             .offset(y: pull)
             .simultaneousGesture(pullToClose)
@@ -90,15 +93,16 @@ struct PhotoViewer: View {
                             .padding(.horizontal, 16)
                             .padding(.top, 28)
                             .padding(.bottom, 12)
+                            // a pin photo's footer band takes its own taps (a
+                            // tap meant for the caption never falls through to
+                            // the photo and hides the chrome) — the plants'
+                            // credit doesn't: a tap or swipe there is the photo's
+                            .contentShape(.rect)
                     } else {
                         credit
                     }
                 }
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { bottomText = $0 }
-                // the footer's whole band takes its taps (as the scrim did
-                // when it was always there): a tap meant for the caption
-                // never falls through to the photo and hides the chrome
-                .contentShape(.rect)
                 // the scrim travels with the text (up with the keyboard too)
                 .background(alignment: .bottom) { if scrims(over: bottomText) { shade } }
                 .transition(.opacity)
@@ -106,6 +110,8 @@ struct PhotoViewer: View {
         }
         // beside a pillarboxed photo the text keeps to the black margin
         .environment(\.photoViewerMeasure, sideMargin.map { max(160, $0 - 32) } ?? PhotoViewerMeasure.full)
+        // (every scroll view in here: the pages' and each photo's zoom)
+        .scrollEdgeEffectHidden(true, for: .all)
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
         .environment(\.colorScheme, .dark)
@@ -233,12 +239,20 @@ struct PhotoViewer: View {
                     let t = value.translation
                     pullAxis = t.height > abs(t.width) * 1.5 ? .vertical : .horizontal
                 }
-                guard pullAxis == .vertical, let current, !zoomed.contains(current.id) else { return }
+                guard pullAxis == .vertical, let current, !zoomed.contains(current.id) else {
+                    // a pinch that zoomed mid-drag: nothing left to close with
+                    if pull != 0 { pull = 0 }
+                    return
+                }
                 pull = max(0, value.translation.height)
             }
             .onEnded { value in
                 defer { pullAxis = nil }
-                guard pullAxis == .vertical, pull > 0 else { return }
+                // a fast pinch-out that began as a drag ends zoomed: no close
+                guard pullAxis == .vertical, pull > 0, let current, !zoomed.contains(current.id) else {
+                    if pull != 0 { withAnimation(.snappy) { pull = 0 } }
+                    return
+                }
                 if pull > 100 || value.predictedEndTranslation.height > 260 {
                     model.photoViewer = nil
                 } else {
@@ -368,6 +382,9 @@ final class ZoomScrollView: UIScrollView, UIScrollViewDelegate {
         showsHorizontalScrollIndicator = false
         decelerationRate = .fast
         contentInsetAdjustmentBehavior = .never
+        // no soft scroll-edge band over the photo's top (or bottom) edge
+        topEdgeEffect.isHidden = true
+        bottomEdgeEffect.isHidden = true
         bouncesZoom = true
         imageView.contentMode = .scaleAspectFit
         imageView.isAccessibilityElement = false
@@ -398,6 +415,13 @@ final class ZoomScrollView: UIScrollView, UIScrollViewDelegate {
             zoomScale = min(zoom, maximumZoomScale)
             contentOffset = offset
         }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // (re-said once in a window: the system sets up the edge effects then)
+        topEdgeEffect.isHidden = true
+        bottomEdgeEffect.isHidden = true
     }
 
     override func layoutSubviews() {
