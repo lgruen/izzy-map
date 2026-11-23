@@ -78,7 +78,8 @@ logs are public.
       hasn't expired. In read-only mode match doesn't ask the portal, so a
       *revoked* certificate is caught by step 3.
    2. *Identifiers*: finds or creates `org.gruenschloss.izzymap` (App
-      Groups + Increased Memory Limit) and `org.gruenschloss.izzymap.assets`
+      Groups + Increased Memory Limit + iCloud (CloudKit) + Push
+      Notifications) and `org.gruenschloss.izzymap.assets`
       (the Background Assets extension, App Groups). The log lists each App
       ID's capability types.
    3. *Certificates and profiles*: match makes "match AppStore <id>"
@@ -86,7 +87,8 @@ logs are public.
       existing (Trio's) certificate and never makes a second one.
 2. Read the run's annotations. If one says a profile lacks
    `group.org.gruenschloss.izzymap`, assign the group by hand (see
-   "App Groups" below), then run "IzzyMap setup" again.
+   "App Groups" below), then run "IzzyMap setup" again; the same for the
+   iCloud container (see "iCloud and Push").
 3. **Actions → "TestFlight" → Run workflow** (branch `main`) → **Run
    workflow**. Expect very roughly 10–20 min of runner time (not measured yet). The build appears in
    App Store Connect → IzzyMap → TestFlight after Apple's processing
@@ -144,7 +146,9 @@ Run them from `ios/` with `bundle exec fastlane <lane>`.
   Match-Secrets holds none at all. Before match runs, the lane prints every
   distribution certificate's expiry, and it raises a warning annotation for
   any that expires within 30 days. After match, it warns if a profile lacks
-  the App Group, and it **fails** if the app's profile lacks Increased
+  the App Group; if the app's profile lacks the iCloud container or Push it
+  re-makes that profile once (match `force: true`) and warns only if it
+  still lacks them; and it **fails** if the app's profile lacks Increased
   Memory Limit (`IzzyMap.entitlements` requests it, so signing would fail
   anyway). TestFlight runs this lane before every build,
   so they repair themselves after a Trio certificate renewal.
@@ -211,9 +215,35 @@ Identifiers → `org.gruenschloss.izzymap.assets` (and check
 `org.gruenschloss.izzymap`) → App Groups → Configure → tick
 `group.org.gruenschloss.izzymap` → Save. Editing an App ID invalidates its
 profiles. The next certs run (setup, or any TestFlight run) re-makes them.
-The app's entitlements don't request the group yet. That starts when the
-extension lands, and the certs lane's warning shows whether the profile
-carries it.
+Both the app and the extension request the group (`IzzyMap.entitlements`,
+`IzzyMapAssets.entitlements`; Background Assets needs it), and the certs
+lane's warning shows whether each profile carries it.
+
+## iCloud and Push
+
+Pins sync through SwiftData's CloudKit mirroring (docs/PINS_PLAN.md §3), so
+the app (not the extension) requests iCloud with CloudKit, the container
+`iCloud.org.gruenschloss.izzymap`, and Push Notifications (`aps-environment`,
+CloudKit's silent pushes; `IzzyMap.entitlements` says `development`, and
+distribution signing makes it `production`). The identifiers lane creates
+the `ICLOUD` capability (with "Include CloudKit support", `ICLOUD_VERSION`
+`XCODE_6`, as fastlane's produce sends it) and `PUSH_NOTIFICATIONS` when
+they are missing, and only warns if that fails. It never removes or
+disables a capability. Like an App Group, the **container can't be assigned
+through the API**: developer.apple.com → Identifiers →
+`org.gruenschloss.izzymap` → iCloud → Configure → tick
+`iCloud.org.gruenschloss.izzymap` → Save (done once, 2026-11). match re-makes
+only a profile that is missing or *Invalid*, and Apple may leave the old
+App Store profile Active after a hand edit of the App ID. So after match,
+when the app's profile lacks the container or `aps-environment`, the certs
+lane re-makes it once with `force: true` and checks again; only if it still
+lacks them does it warn (it never fails: a mistake in the check must not
+stop a build that would sign). A build with such a profile fails at
+signing, so act on the warning: assign the container, run "IzzyMap setup"
+again, and if the warning stays, delete the "match AppStore
+org.gruenschloss.izzymap" profile under Profiles first. TestFlight builds talk to
+CloudKit's **Production** environment: deploy the schema there (CloudKit
+Console → Deploy Schema Changes) before the first build with sync.
 
 ## Certificate renewal (the Trio cert-nuke caveat)
 

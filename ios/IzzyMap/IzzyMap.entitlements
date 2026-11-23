@@ -11,5 +11,22 @@
 	<array>
 		<string>group.org.gruenschloss.izzymap</string>
 	</array>
+	<!-- Pins sync (docs/PINS_PLAN.md §3): SwiftData mirrors the pin store to
+	     the private database of this CloudKit container. Device builds only:
+	     the simulator runs with CloudKit off. No icloud-container-environment
+	     key: a development-signed build talks to Development, an App Store /
+	     TestFlight build to Production. -->
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.org.gruenschloss.izzymap</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+	</array>
+	<!-- CloudKit's silent pushes tell the store that another device changed
+	     something; distribution signing turns it into "production" -->
+	<key>aps-environment</key>
+	<string>development</string>
 </dict>
 </plist>

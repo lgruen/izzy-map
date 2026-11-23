@@ -35,6 +35,8 @@ CI_XCCONFIG = File.join(IOS_DIR, "Config", "CI.generated.xcconfig")
 APP_ID = "org.gruenschloss.izzymap"
 ASSETS_ID = "org.gruenschloss.izzymap.assets" # Background Assets extension (planned)
 APP_GROUP = "group.org.gruenschloss.izzymap"
+# Pins sync (docs/PINS_PLAN.md §3): SwiftData's CloudKit mirroring
+ICLOUD_CONTAINER = "iCloud.org.gruenschloss.izzymap"
 
 # Spaceship has no constant for Increased Memory Limit and Apple's published
 # App Store Connect API enum (OpenAPI spec 4.5.1) doesn't list it either; this
@@ -46,9 +48,22 @@ CAP = Spaceship::ConnectAPI::BundleIdCapability::Type
 
 # App IDs match keeps an App Store profile for, with their capabilities.
 APP_IDS = {
-  APP_ID => { name: "IzzyMap", capabilities: [CAP::APP_GROUPS, INCREASED_MEMORY_LIMIT] },
+  APP_ID => { name: "IzzyMap", capabilities: [CAP::APP_GROUPS, INCREASED_MEMORY_LIMIT, CAP::ICLOUD, CAP::PUSH_NOTIFICATIONS] },
   ASSETS_ID => { name: "IzzyMap Assets", capabilities: [CAP::APP_GROUPS] }
 }.freeze
+
+# Settings a capability is created with: iCloud "Include CloudKit support"
+# (ICLOUD_VERSION XCODE_6, as fastlane's produce sends for
+# `icloud: "xcode6_compatible"` — produce/lib/produce/service.rb). Literal
+# strings, equal to Spaceship's BundleIdCapability::Settings::ICLOUD_VERSION
+# and ::Options::XCODE_6, so loading this file never depends on them.
+CAPABILITY_SETTINGS = {
+  CAP::ICLOUD => [{ key: "ICLOUD_VERSION", options: [{ key: "XCODE_6" }] }]
+}.freeze
+
+# Capabilities whose creation may fail with only a warning: the certs lane
+# checks the profile's entitlements instead (and they were ticked by hand).
+WARN_ONLY_CAPABILITIES = [INCREASED_MEMORY_LIMIT, CAP::ICLOUD, CAP::PUSH_NOTIFICATIONS].freeze
 
 # Targets signed in the Release archive. A target not (yet) in project.yml is
 # skipped, so the extension's id can be provisioned before the target exists.
@@ -184,6 +199,56 @@ def check_app_group(bundle_id)
   gh_annotation("warning", "The #{bundle_id} profile has no #{APP_GROUP} App Group (has: #{groups.join(', ').then { |g| g.empty? ? 'none' : g }}). Assign it in the developer portal (docs/CI.md → App Groups); the next certs run re-makes the profile.")
 end
 
+# What the profile lacks of iCloud + Push: [] when complete, nil when the
+# profile can't be read.
+def icloud_gaps(bundle_id)
+  ents = profile_entitlements(bundle_id)
+  return nil if ents.nil?
+  gaps = []
+  gaps << :container unless Array(ents["com.apple.developer.icloud-container-identifiers"]).include?(ICLOUD_CONTAINER)
+  gaps << :push unless ents["aps-environment"]
+  gaps
+end
+
+# IzzyMap.entitlements requests the iCloud container and Push, so a profile
+# without them fails the archive's signing. match re-makes only a profile
+# that is missing or Invalid, and Apple may leave an App Store profile
+# Active after the App ID was edited by hand — so when one is missing, the
+# profile is re-made once (match force: true, otherwise the certs lane's
+# call), and only if it still lacks them a warning names the remedy. Never
+# fails: a mistake in this check must not stop a build that would sign.
+def check_icloud(bundle_id)
+  gaps = icloud_gaps(bundle_id)
+  if gaps.nil?
+    UI.important("Couldn't read the #{bundle_id} profile's entitlements; iCloud check skipped.")
+    return
+  end
+  return if gaps.empty?
+  UI.important("The #{bundle_id} profile lacks #{gaps.join(' and ')}; re-making it once (match force: true)")
+  begin
+    match(
+      type: "appstore",
+      readonly: false,
+      force: true,
+      app_identifier: [bundle_id],
+      git_basic_authorization: match_auth
+    )
+    gaps = icloud_gaps(bundle_id) || gaps
+  rescue StandardError => e
+    UI.important("Re-making the #{bundle_id} profile failed (ignored): #{e.message.lines.first.to_s.strip}")
+  end
+  ents = profile_entitlements(bundle_id) || {}
+  containers = Array(ents["com.apple.developer.icloud-container-identifiers"])
+  if gaps.include?(:container)
+    gh_annotation("warning", "The #{bundle_id} profile lacks the iCloud container #{ICLOUD_CONTAINER} (has: #{containers.empty? ? 'none' : containers.join(', ')}). Remedy: developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → #{bundle_id} → iCloud (CloudKit) → Configure → tick #{ICLOUD_CONTAINER} → Save, then run \"IzzyMap setup\" again (re-making the profile once didn't help; if this warning persists, delete the \"match AppStore #{bundle_id}\" profile under Profiles first). See docs/CI.md → iCloud and Push.")
+  end
+  if gaps.include?(:push)
+    gh_annotation("warning", "The #{bundle_id} profile lacks Push Notifications (aps-environment). Remedy: developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → #{bundle_id} → tick Push Notifications → Save, then run \"IzzyMap setup\" again. See docs/CI.md → iCloud and Push.")
+  end
+rescue StandardError => e
+  UI.important("iCloud profile check failed (ignored): #{e.message}")
+end
+
 platform :ios do
   desc "Check the secrets without changing anything (setup.yml, first job)"
   lane :validate_secrets do
@@ -237,17 +302,19 @@ platform :ios do
         next if present
         UI.important("Enabling #{cap} on #{identifier}")
         begin
-          bundle_id.create_capability(cap)
+          bundle_id.create_capability(cap, settings: CAPABILITY_SETTINGS.fetch(cap, []))
         rescue => e
-          message = "Could not enable #{cap} on #{identifier} (#{e.message.lines.first.strip}). Tick it by hand: developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → #{identifier}."
-          # the API may neither list nor accept this undocumented type; the
-          # certs lane checks the profile's entitlements instead
-          UI.user_error!(message) unless cap == INCREASED_MEMORY_LIMIT
+          message = "Could not enable #{cap} on #{identifier} (#{e.message.lines.first.to_s.strip}). Tick it by hand: developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → #{identifier}."
+          # the API may neither list nor accept this undocumented type (or
+          # iCloud's settings); the certs lane checks the profile's
+          # entitlements instead
+          UI.user_error!(message) unless WARN_ONLY_CAPABILITIES.include?(cap)
           gh_annotation("warning", "#{message} (The certs job checks the profile for the entitlement.)")
         end
       end
     end
     gh_annotation("notice", "App Groups: the API can't assign #{APP_GROUP} to an App ID. Check once per App ID in the developer portal (docs/CI.md → App Groups).")
+    gh_annotation("notice", "iCloud: the API can't assign the container #{ICLOUD_CONTAINER} to #{APP_ID}. Check once in the developer portal (docs/CI.md → iCloud and Push).")
   end
 
   desc "Make or refresh the App Store profiles with match; may write to Match-Secrets"
@@ -269,6 +336,7 @@ platform :ios do
     run_match(readonly: false, app_identifier: ids)
     ids.each { |id| check_app_group(id) }
     check_memory_limit(APP_ID)
+    check_icloud(APP_ID)
   end
 
   desc "Archive with the match profile(s) and upload to TestFlight"

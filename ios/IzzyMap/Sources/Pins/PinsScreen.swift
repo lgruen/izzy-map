@@ -167,13 +167,20 @@ private struct PinsHome: View {
                 .panelRows()
             }
 
-            // what it all takes on this device (photos are most of it)
-            if !store.pins.isEmpty || store.hasDeleted, let size = PinsStorageSection.size(bytes) {
+            // where the pins are (iCloud or this device only), and what it
+            // all takes on this device (photos are most of it)
+            let hasPins = !store.pins.isEmpty || store.hasDeleted
+            if hasPins || store.sync != nil {
                 Section {} footer: {
-                    Text("\(PinText.count(pins: store.pins.count, photos: store.photoCount(store.pins))) · \(size) on this \(DeviceNoun.current)")
-                        .monospacedDigit()
-                        .foregroundStyle(DesignColor.secondaryInk)
-                        .accessibilityIdentifier("pins-size")
+                    VStack(alignment: .leading, spacing: 4) {
+                        PinSyncLine(sync: store.sync)
+                        if hasPins, let size = PinsStorageSection.size(bytes) {
+                            Text("\(PinText.count(pins: store.pins.count, photos: store.photoCount(store.pins))) · \(size) on this \(DeviceNoun.current)")
+                                .monospacedDigit()
+                                .foregroundStyle(DesignColor.secondaryInk)
+                                .accessibilityIdentifier("pins-size")
+                        }
+                    }
                 }
             }
         }
@@ -671,7 +678,7 @@ struct PinsStorageSection: View {
         } header: {
             Text("Pins").panelHeader()
         } footer: {
-            Text("Your pins, notes, photos and projects, kept on this \(DeviceNoun.current) and in its backups.")
+            Text(PinSyncText.storageFooter(store.sync?.status ?? .localOnly, now: Date(), device: DeviceNoun.current))
                 .foregroundStyle(DesignColor.secondaryInk)
         }
     }

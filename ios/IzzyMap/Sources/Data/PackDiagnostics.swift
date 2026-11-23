@@ -284,10 +284,19 @@ enum PackDiagnostics {
 /// The hidden Diagnostics screen: the report, selectable, with Copy.
 struct PackDiagnosticsView: View {
     let packs: PackStore
+    /// The pin store (nil while `Features.pins` is off): its "[pins]" block
+    /// ends the report; DEBUG device builds also get "Create iCloud schema".
+    var pins: PinStore?
     @State private var report = "Gathering…"
     @State private var copied = false
     var body: some View {
         ScrollView {
+            #if DEBUG && !targetEnvironment(simulator)
+            if pins != nil {
+                PinSchemaSection { Task { await gather() } }
+                    .padding([.horizontal, .top], 16)
+            }
+            #endif
             if case let .files(dir)? = PlantIDSession.source(packs: packs) {
                 PlantIDBenchmarkSection(dir: dir)
                     .padding([.horizontal, .top], 16)
@@ -322,6 +331,13 @@ struct PackDiagnosticsView: View {
         // the store's states from the system first: the report shows both
         // views, and an old error is marked stale against the new one
         await packs.resync()
-        report = await PackDiagnostics.report(packs)
+        let packReport = await PackDiagnostics.report(packs)
+        if let pins {
+            // the account as CloudKit says it now, not the last answer
+            let fresh = await pins.sync?.refreshAccountNow() ?? true
+            report = packReport + "\n\n" + PinDiagnostics.lines(pins, accountFresh: fresh).joined(separator: "\n")
+        } else {
+            report = packReport
+        }
     }
 }

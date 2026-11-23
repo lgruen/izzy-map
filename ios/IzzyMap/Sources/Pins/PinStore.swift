@@ -6,9 +6,12 @@ import SwiftData
 import UIKit
 
 /// The pins and projects of this device (docs/PINS_PLAN.md §3), shared by
-/// every window (`AppData.pins`): one SwiftData store, local for now
-/// (`cloudKitDatabase: .none`; milestone 2 switches CloudKit on), with a
-/// small facade so views and the map never touch the context themselves.
+/// every window (`AppData.pins`): one SwiftData store, with a small facade
+/// so views and the map never touch the context themselves. In a device
+/// build the app's own store file is mirrored by SwiftData to the private
+/// database of iCloud container `PinCloud.containerID` (`sync` watches it);
+/// the simulator, tests, `-pinsStore`, in-memory stores and a store that
+/// failed to open run with CloudKit off (`cloudKitDatabase: .none`).
 ///
 /// **One change signal**, `revision`: bumped on every edit made here, and
 /// when the store changes underneath — another context's save or a
@@ -24,7 +27,8 @@ final class PinStore {
     let container: ModelContainer
     /// Bumped whenever what the store holds may have changed.
     private(set) var revision = 0
-    /// Bumped after each save that wrote something (the size on disk follows).
+    /// Bumped after each save that wrote something, and after each finished
+    /// iCloud import (the size on disk follows).
     private(set) var saves = 0
     /// Pins not deleted, oldest first (including archived projects' pins:
     /// `mapPins` leaves those out).
@@ -47,6 +51,10 @@ final class PinStore {
     /// The store file couldn't be opened: this session's pins live in
     /// memory only (the file is left untouched). The map says so.
     let openFailed: Bool
+    /// Why it failed (Diagnostics).
+    let openError: String?
+    /// iCloud sync's watcher; nil when the store doesn't sync (`PinCloud.syncs`).
+    let sync: PinSync?
 
     @ObservationIgnored let now: () -> Date
     @ObservationIgnored private let defaults: UserDefaults
@@ -58,21 +66,31 @@ final class PinStore {
     /// How long typing may go unsaved.
     static let saveDelay: Duration = .milliseconds(500)
     static let lastProjectKey = "pinsLastProject"
-    static let schema = Schema([PinProject.self, SavedPin.self, PinPhoto.self, PinPhotoOriginal.self])
+    static let schema = Schema(PinCloud.modelTypes)
     private static let logger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Pins")
 
     private var context: ModelContext { container.mainContext }
 
     /// `container` as given (tests: in memory); `now` and `defaults` injectable.
-    init(container: ModelContainer, openFailed: Bool = false, defaults: UserDefaults = .standard,
-         now: @escaping () -> Date = { Date() }) {
+    init(container: ModelContainer, openFailed: Bool = false, openError: String? = nil, sync: PinSync? = nil,
+         defaults: UserDefaults = .standard, now: @escaping () -> Date = { Date() }) {
         self.container = container
         self.openFailed = openFailed
+        self.openError = openError
+        self.sync = sync
         self.defaults = defaults
         self.now = now
         container.mainContext.autosaveEnabled = false
         reload()
         observeUnderlyingChanges()
+        sync?.importFinished = { [weak self] in self?.importedFromICloud() }
+    }
+
+    /// Another device's changes arrived (a finished iCloud import): re-read
+    /// the lists and tell everything that measures the store (its size).
+    func importedFromICloud() {
+        reload()
+        saves += 1
     }
 
     /// An empty store in memory (unit tests, previews, `-pinsInMemory`).
@@ -83,24 +101,33 @@ final class PinStore {
     /// The app's store: Application Support/Pins/Pins.store (`Pins-dev/` in
     /// DEBUG builds, so a development build never mixes with TestFlight's
     /// data); included in backups. DEBUG launch arguments for tests:
-    /// `-pinsInMemory YES`, `-pinsStore <file path>`. Purges what was
-    /// deleted more than 30 days ago.
+    /// `-pinsInMemory YES`, `-pinsStore <file path>` (neither syncs);
+    /// `-pinsCreateSchema YES` (DEBUG device builds) writes the iCloud
+    /// schema before the store opens and prints the result. Purges what
+    /// was deleted more than 30 days ago.
     static func launch(enabled: Bool) -> PinStore? {
         guard enabled else { return nil }
-        var url: URL? = defaultStoreURL()
-        #if DEBUG
-        let args = UserDefaults.standard
-        if args.bool(forKey: "pinsInMemory") {
-            url = nil
-        } else if let path = args.string(forKey: "pinsStore"), !path.isEmpty {
-            url = URL(filePath: path)
-        }
-        #endif
-        if let url {
+        let choice = storeChoice()
+        if let url = choice.url {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         }
-        let opened = makeContainer(url: url)
-        let store = PinStore(container: opened.container, openFailed: opened.failed)
+        #if DEBUG && !targetEnvironment(simulator)
+        // Apple's way: before the SwiftData container exists (asked for by
+        // the argument, or by Diagnostics for this launch — cleared first,
+        // so a crash in it can't repeat on every launch)
+        if UserDefaults.standard.bool(forKey: "pinsCreateSchema") || PinSchemaResult.requested {
+            PinSchemaResult.requested = false
+            let text = PinCloudSchema.run()
+            PinSchemaResult.save(text)
+            print("Create iCloud schema (-pinsCreateSchema):\n\(text)")
+            logger.notice("create iCloud schema: \(text, privacy: .public)")
+        }
+        #endif
+        let opened = makeContainer(url: choice.url, cloudKit: choice.syncs)
+        // a store that fell back to memory doesn't sync: nothing watches CloudKit
+        let sync = choice.syncs && !opened.failed ? PinSync() : nil
+        let store = PinStore(container: opened.container, openFailed: opened.failed, openError: opened.error, sync: sync)
+        sync?.start()
         // never purge (or otherwise write) when the real store didn't open
         if !opened.failed { store.purge() }
         #if DEBUG
@@ -195,20 +222,47 @@ final class PinStore {
             .appending(path: "Pins.store")
     }
 
+    /// Which store this launch opens (nil: in memory), and whether it
+    /// syncs: only the default file in a device build (`PinCloud.syncs`).
+    /// `args` and `deviceBuild` injectable for tests.
+    static func storeChoice(args: UserDefaults = .standard, deviceBuild: Bool = PinCloud.isDeviceBuild) -> (url: URL?, syncs: Bool) {
+        var url: URL? = defaultStoreURL()
+        #if DEBUG
+        if args.bool(forKey: "pinsInMemory") {
+            url = nil
+        } else if let path = args.string(forKey: "pinsStore"), !path.isEmpty {
+            url = URL(filePath: path)
+        }
+        #endif
+        return (url, PinCloud.syncs(storeURL: url, defaultStore: defaultStoreURL(), deviceBuild: deviceBuild))
+    }
+
     /// A store that can't be opened must not take the app down: the pins
     /// then live in memory for this session (`failed`; logged, and the map
-    /// says so). The file that failed is never deleted or overwritten.
-    static func makeContainer(url: URL?) -> (container: ModelContainer, failed: Bool) {
-        let configuration = url.map { ModelConfiguration(schema: schema, url: $0, cloudKitDatabase: .none) }
+    /// says so) — with CloudKit off. The file that failed is never deleted
+    /// or overwritten. `cloudKit`: mirrored to the private database of
+    /// `PinCloud.containerID` (a file only; needs the device entitlements).
+    static func makeContainer(url: URL?, cloudKit: Bool = false) -> (container: ModelContainer, failed: Bool, error: String?) {
+        let configuration = url.map { ModelConfiguration(schema: schema, url: $0, cloudKitDatabase: PinCloud.database(syncs: cloudKit)) }
             ?? ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         do {
-            return (try ModelContainer(for: schema, configurations: configuration), false)
+            return (try ModelContainer(for: schema, configurations: configuration), false, nil)
         } catch {
-            logger.fault("pin store unreadable, using memory: \(String(describing: error), privacy: .public)")
+            let text = String(describing: error)
+            logger.fault("pin store unreadable (CloudKit \(cloudKit)), using memory: \(text, privacy: .public)")
             // an in-memory store of a valid schema always opens
             let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-            return (try! ModelContainer(for: schema, configurations: memory), true)
+            return (try! ModelContainer(for: schema, configurations: memory), true, text)
         }
+    }
+
+    /// Rows in the store, deleted ones included (Diagnostics: to compare
+    /// with the CloudKit Console's record counts).
+    func localCounts() -> (projects: Int, deletedProjects: Int, pins: Int, deletedPins: Int, photos: Int, originals: Int) {
+        func count<T: PersistentModel>(_ descriptor: FetchDescriptor<T>) -> Int { (try? context.fetchCount(descriptor)) ?? -1 }
+        return (count(FetchDescriptor<PinProject>()), count(FetchDescriptor<PinProject>(predicate: #Predicate { $0.deletedAt != nil })),
+                count(FetchDescriptor<SavedPin>()), count(FetchDescriptor<SavedPin>(predicate: #Predicate { $0.deletedAt != nil })),
+                count(FetchDescriptor<PinPhoto>()), count(FetchDescriptor<PinPhotoOriginal>()))
     }
 
     // MARK: Reading
@@ -730,7 +784,8 @@ final class PinStore {
     }
 
     /// Another context's save (a background import) or a remote change to
-    /// the persistent store (CloudKit, once on): re-read and signal. Our
+    /// the persistent store (an iCloud import, when the store syncs): re-read
+    /// and signal. Our
     /// own context's saves are already signalled.
     private func observeUnderlyingChanges() {
         let center = NotificationCenter.default

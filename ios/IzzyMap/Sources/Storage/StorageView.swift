@@ -206,7 +206,7 @@ struct StorageView: View {
         // which is always there — here it would play twice
         .sheet(isPresented: $showsDiagnostics) {
             NavigationStack {
-                PackDiagnosticsView(packs: packs)
+                PackDiagnosticsView(packs: packs, pins: model.pins)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done", systemImage: "checkmark") { showsDiagnostics = false }

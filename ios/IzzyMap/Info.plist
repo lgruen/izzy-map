@@ -22,5 +22,11 @@
 		<string>org.gruenschloss.izzymap.areas.*</string>
 		<string>org.gruenschloss.izzymap.packs.*</string>
 	</array>
+	<!-- Pins sync: CloudKit's silent pushes wake the app so SwiftData's
+	     mirroring imports another device's changes (no INFOPLIST_KEY_ form) -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

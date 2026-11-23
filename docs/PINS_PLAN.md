@@ -99,10 +99,15 @@ sync code.
   - A conflict (the same pin edited on both devices before they synced) is
     settled by the system, in effect the later change wins.
   - The app cannot count "3 photos waiting". The Pins screen states what it
-    does know: iCloud on or off for this device (`CKContainer`
-    account status), the time of the last finished sync and the last error
-    (`NSPersistentCloudKitContainer.eventChangedNotification`), e.g. "iCloud
-    storage is full".
+    does know, as facts: iCloud on or off for this device (`CKContainer`
+    account status: "iCloud is off on this iPhone — pins stay here"), the
+    time of the last finished import or export ("Last synced with iCloud ·
+    2 min ago" — not a claim that every edit is up) or, before any, a
+    neutral "iCloud sync is on", and the last error
+    (`NSPersistentCloudKitContainer.eventChangedNotification`): "iCloud
+    storage is full", "Not signed in to iCloud", "Waiting for a
+    connection", "iCloud sync failed" (code in Diagnostics). Each finished
+    import re-reads the lists. Simulator / sync off: "On this iPhone only".
   - Not signed in to iCloud at all: pins simply stay on the device.
 - **Development vs production**: Xcode builds talk to the CloudKit
   Development environment, TestFlight builds always to Production, with
@@ -216,9 +221,14 @@ CloudKit (before the first TestFlight build with pins):
    capabilities on; assigning the container is probably manual, as the App
    Group was.) Rerun the setup workflow; the next TestFlight run re-creates
    the provisioning profiles.
-2. Run the Debug scheme once on his iPhone (signed in to iCloud) and tap
-   Diagnostics → "Create iCloud schema" — this writes the record types into
-   the Development environment.
+2. Run the Debug scheme from Xcode on his iPhone (signed in to iCloud),
+   tap Diagnostics (long-press the Storage gauge) → "Create iCloud schema"
+   (it only asks for the next launch), stop the app and run it again FROM
+   XCODE. That launch writes the record types into the Development
+   environment before the pin store opens (Apple's way: never while the
+   live store mirrors) and blocks for a while, which only the debugger
+   tolerates; Diagnostics then shows the result under "schema creation".
+   Fallback: the launch argument `-pinsCreateSchema YES` does the same.
 3. CloudKit Console → Deploy Schema Changes to Production. Repeat 2–3
    whenever a model gains a property.
 
