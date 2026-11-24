@@ -8,7 +8,8 @@ analytics, and the app has no server of its own.
 ## What stays on the device
 
 - **Location** is used to show where you are on the map and to place a pin
-  at your position. It is not sent anywhere.
+  at your position. Apart from the position saved with a pin or a pin
+  photo (see Pins below), it is not sent anywhere.
 - **Plant identification** runs on the device. Photos you identify are not
   uploaded.
 - Map layers, search and the plant, tree and soil tables work offline from
@@ -28,7 +29,19 @@ The app sends them nothing else.
 Pins, their notes and photos are stored on the device and synced through
 **your own iCloud account** (Apple CloudKit, the private database of the
 Apple ID signed in on the device). Only that Apple ID can read them; the
-developer cannot. Turning iCloud off for the app stops the sync.
+developer cannot. Turning iCloud off for the app stops the sync; without
+iCloud the pins stay on that device only.
+
+A pin holds its position (with the GPS accuracy and altitude when it was
+placed at your location), its title, note, colour, project and photo
+captions. Photos you take for a pin keep their capture date and, when a
+position fix is known, that position in the photo's own data (EXIF);
+photos added from your library keep the date and position they already
+carry.
+
+Exporting pins as a Word file ("Share file") hands the file to the system
+share sheet; it goes wherever you send it. Photos in an exported document
+carry no metadata (no position or date inside the image files).
 
 ## Export to Google Docs
 
@@ -49,10 +62,16 @@ including the Limited Use requirements.
 
 ## Deleting your data
 
-Delete pins in the app (they leave iCloud too), delete the app's iCloud
-data under Settings → your name → iCloud → Manage Storage, and delete
-exported documents in Google Drive. Removing the app removes everything it
-stored on the device.
+Delete pins in the app: a deleted pin or project stays in "Recently
+deleted" (on the device and in iCloud) for 30 days, then it is deleted for
+good, from iCloud too; "Delete now" there does that at once. You can also
+delete the app's iCloud data under Settings → your name → iCloud → Manage
+Storage, and delete exported documents in Google Drive. Removing the app
+removes what it stored on the device, except the Google sign-in token,
+which iOS keeps in the Keychain: the app deletes it the first time it runs
+after being installed again. "Sign out of Google" in the export sheet
+deletes it at any time, and removing the app's access at the Google link
+above makes it useless.
 
 ## Contact
 

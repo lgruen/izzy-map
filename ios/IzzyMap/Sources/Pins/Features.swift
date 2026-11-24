@@ -1,18 +1,17 @@
 import CoreLocation
 import Foundation
 
-/// Switches for features that are built but not ready to ship.
+/// Switches for whole features — the one place to turn one off again.
 nonisolated enum Features {
-    /// Pins (docs/PINS_PLAN.md). Must not reach a TestFlight build before
-    /// iCloud sync is on (§3, last bullet: whether a store that started
-    /// local-only uploads its rows later is unproven). Off: no pin button,
-    /// no long-press, no pin layers, and the store is never opened (no
-    /// file is created). On in DEBUG builds only — the one place to flip.
-    #if DEBUG
+    /// Pins (docs/PINS_PLAN.md). On in every build since 2026-11-24: iCloud
+    /// sync ships with them (§3, last bullet) — the container exists and
+    /// its CloudKit schema is deployed to Production. Off would mean: no
+    /// pin button, no long-press, no pin layers, no Pins screen, and the
+    /// store is never opened (no file is created). DEBUG builds keep their
+    /// own store file (`PinStore.defaultStoreURL`, `Pins-dev/`) and talk to
+    /// CloudKit's Development environment; TestFlight builds use `Pins/`
+    /// and Production.
     static let pins = true
-    #else
-    static let pins = false
-    #endif
 }
 
 /// Core Location's own latest position for the pin button. MapLibre

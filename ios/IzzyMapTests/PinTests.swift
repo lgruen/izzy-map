@@ -218,7 +218,7 @@ private func freshDefaults() -> UserDefaults {
         let url = PinStore.defaultStoreURL()
         #expect(url.path(percentEncoded: false).contains("Application Support/Pins-dev/"))  // DEBUG
         #expect(url.lastPathComponent == "Pins.store")
-        // the test host opened it at launch (Features.pins is on in DEBUG)
+        // the test host opened it at launch (Features.pins is on)
         #expect(FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
         for item in [url, url.deletingLastPathComponent()] {
             let values = try item.resourceValues(forKeys: [.isExcludedFromBackupKey])
