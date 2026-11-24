@@ -59,7 +59,9 @@ jobs:
   app:
     name: IzzyMap (xcodebuild test, simulator)
     runs-on: xcode-27
-    timeout-minutes: 45
+    # 2026-11-24: 57 UI tests take ~25–30 min on this runner after ~15–20 min
+    # of build + unit tests; a run with no failure was cut off at 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode 27.2
