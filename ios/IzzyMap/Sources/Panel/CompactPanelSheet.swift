@@ -26,6 +26,9 @@ struct CompactPanelSheet: View {
     @State private var peek: CGFloat = 0
     /// The sheet's bottom safe area (see the scroll view's comment).
     @State private var bottomInset: CGFloat = 0
+    /// How far the sheet is raised above its glance, for the fade below a
+    /// card's glance (`belowGlance()`).
+    @State private var fade = GlanceFadeLevel()
 
     private var fitDetent: PresentationDetent { .height(fitHeight) }
 
@@ -153,6 +156,7 @@ struct CompactPanelSheet: View {
                 // with the sheet's corners); the header above keeps its 16
                 .padding(.horizontal, Self.inset)
                 .padding(.bottom, hasBody ? Self.inset : 0)
+                .environment(\.glanceFade, GlanceFade(level: fade, active: hidesBelowGlance))
                 .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded(.up) } action: { height in
                     contentHeight = height
                     updateFit(height)
@@ -199,9 +203,18 @@ struct CompactPanelSheet: View {
                         guard abs(inset - bottomInset) > 0.5 else { return }
                         bottomInset = inset
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded() } action: { height in
+                        fade.update(height: height)
+                    }
             }
             .ignoresSafeArea(.keyboard)
         }
+    }
+
+    /// Whether a card's content below its glance fades with the sheet's
+    /// height (`belowGlance()`): only a card has anything below its glance.
+    private var hidesBelowGlance: Bool {
+        model.selection != nil && !model.search.isActive && peek > 0
     }
 
     /// The fitted detent's height: the search header plus the glance below
@@ -225,9 +238,74 @@ struct CompactPanelSheet: View {
     /// or shrinks along (a card appears, Dynamic Type changes).
     private func updateFit(_ content: CGFloat) {
         let height = Self.fitHeight(header: headerHeight, content: content, peek: model.selection != nil ? peek : 0)
+        fade.update(fit: height)
         guard abs(height - fitHeight) > 0.5 else { return }
         let wasResting = detent == fitDetent
         fitHeight = height
         if wasResting { detent = fitDetent }
+    }
+}
+
+/// How far the phone's sheet stands above its fitted height, in 2-pt
+/// steps from 0 (resting at its glance) to 22 (44 pt or more higher). Fed
+/// the sheet's height as its detents count it (home-indicator band and
+/// keyboard left out; equal to the fitted height at rest) on every layout
+/// pass, it publishes only a change of step: only the fade reads it, and
+/// sub-step jitter (a keyboard's layout passes, a large sheet) never
+/// re-renders anything — publishing every height kept the app from ever
+/// going idle in some UI test runs.
+@Observable final class GlanceFadeLevel {
+    static let steps = 22
+    private(set) var step = GlanceFadeLevel.steps
+    @ObservationIgnored private var height: CGFloat = 0
+    @ObservationIgnored private var fit: CGFloat = 0
+
+    func update(height: CGFloat? = nil, fit: CGFloat? = nil) {
+        if let height { self.height = height }
+        if let fit { self.fit = fit }
+        let raised = Int(((self.height - self.fit) / 2).rounded(.down))
+        let next = self.height > 0 ? min(Self.steps, max(0, raised)) : Self.steps
+        if next != step { step = next }
+    }
+}
+
+/// What a card's content below its glance needs to fade (the compact
+/// sheet sets it; elsewhere inactive: always fully there).
+struct GlanceFade {
+    var level: GlanceFadeLevel?
+    var active = false
+
+    /// 0 while the sheet rests at its fitted height, 1 from 44 pt higher.
+    var opacity: Double {
+        guard active, let level else { return 1 }
+        return Double(level.step) / Double(GlanceFadeLevel.steps)
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var glanceFade = GlanceFade()
+}
+
+extension View {
+    /// A card's content below its glance: hidden while the phone's sheet
+    /// rests at its glance — the home-indicator band under it stays empty,
+    /// never a sliver of the next row cut by the sheet's corner — and
+    /// fading in over the first 44 pt the sheet is raised, so it follows a
+    /// drag. Opacity only (no layout change, so nothing feeds back into the
+    /// fitted height); no taps while invisible. On the sections themselves,
+    /// not a mask over the panel content: with a mask, text typed into a
+    /// modal presented from the card (the Pins screen, the photo viewer's
+    /// caption) got lost.
+    func belowGlance() -> some View { modifier(BelowGlance()) }
+}
+
+private struct BelowGlance: ViewModifier {
+    @Environment(\.glanceFade) private var fade
+
+    func body(content: Content) -> some View {
+        let opacity = fade.opacity
+        content
+            .opacity(opacity)
+            .allowsHitTesting(opacity > 0)
     }
 }

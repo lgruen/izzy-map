@@ -27,8 +27,11 @@ struct FeatureCard: View {
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(PanelContent.space)).minY } action: {
                     actions.peek($0)
                 }
-            facts
-            extras
+            Group {
+                facts
+                extras
+            }
+            .belowGlance()
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("feature-card")

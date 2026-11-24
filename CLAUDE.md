@@ -834,6 +834,11 @@ milestones, map-proof results); the design brief and language is
   "No offline maps": 133 → 115 → 99 → 133, the system dropping the last
   change), and `restingLift` moved the map ~27 pt after a card. The
   fitted detent is content only (`CompactPanelSheet.fitHeight`).
+  A card's content below its glance fades with the sheet's height
+  (`belowGlance()`: opacity on those sections, published in 2-pt steps).
+  A `.mask` over the panel content instead lost text typed into modals
+  presented from the card (reproduced 2 of 2), and publishing every
+  measured height was followed by UI runs that never went idle.
 - **After the location prompt MapLibre delivers Core Location's CACHED
   sample first** and drops later fixes at the same coordinate (see
   `SystemLocation`), so the pin button's "wait for a fresh fix" also

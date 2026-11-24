@@ -43,18 +43,21 @@ struct PinCard: View {
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(PanelContent.space)).minY } action: {
                         actions.peek($0)
                     }
-                note(pin)
-                    .padding(.top, Self.section)
-                facts(pin)
-                    .padding(.top, Self.section)
-                colourRow(pin)
-                    .padding(.top, Self.section)
-                // (the swatch row's 44 pt targets leave ~9 pt under the swatches)
-                actionRow(pin)
-                    .padding(.top, Self.section - 9)
-                    // moving: the map is where she acts; the card waits
-                    .opacity(model.movingPin == pin.id ? 0.35 : 1)
-                    .disabled(model.movingPin == pin.id)
+                Group {
+                    note(pin)
+                        .padding(.top, Self.section)
+                    facts(pin)
+                        .padding(.top, Self.section)
+                    colourRow(pin)
+                        .padding(.top, Self.section)
+                    // (the swatch row's 44 pt targets leave ~9 pt under the swatches)
+                    actionRow(pin)
+                        .padding(.top, Self.section - 9)
+                        // moving: the map is where she acts; the card waits
+                        .opacity(model.movingPin == pin.id ? 0.35 : 1)
+                        .disabled(model.movingPin == pin.id)
+                }
+                .belowGlance()
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("pin-card")
