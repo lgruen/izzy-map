@@ -39,15 +39,21 @@ final class DocumentTests: XCTestCase {
     @MainActor
     private func openReader(_ app: XCUIApplication) -> XCUIElement {
         let read = app.buttons["read-description"]
-        for dy in [0.3, 0.34, 0.26, 0.38, 0.22] where !read.exists {
+        let card = app.descendants(matching: .any)["feature-card"].firstMatch
+        // the button sits below the card's glance: each card gets the sheet
+        // raised before it is looked for (above the medium sheet, the map
+        // still takes the next tap)
+        for dy in [0.3, 0.34, 0.26, 0.38, 0.22] where !(read.exists && read.isHittable) {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy)).tap()
-            _ = read.waitForExistence(timeout: patience(4))
+            guard card.waitForExistence(timeout: patience(4)) else { continue }
+            dragPanelUp(app, until: read, in: card, tries: 3)
+            if !(read.exists && read.isHittable) {
+                // no description here: the sheet back down for the next tap
+                app.textFields["search-field"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: -0.6))
+                    .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+            }
         }
-        XCTAssertTrue(read.exists, "no community card with a description")
-        for _ in 0 ..< 4 where !read.isHittable {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
-                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
-        }
+        XCTAssertTrue(read.exists && read.isHittable, "no community card with a description")
         read.tap()
         let reader = app.descendants(matching: .any)["pdf-reader"]
         XCTAssertTrue(reader.waitForExistence(timeout: patience(15)))

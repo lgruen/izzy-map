@@ -839,6 +839,9 @@ milestones, map-proof results); the design brief and language is
   A `.mask` over the panel content instead lost text typed into modals
   presented from the card (reproduced 2 of 2), and publishing every
   measured height was followed by UI runs that never went idle.
+  UI tests: opacity-0 controls still EXIST for XCUITest, and its
+  scroll-to-visible on a resting sheet resizes the sheet — raise it
+  explicitly (`dragPanelUp`) before reaching below-glance controls.
 - **After the location prompt MapLibre delivers Core Location's CACHED
   sample first** and drops later fixes at the same coordinate (see
   `SystemLocation`), so the pin button's "wait for a fresh fix" also

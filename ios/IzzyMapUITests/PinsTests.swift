@@ -46,10 +46,11 @@ final class PinsTests: XCTestCase {
         XCTAssertFalse(card(app).exists)
         app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "a long-press opens the new pin's card")
-        // (the facts row reads as one element: "<date>, By hand on the map")
-        XCTAssertTrue(app.staticTexts["pin-source"].firstMatch.label.hasSuffix("By hand on the map"))
         // the title field is ready: typing goes straight into it
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus }, "title focused")
+        // (the facts row reads as one element: "<date>, By hand on the map";
+        // in view once the title's keyboard has raised the sheet)
+        XCTAssertTrue(app.staticTexts["pin-source"].firstMatch.label.hasSuffix("By hand on the map"))
         app.typeText("Seep below the track")
         XCTAssertTrue(eventually(patience(3)) { (self.title(app).value as? String) == "Seep below the track" })
         // closing the card saves the typing
@@ -91,9 +92,15 @@ final class PinsTests: XCTestCase {
         let app = launch(Self.watchdog)
         let search = app.textFields["search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: patience(5)))
-        // the glance at rest (restingLift waits 350 ms after the sheet settles)
-        sleep(3)
-        let rest = search.frame
+        // the glance at rest, the notice row in it (restingLift waits
+        // 350 ms after the sheet settles): two equal readings a second apart
+        XCTAssertTrue(app.descendants(matching: .any)["no-data"].firstMatch.waitForExistence(timeout: patience(10)))
+        var rest = search.frame
+        XCTAssertTrue(eventually(patience(10)) {
+            Thread.sleep(forTimeInterval: patience(1))
+            defer { rest = search.frame }
+            return search.frame == rest
+        }, "the glance settles")
         app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)))
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus }, "title focused")
@@ -103,7 +110,7 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists })
         // long enough for the map to follow a changed glance (it did ~1 s
         // after ✕)
-        sleep(3)
+        Thread.sleep(forTimeInterval: patience(3))
         XCTAssertEqual(search.frame.minY, rest.minY, accuracy: 1, "the glance rests where it rested at launch")
         XCTAssertEqual(search.frame.height, rest.height, accuracy: 1, "the glance rests where it rested at launch")
         // the pin is still under the spot: a long-press there selects it
@@ -122,7 +129,8 @@ final class PinsTests: XCTestCase {
         app.typeText("Gate")
         let delete = app.buttons["pin-delete"]
         // the keyboard and the large sheet: Delete may sit below the fold
-        for _ in 0 ..< 3 where !delete.isHittable { app.swipeUp() }
+        // (and once the keyboard goes, the sheet is back at its glance)
+        dragPanelUp(app, until: delete, in: card(app))
         delete.tap()
         XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists }, "the card closes")
         let undo = app.buttons["pin-undo"]
@@ -159,7 +167,8 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(eventually(patience(3)) { !self.title(app).hasFocus })
         let position = app.buttons["pin-latlon"]
         let move = app.buttons["pin-move"]
-        for _ in 0 ..< 3 where !move.isHittable { app.swipeUp() }
+        // the sheet back at its glance: raise it to reach the card's lower part
+        dragPanelUp(app, until: move, in: card(app))
         let before = position.value as? String
         XCTAssertNotNil(before)
         move.tap()

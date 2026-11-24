@@ -19,16 +19,13 @@ struct CompactPanelSheet: View {
     /// Where the sheet was before a pin field took the keyboard.
     @State private var detentBeforeEditing: PresentationDetent?
 
-    @State private var contentHeight: CGFloat = 0
-    /// The pinned search header's height, padding included.
-    @State private var headerHeight: CGFloat = 80
-    /// Bottom of the card's glance in the content (0: no card).
-    @State private var peek: CGFloat = 0
-    /// The sheet's bottom safe area (see the scroll view's comment).
-    @State private var bottomInset: CGFloat = 0
+    /// The glance's measurements the fitted height comes from.
+    @State private var glance = GlanceFit()
     /// How far the sheet is raised above its glance, for the fade below a
     /// card's glance (`belowGlance()`).
     @State private var fade = GlanceFadeLevel()
+    /// The card's scroll position (back to its top at the glance).
+    @State private var scroll = ScrollPosition(edge: .top)
 
     private var fitDetent: PresentationDetent { .height(fitHeight) }
 
@@ -43,9 +40,9 @@ struct CompactPanelSheet: View {
                         },
                         peek: { y in
                             let rounded = y.rounded(.up)
-                            guard abs(rounded - peek) > 0.5 else { return }
-                            peek = rounded
-                            updateFit(contentHeight)
+                            guard abs(rounded - glance.peek) > 0.5 else { return }
+                            glance.peek = rounded
+                            updateFit()
                         }))
             }
         }
@@ -57,6 +54,11 @@ struct CompactPanelSheet: View {
         // dragged down to the glance mid-search: the results can't show there
         .onChange(of: detent) { _, new in
             if new == fitDetent, model.search.isActive { model.search.end() }
+            // at its glance a card shows from its top: scrolled further at
+            // a raised detent ("All n plants", then dragged down; "Show on
+            // map"), the glance would sit above the window and what the
+            // window shows is hidden at rest — an empty band
+            if new == fitDetent, model.selection != nil { scroll.scrollTo(edge: .top) }
         }
         // a pushed plant sheet or group list reads at the large detent
         .onChange(of: model.cardPath.count) { old, new in
@@ -72,8 +74,8 @@ struct CompactPanelSheet: View {
         // the Undo pill above the sheet)
         .onChange(of: model.selection?.id) { _, id in
             guard id == nil else { return }
-            peek = 0
-            updateFit(contentHeight)
+            glance.peek = 0
+            updateFit()
             // (every way a card goes ends here: ✕, Delete, Escape, a map
             // tap, a pick, the pin deleted on the other device — with or
             // without a field's keyboard still up: the fitted height never
@@ -156,12 +158,13 @@ struct CompactPanelSheet: View {
                 // with the sheet's corners); the header above keeps its 16
                 .padding(.horizontal, Self.inset)
                 .padding(.bottom, hasBody ? Self.inset : 0)
-                .environment(\.glanceFade, GlanceFade(level: fade, active: hidesBelowGlance))
+                .environment(\.glanceFade, GlanceFade(level: fade, active: hidesBelowGlance && detent == fitDetent))
                 .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded(.up) } action: { height in
-                    contentHeight = height
-                    updateFit(height)
+                    glance.content = height
+                    updateFit()
                 }
         }
+        .scrollPosition($scroll)
         .scrollBounceBehavior(.basedOnSize)
         // scrolling the results puts the keyboard away (they stay)
         .scrollDismissesKeyboard(.immediately)
@@ -175,9 +178,9 @@ struct CompactPanelSheet: View {
                 .padding(.top, Self.inset)
                 .padding(.bottom, hasBody ? 14 : Self.inset)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded(.up) } action: { height in
-                    guard abs(height - headerHeight) > 0.5 else { return }
-                    headerHeight = height
-                    updateFit(contentHeight)
+                    guard abs(height - glance.header) > 0.5 else { return }
+                    glance.header = height
+                    updateFit()
                 }
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
@@ -194,14 +197,14 @@ struct CompactPanelSheet: View {
         // the sheet's height, and the sheet's keyboard handling would lay
         // the sheet out again on every change. The scroll view keeps its own
         // keyboard avoidance.
-        .contentMargins(.bottom, detent == fitDetent ? 0 : bottomInset, for: .scrollContent)
+        .contentMargins(.bottom, detent == fitDetent ? 0 : glance.bottomInset, for: .scrollContent)
         .ignoresSafeArea(.container, edges: .bottom)
         .background {
             ZStack {
                 Color.clear
                     .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom.rounded() } action: { inset in
-                        guard abs(inset - bottomInset) > 0.5 else { return }
-                        bottomInset = inset
+                        guard abs(inset - glance.bottomInset) > 0.5 else { return }
+                        glance.bottomInset = inset
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded() } action: { height in
                         fade.update(height: height)
@@ -212,37 +215,55 @@ struct CompactPanelSheet: View {
     }
 
     /// Whether a card's content below its glance fades with the sheet's
-    /// height (`belowGlance()`): only a card has anything below its glance.
+    /// height (`belowGlance()`): only a card has anything below its glance,
+    /// and only while the sheet's selected detent is the glance — resting at
+    /// medium or large it is all there, however close medium sits to the
+    /// glance (a large glance at big text sizes).
     private var hidesBelowGlance: Bool {
-        model.selection != nil && !model.search.isActive && peek > 0
-    }
-
-    /// The fitted detent's height: the search header plus the glance below
-    /// it (a card's glance — header, plant faces — or the notice rows), and
-    /// nothing else, so it changes only with the content. Never the sheet's
-    /// bottom safe area: the system adds that below a detent itself, and
-    /// sets it from the sheet's own height (iPhone 16e: 0 while a short
-    /// sheet floats, 34 once a taller one reaches the home indicator, the
-    /// switch between 99 and 105 pt). Subtracting it fed the sheet's shape
-    /// back into its detent: with the "No offline maps" row (133 pt) it
-    /// cycled 133 → 115 → 99 → 133, the system dropped the last change,
-    /// and the glance rested at a different height after a card than at
-    /// launch — the map's resting inset followed and moved every pin.
-    nonisolated static func fitHeight(header: CGFloat, content: CGFloat, peek: CGFloat) -> CGFloat {
-        // with a card: its glance, not all of it
-        let body = peek > 0 ? min(content, peek + 12) : content
-        return max(44, header + body)
+        model.selection != nil && !model.search.isActive && glance.peek > 0
     }
 
     /// The fitted detent follows the content; a sheet resting on it grows
     /// or shrinks along (a card appears, Dynamic Type changes).
-    private func updateFit(_ content: CGFloat) {
-        let height = Self.fitHeight(header: headerHeight, content: content, peek: model.selection != nil ? peek : 0)
+    private func updateFit() {
+        glance.hasCard = model.selection != nil
+        let height = glance.height
         fade.update(fit: height)
         guard abs(height - fitHeight) > 0.5 else { return }
         let wasResting = detent == fitDetent
         fitHeight = height
         if wasResting { detent = fitDetent }
+    }
+}
+
+/// What the phone sheet's fitted detent is computed from: the glance's
+/// measured content. The sheet's measured bottom band sits beside it (the
+/// scroll content's margin at medium and large) and `height` never reads
+/// it: the system adds that band below a detent itself, and sets it from
+/// the sheet's own height (iPhone 16e: 0 while a short sheet floats, 34
+/// once a taller one reaches the home indicator, the switch between 99 and
+/// 105 pt). Subtracting it fed the sheet's shape back into its detent: with
+/// the "No offline maps" row (133 pt) it cycled 133 → 115 → 99 → 133, the
+/// system dropped the last change, and the glance rested at a different
+/// height after a card than at launch — the map's resting inset followed
+/// and moved every pin.
+nonisolated struct GlanceFit: Equatable, Sendable {
+    /// The pinned search header's height, padding included.
+    var header: CGFloat = 80
+    /// The scroll content's height (a card, the notice rows; 0: none).
+    var content: CGFloat = 0
+    /// Bottom of the card's glance in the content (0: none reported).
+    var peek: CGFloat = 0
+    var hasCard = false
+    /// The sheet's bottom safe area (see the scroll view's comment).
+    var bottomInset: CGFloat = 0
+
+    /// The search header plus the glance below it (a card's glance —
+    /// header, plant faces — or the notice rows), and nothing else.
+    var height: CGFloat {
+        // with a card: its glance, not all of it
+        let body = hasCard && peek > 0 ? min(content, peek + 12) : content
+        return max(44, header + body)
     }
 }
 

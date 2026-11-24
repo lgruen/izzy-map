@@ -67,6 +67,30 @@ extension XCUIElement {
     }
 }
 
+/// Drags up inside the panel until `element` can be tapped: on a phone
+/// that raises the sheet (below a card's glance the content is hidden and
+/// takes no taps while the sheet rests at its glance), then scrolls the
+/// card. Explicit, not XCUITest's scroll-to-visible: that happened to
+/// raise a resting sheet (a scroll at the glance detent resizes the
+/// sheet), and opacity-0 controls still count as existing. Starts in the
+/// lower part of `container` (the card), above a keyboard; on an iPad the
+/// side card scrolls.
+@MainActor
+func dragPanelUp(_ app: XCUIApplication, until element: XCUIElement, in container: XCUIElement, tries: Int = 4) {
+    for _ in 0 ..< tries where !(element.exists && element.isHittable) {
+        let window = app.windows.firstMatch.frame
+        let box = container.exists ? container.frame : window
+        var start = min(window.height * 0.85, box.maxY - 30)
+        let keyboard = app.keyboards.firstMatch
+        if keyboard.exists, keyboard.frame.height > 0 { start = min(start, keyboard.frame.minY - 20) }
+        let end = max(window.height * 0.12, start - 360)
+        let x = box.width > 0 ? box.midX : window.midX
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        origin.withOffset(CGVector(dx: x, dy: start))
+            .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: end)))
+    }
+}
+
 /// `seconds`, scaled for a slow runner (`UI_TIMEOUT_SCALE`, default 1).
 func patience(_ seconds: TimeInterval) -> TimeInterval {
     seconds * uiTimeoutScale

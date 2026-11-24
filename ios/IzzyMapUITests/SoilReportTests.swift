@@ -34,12 +34,13 @@ final class SoilReportTests: XCTestCase {
     @MainActor
     private func reportButton(_ app: XCUIApplication) -> XCUIElement {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.42)).tap()
+        // the card first; its report button sits below the glance, so the
+        // sheet goes up before it can show
+        let card = app.descendants(matching: .any)["feature-card"].firstMatch
+        XCTAssertTrue(card.appears(within: patience(8)), "no soil card")
         let button = app.buttons["open-soil-report"]
-        XCTAssertTrue(button.appears(within: patience(8)), "no report button on the soil card")
-        for _ in 0 ..< 4 where !button.isHittable {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
-                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
-        }
+        dragPanelUp(app, until: button, in: card)
+        XCTAssertTrue(button.appears(within: patience(5)), "no report button on the soil card")
         XCTAssertTrue(button.isHittable)
         return button
     }

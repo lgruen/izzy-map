@@ -55,6 +55,28 @@ final class ContentTests: XCTestCase {
             .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
     }
 
+    /// A card scrolled at a raised detent shows its glance again when the
+    /// sheet drops to rest: "All n plants" raises the sheet and scrolls the
+    /// card to its lists; dragged down by the grabber, the sheet shows the
+    /// card's header and faces — not an empty band (everything below the
+    /// glance is hidden at rest).
+    @MainActor
+    func testScrolledCardDroppedToRestShowsItsGlance() throws {
+        let app = try launch()
+        tapCommunity(app)
+        let close = app.buttons["card-close"]
+        XCTAssertTrue(eventually(patience(5)) { close.isHittable })
+        app.buttons["plants-more"].tap()
+        XCTAssertTrue(eventually(patience(5)) { !close.isHittable }, "the card scrolled to its plants")
+        let search = app.textFields["search-field"]
+        let grabber = search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: -0.6))
+        grabber.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(eventually(patience(5)) { search.frame.minY > window.frame.height * 0.6 }, "the sheet at rest")
+        XCTAssertTrue(eventually(patience(5)) { close.isHittable }, "the card's header in the glance")
+        XCTAssertTrue(app.descendants(matching: .any)["plant-faces"].firstMatch.isHittable, "and its faces")
+    }
+
     @MainActor
     func testCardPlantsPlantSheetAndBack() throws {
         let app = try launch()
