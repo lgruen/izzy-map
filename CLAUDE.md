@@ -827,6 +827,13 @@ milestones, map-proof results); the design brief and language is
   Known and left: `MapView.updateUIView` rebuilds and string-compares the
   whole style JSON on every root render (~1 ms in the simulator) — cheap
   alone, but it multiplied that loop.
+- **A sheet's bottom safe area depends on the sheet's own height** (iOS 27,
+  2026-11-24): a short sheet floats (inset 0), a taller one reaches the
+  home indicator (34 on the 16e; the switch lies between detents 99 and
+  105). A detent computed from that inset never settles (the glance with
+  "No offline maps": 133 → 115 → 99 → 133, the system dropping the last
+  change), and `restingLift` moved the map ~27 pt after a card. The
+  fitted detent is content only (`CompactPanelSheet.fitHeight`).
 - **After the location prompt MapLibre delivers Core Location's CACHED
   sample first** and drops later fixes at the same coordinate (see
   `SystemLocation`), so the pin button's "wait for a fresh fix" also
