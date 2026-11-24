@@ -221,25 +221,40 @@ sync code.
 
 ## 7. One-time steps for Leo
 
-CloudKit (before the first TestFlight build with pins):
-1. Developer portal → Identifiers → `org.gruenschloss.izzymap`: enable
-   iCloud (CloudKit) with a new container `iCloud.org.gruenschloss.izzymap`,
-   and Push Notifications. (The `identifiers` lane may be able to switch the
-   capabilities on; assigning the container is probably manual, as the App
-   Group was.) Rerun the setup workflow; the next TestFlight run re-creates
-   the provisioning profiles.
-2. Run the Debug scheme from Xcode on his iPhone (signed in to iCloud),
-   tap Diagnostics (long-press the Storage gauge) → "Create iCloud schema"
-   (it only asks for the next launch), stop the app and run it again FROM
-   XCODE. That launch writes the record types into the Development
-   environment before the pin store opens (Apple's way: never while the
-   live store mirrors) and blocks for a while, which only the debugger
-   tolerates; Diagnostics then shows the result under "schema creation".
-   Fallback: the launch argument `-pinsCreateSchema YES` does the same.
-3. CloudKit Console → Deploy Schema Changes to Production. Repeat 2–3
-   whenever a model gains a property.
+Status 2026-11-24: steps 1–3 and the Google steps are done; pins are on in
+TestFlight builds (`Features.pins`, the commit that flipped it).
 
-Google (before the Google half of milestone 3): a Google Cloud project →
+CloudKit (before the first TestFlight build with pins):
+1. *Done by 2026-11-23.* Developer portal → Identifiers →
+   `org.gruenschloss.izzymap`: enable iCloud (CloudKit) with a new container
+   `iCloud.org.gruenschloss.izzymap`, and Push Notifications. (The
+   `identifiers` lane may be able to switch the capabilities on; assigning
+   the container is probably manual, as the App Group was.) Rerun the setup
+   workflow; the next TestFlight run re-creates the provisioning profiles.
+2. *Done 2026-11-23 — on the Mac, not the iPhone: "My Mac (Designed for
+   iPad)", a Debug build signed by `xcodebuild -allowProvisioningUpdates`
+   with the App Store Connect API key (macOS opens the iOS app only inside
+   its wrapper bundle), launched with `-pinsCreateSchema YES`; the log said
+   `initializeCloudKitSchema: OK` for PinProject, SavedPin, PinPhoto,
+   PinPhotoOriginal.* Run the Debug scheme from Xcode on his iPhone (signed
+   in to iCloud), tap Diagnostics (long-press the Storage gauge) → "Create
+   iCloud schema" (it only asks for the next launch), stop the app and run
+   it again FROM XCODE. That launch writes the record types into the
+   Development environment before the pin store opens (Apple's way: never
+   while the live store mirrors) and blocks for a while, which only the
+   debugger tolerates; Diagnostics then shows the result under "schema
+   creation". Fallback: the launch argument `-pinsCreateSchema YES` does the
+   same.
+3. *Done 2026-11-24 (CD_PinProject, CD_SavedPin, CD_PinPhoto,
+   CD_PinPhotoOriginal + indexes).* CloudKit Console → Deploy Schema
+   Changes to Production. Repeat 2–3 whenever a model gains a property —
+   BEFORE the build that uses it; Production only grows, so a property is
+   never renamed, retyped or removed (CLAUDE.md, "CloudKit schema
+   change").
+
+Google (before the Google half of milestone 3) — *done; the client id is
+the Actions secret `GOOGLE_OAUTH_CLIENT_ID` (2026-11-24) and the gitignored
+`ios/Config/Google.xcconfig` locally*: a Google Cloud project →
 enable the Drive API → Google Auth Platform: branding, audience External,
 scope `drive.file`, **publish to production** (in "Testing" sign-ins expire
 after 7 days) → an iOS client with the bundle id → give Claude the client
@@ -247,18 +262,69 @@ id. No cost.
 
 ## 8. Milestones
 
-0. Heading arrow on the location dot (independent).
-1. **Pins**: models, map layer, long-press and the pin button, pin card,
-   projects, Pins screen, soft delete, Layers tile, Storage row — built and
-   tested with CloudKit off.
-2. **Photos**: camera + library, thumbnails, the existing full-screen
+Status 2026-11-24: 0–3 built, reviewed and on in TestFlight. Not yet
+verified by anyone: sync between two real devices in Production; a real
+Google sign-in and upload (a stub so far — open: the refresh token's
+lifetime for an iOS client, Drive accepting the upload chunks, whether the
+conversion keeps photos two-across, i.e. the §6 spike); real camera
+capture; the iPad's hardware-keyboard paths (Escape chain, ⌘P/⌘N) and
+Split View. Leo tries sync and the first export from his phone first.
+
+0. *Done 2026-11-23.* Heading arrow on the location dot (independent).
+1. *Done 2026-11-23.* **Pins**: models, map layer, long-press and the pin
+   button, pin card, projects, Pins screen, soft delete, Layers tile,
+   Storage row — built and tested with CloudKit off.
+2. *Done 2026-11-23/24 — but CloudKit so far ran only for the schema step
+   on the Mac (the simulator never syncs); no two devices have synced
+   yet.* **Photos**: camera + library, thumbnails, the existing full-screen
    viewer. Then CloudKit on (entitlements, status line, Leo's steps in §7),
    tested with Leo's iPhone and a simulator signed in to his Apple ID
    (Development) → first TestFlight build with pins.
-3. **Export**: .docx writer (pure IzzyKit — built alongside 1–2) + share
-   sheet; then the Drive spike, Google sign-in and upload.
+3. *Done 2026-11-24, the Google half against a stub only.* **Export**:
+   .docx writer (pure IzzyKit — built alongside 1–2) + share sheet; then
+   the Drive spike, Google sign-in and upload.
 
 Each milestone: adversarial review rounds before commit; IzzyKit tests for
 everything without UI (Latin-1 folding, docx/zip); app tests on an
 in-memory store; UI tests through new launch arguments (`-pinsStore`, a
 long-press injector next to `-debugTaps`).
+
+## 9. As built — deviations from this plan (polish, 2026-11-24)
+
+Two UX critics on the running app, two adversarial code reviews and second
+looks on both simulators changed these; the code is the reference.
+
+- **Card order**: header (colour dot + title), project chip, photo strip,
+  note, facts, colour, actions — note before colour; 24 pt between
+  sections, 12 between fact rows, 8 from a label to its content. The swatch
+  in effect is always framed; "Use project colour" appears only while the
+  pin overrides it.
+- **Photo strip from the start**: the Add tile alone while a pin has no
+  photos (no separate "Add photo" chip; not "camera button first");
+  thumbnails take the Add tile's shape.
+- **Labels only for real titles** (from z14, Latin-1-folded, at most 40
+  characters, beside the mark with variable anchors; the marks are label
+  obstacles). An untitled pin is "Untitled pin" everywhere a title shows
+  (Undo pill, Delete-now dialog, photo viewer, export headings); a note is
+  never a title. The title field invites "Add a title".
+- **Selected pin**: a 13 pt disc drawn on top (a band of its colour shows
+  round the location dot), the red ring just outside it.
+- **Move with Undo**: Move on map / Move to my location, each undone by the
+  Undo pill (8 s), which also covers Delete; no ⌘Z/UndoManager. After a
+  move (and its Undo) the pin is brought into view clear of the pill.
+  "Move to my location" without a fix says to use Move on map.
+- **Pending-fix rule** for the pin button: with no usable fix it waits —
+  "Waiting for a location fix" — and places the pin only with a fix taken
+  at/after the press (accuracy within 500 m; MapLibre's or Core Location's
+  live updates); any other action, the notice dismissed or the app leaving
+  the foreground cancels it; on expiry "No location yet". Never a guess at
+  the map centre (as §4).
+- **Recently deleted**: "Delete now" from each row's trash button, "Delete
+  all now" from the section footer, both confirmed.
+- **Storage**: pins counted in the gauge's fourth segment ("Field guide &
+  pins"); the Pins row opens the Pins screen.
+- **Decided, not built**: titling a new pin with the map in view (the
+  system sheet goes full height with the keyboard); sheets stacked on a
+  sheet stay system white; autocorrection stays on in notes. The Pins
+  screen has no map button of its own (Layers row, project chip, Storage
+  row, ⌘P).

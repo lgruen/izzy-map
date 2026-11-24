@@ -80,7 +80,7 @@ The custom roles are few:
 | `secondaryInk` | `label` @ 70 % (#4D4D4D on white, 8.4:1; 7.4–7.6:1 on glass over the map) | `label` @ 80 % (≈ 10:1 on #1C1C1E; 3.1:1 on dark glass over the light map — see below) | ALL secondary text: common names, row labels (Group, Structure), captions, distances, storage sizes, list headers/footers, placeholders — never `secondaryLabel` (decided 2026-11-04, see below) |
 | `codeInk` | `label` @ 75 % | `label` @ 75 % | community/unit codes in small caps |
 | `mapInk` | #000000 | #000000 (map is always light) | map code labels, same-community dashes |
-| `selection` | #FF3B30 | same (the map is always light) | the tapped feature: polygon line, tap ring, tree ring (3 pt) — decided 2026-11-03 |
+| `selection` | #FF3B30 | same (the map is always light) | the tapped feature: polygon line, tap ring, tree ring, pin ring (3 pt) — decided 2026-11-03 |
 | `mapHalo` | #FFFFFF @ 85 % | same | halo under every map ink line/label |
 | `keyline` | #000000 @ 50 % (= #808080 on white, 3.98:1) | #FFFFFF @ 45 % (≥ 4.2:1 on #1C1C1E/#2C2C2E) | 0.5 pt border on key boxes, flowering cells, scale bar |
 | `keyPlate` | #FFFFFF | #FFFFFF | opaque ground under every key box on glass |
@@ -145,7 +145,10 @@ The custom roles are few:
   topo roads are red-brown. Shown both, she chose today's red: the
   selection is #FF3B30, 3 pt, no casing — the one hue that says "this one"
   at a glance. Known weak spots stay the salmon heaths (SMM, SHS) and
-  red-brown topo roads.
+  red-brown topo roads. A selected pin (2026-11-24) is redrawn on top as a
+  13 pt disc of its colour — larger than the location dot, so a band of
+  the colour shows round it where she pinned where she stands — with the
+  red ring just outside.
 
 ### Typography
 
@@ -183,7 +186,8 @@ type is judged at the default size, outdoors.
   tick or stack. MGA grouped by thin spaces, as surveyors write it. Units
   after a no-break space ("3.2 GB").
 - **Map labels** (Latin-1 glyph PBFs): Noto Sans Bold for codes and
-  clusters, Regular for tree names. SF's licence doesn't cover re-encoding
+  clusters, Regular for tree names and pin titles (pins without a real
+  title get no label). SF's licence doesn't cover re-encoding
   it as glyph PBFs.
 
 ### Space, corners, elevation
@@ -559,11 +563,12 @@ Storage (reordered 2026-11-04 after Leo's first real-device pass):
     out (capacity in words). Four fills told apart by FORM as well as tone,
     all in ink so they hold in light and dark: solid = core maps, diagonal
     hatch = extra maps (incl. seasons), dots = plant identification,
-    horizontal rules = field guide & detailed areas (one segment, named for
-    what's in it). Each filled block keeps a 1 pt ink edge; each is at
-    least 16 pt wide so its fill can be read (on a 512 GB phone IzzyMap is
-    a sliver — the figures carry the exact sizes). The key's swatches are
-    the same view as the segments. No grey anywhere means a category.
+    horizontal rules = field guide, detailed areas & pins (one segment,
+    named for what's in it: "Field guide & pins"). Each filled block keeps a
+    1 pt ink edge; each is at least 16 pt wide so its fill can be read (on a
+    512 GB phone IzzyMap is a sliver — the figures carry the exact sizes).
+    The key's swatches are the same view as the segments. No grey anywhere
+    means a category.
   - coverage thumbnails (seasons) stay printed plates: ink = on the
     device, grey = not yet — a state of the map, never progress.
 - **Targets.** `AppModel.openStorage(at:)` takes a section (`core`,

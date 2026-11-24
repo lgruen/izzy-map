@@ -372,6 +372,27 @@ milestones, map-proof results); the design brief and language is
   ~446 MB, soil reports ~30 MB in 11 PDFs) — one-tap background `URLSession` downloads straight from the
   publisher (no CORS natively → no relay), into Application Support
   (excluded from backup).
+- **Pins** (`docs/PINS_PLAN.md`; on in every build since 2026-11-24) —
+  saved points (title, note, colour, project, photos) in `Sources/Pins/`:
+  SwiftData models (`PinModels.swift`: `PinProject`, `SavedPin`,
+  `PinPhoto`, `PinPhotoOriginal` — the full image in a model of its own,
+  `.externalStorage`) behind one `PinStore`. In a device build SwiftData
+  mirrors the store to the PRIVATE database of CloudKit container
+  `iCloud.org.gruenschloss.izzymap` (`PinCloud`; `PinSync` only watches it
+  for the status line — no sync code of ours); the simulator, tests,
+  `-pinsStore` and `-pinsInMemory` run with CloudKit off. DEBUG builds keep
+  `Application Support/Pins-dev/` and talk to CloudKit Development;
+  TestFlight builds use `Pins/` and Production (no environment key in the
+  entitlements: the signing decides). Soft delete (Recently deleted,
+  purged after 30 days). Map marks are runtime layers (`PinPresenter`, the
+  `SpotlightPresenter` pattern), never in the style JSON. Export
+  (`Pins/Export/`): a .docx written by IzzyKit (`DocxWriter`, `StoredZip`)
+  to the share sheet, or uploaded to Google Drive as a Doc (`drive.file`,
+  PKCE, refresh token in the Keychain; client id from the
+  `GOOGLE_OAUTH_CLIENT_ID` Actions secret / gitignored
+  `Config/Google.xcconfig`, docs/CI.md — none: no Google button).
+  `Features.pins` (`Pins/Features.swift`) is the one switch. What leaves
+  the device: `docs/PRIVACY.md` (keep it true when pins change).
 - `pipeline/` — data prep (bash/python via uv; tippecanoe/gdal/pmtiles
   from brew). PMTiles to `data/` (gitignored; packaged into
   `data/packs/<id>.aar` by `build_packs.py`); the small tables straight
@@ -717,6 +738,26 @@ milestones, map-proof results); the design brief and language is
   after bumping MapLibre (an app test compares the linked framework's
   version), changing glyphs, or adding ANY shipped dependency — add a
   component to the script.
+- **CloudKit schema change (pins):** the Production schema is
+  ADDITIVE-ONLY — a deployed record type or field can never be removed or
+  retyped. Never rename, retype or remove a stored property of the
+  `@Model` types; add a new one (optional or defaulted, relationships
+  optional with an inverse — CloudKit's rules). A new property or model =
+  the schema step + Deploy BEFORE the TestFlight build that uses it
+  (otherwise Production devices can't store it): a DEBUG device build
+  signed in to iCloud, launched with `-pinsCreateSchema YES` (or
+  Diagnostics → "Create iCloud schema", which asks for the next launch;
+  DEBUG device builds only), runs `initializeCloudKitSchema` on a
+  temporary store before the pin store opens and blocks while it talks to
+  iCloud — so launch under Xcode (no launch watchdog). Expect "model: …"
+  and "initializeCloudKitSchema: OK" in the console / Diagnostics "schema
+  creation". Then Leo: CloudKit Console → Deploy Schema Changes to
+  Production. First run 2026-11-23 on the Mac ("My Mac (Designed for
+  iPad)", `xcodebuild -allowProvisioningUpdates` with the App Store
+  Connect API key — the exact command approved by Leo; macOS opens the
+  iOS app only inside its wrapper bundle); deployed 2026-11-24
+  (CD_PinProject, CD_SavedPin, CD_PinPhoto, CD_PinPhotoOriginal +
+  indexes).
 
 ## Native gotchas (map proof + milestone 1, 2026-11-03)
 
@@ -773,6 +814,34 @@ milestones, map-proof results); the design brief and language is
 - **Never do work on the main thread when Identify opens** (pack URL
   lookups, CLLocationManager creation, camera availability checks cost
   ~1 s on the device before build 12).
+- **Never feed raw geometry into observable state — round to whole
+  points** (2026-11-24 main-thread hang): with the keyboard up over the
+  phone's panel sheet the root view's width alternated between
+  390.0000000000001 and 390.00000000000006; compared exactly, each pass
+  re-rendered the root, which laid the sheet out again, for ever (sample:
+  `UISheetPresentationController _keyboardAboutToShow` →
+  `_UIHostingView.layoutSubviews`). Fixed by `ScreenMetrics.wholePoints`
+  (RootView) and a fit detent that ignores the keyboard
+  (CompactPanelSheet). DEBUG `-hangWatchdog S` ends the app after an
+  S-second stall, so a UI test fails fast instead of timing out.
+  Known and left: `MapView.updateUIView` rebuilds and string-compares the
+  whole style JSON on every root render (~1 ms in the simulator) — cheap
+  alone, but it multiplied that loop.
+- **After the location prompt MapLibre delivers Core Location's CACHED
+  sample first** and drops later fixes at the same coordinate (see
+  `SystemLocation`), so the pin button's "wait for a fresh fix" also
+  listens to `CLLocationUpdate.liveUpdates()` (only while it waits) and
+  accepts only samples taken at/after the press.
+- **Circle layers take no part in label collision**: pin marks get an
+  invisible placeholder symbol per mark (`pins-obstacle`) so labels avoid
+  them; pin labels use variable anchors.
+- **The map view's tint colours MapLibre's location dot**: the app-wide
+  ink tint made it black; `MapCoordinator` sets `.systemBlue`.
+- **Simulator scripting**: a tap within ~0.5 s of a pill/banner appearing
+  lands on the map (it is still sliding in) — reviewers twice mis-reported
+  "Undo doesn't take taps". `-openPins` / `-openLayers` wait for the map
+  to go idle, so with LIST tiles stalling they never fire: add
+  `-simulateOffline YES` for scripted screenshots.
 
 - **A character outside Latin-1 drops the whole label** in MapLibre Native
   too (en dash seen) — glyphs ship as `0-255.pbf` only, so every
@@ -847,6 +916,22 @@ milestones, map-proof results); the design brief and language is
   leaf placeholder, never a broken image.
 - Cluster zoom for trees capped at 17 (a CBD cluster never jumps to street
   level).
+- Pins (`docs/PINS_PLAN.md` §4–6 + its "as built" notes; decided with
+  Leo/critics 2026-11-24 — don't undo): a pin is labelled on the map only
+  with a real title (Latin-1-folded, ≤ 40 chars); an untitled pin is
+  "Untitled pin" everywhere a title shows, and a note is never a title.
+  The selected pin's disc is 13 pt, so a ring of its colour shows round
+  the location dot. The pin button with no fix waits for a FRESH fix only
+  (at/after the press) and any other action cancels the wait — never a
+  guess at the map centre. Delete and Move are undone by the Undo pill
+  (8 s); no ⌘Z/UndoManager. Card order: header, project chip, photo strip
+  (the Add tile alone while a pin has none), note, facts, colour, actions.
+  Autocorrection stays on in notes. Sheets stacked on a sheet stay system
+  white (no `presentationBackground`). Storage gauge: DESIGN.md's four
+  fills, ≥ 16 pt each, pins counted in the fourth segment ("Field guide
+  & pins") — a proportional gauge was built and reverted. Titling a
+  new pin with the map in view isn't possible natively (the system sheet
+  goes full height with the keyboard) — accepted.
 
 ## Pipeline and data gotchas
 
@@ -1026,6 +1111,25 @@ tree data sheets are fetched by the device straight from their publishers
 
 ## Status log
 
+- 2026-11-24: Pins on in TestFlight builds (`docs/PINS_PLAN.md`) — saved
+  points with title, note, colour, project and photos (camera or
+  library); projects, archive, Recently deleted (30 days); long-press or
+  the pin button; Layers tile, Pins screen (⌘P), Storage row; SwiftData
+  mirrored to her private iCloud (container + schema in Production since
+  today); export of a project or selection as a Word file to the share
+  sheet or straight into Google Docs (`GOOGLE_OAUTH_CLIENT_ID` secret
+  set). Also the heading arrow on the location dot (2026-11-23). Polish:
+  two UX critics on the running app (66 findings), two adversarial code
+  reviews, second looks on both simulators — highlights: the keyboard-
+  over-sheet main-thread hang (whole-point geometry), the pin button's
+  silent first press after the permission prompt (cached sample), pin
+  labels colliding with marks, the black location dot. NOT yet verified
+  by anyone: sync between two real devices in Production, a real Google
+  sign-in and upload (stub only — open: the refresh token's lifetime for
+  an iOS client, Drive accepting the chunks, whether conversion keeps
+  photos two-across), real camera capture, the iPad's hardware-keyboard
+  paths (Escape chain, ⌘P/⌘N) and Split View. Leo tries sync and the
+  first export from his phone with this build.
 - 2026-11-18: Soils overlay — LIST Correlated Reconnaissance Soils (CC BY
   3.0 AU), 163 units / 2,468 polygons on 11 reconnaissance sheets ≈ 17 %
   of the state (Hobart–Sorell–Buckland–Brighton–Ellendale–Oatlands, the
