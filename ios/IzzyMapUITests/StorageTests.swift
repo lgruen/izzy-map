@@ -8,9 +8,14 @@ final class StorageTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// `seconds`: how long each fake download takes, scaled like every
+    /// wait (`patience`): the fake store downloads on the wall clock, and on
+    /// a slow runner a fixed 2 s ended between two XCUITest queries (CI run
+    /// 45325094371: the bar seen 2.0 s after the tap, the row's words read
+    /// 0.6 s later already said "On this iPhone").
     @MainActor
-    private func launch(packs: String = "vector,topo,relief", seconds: String = "2") -> XCUIApplication {
-        let app = offlineApp(["-fakePacks", packs, "-fakePackSeconds", seconds])
+    private func launch(packs: String = "vector,topo,relief", seconds: Double = 2) -> XCUIApplication {
+        let app = offlineApp(["-fakePacks", packs, "-fakePackSeconds", "\(patience(seconds))"])
         app.launch()
         XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         return app
@@ -50,7 +55,9 @@ final class StorageTests: XCTestCase {
 
     @MainActor
     func testGetAndRemoveAPackFromStorage() {
-        let app = launch()
+        // long enough to see the download under way (two queries, ~1 s
+        // each on a slow runner), short enough to wait for
+        let app = launch(seconds: 5)
         openStorage(app)
         XCTAssertTrue(app.descendants(matching: .any)["storage-gauge"].waitForExistence(timeout: patience(5)))
         // core packs show as on the device, without a control
@@ -73,7 +80,7 @@ final class StorageTests: XCTestCase {
         XCTAssertTrue(bar.waitForExistence(timeout: patience(2)))
         XCTAssertTrue(app.staticTexts["pack-tasmap-status"].label.hasPrefix("Downloading"))
         let remove = app.buttons["pack-tasmap-remove"]
-        XCTAssertTrue(remove.waitForExistence(timeout: patience(10)))
+        XCTAssertTrue(remove.waitForExistence(timeout: patience(15)))
         XCTAssertTrue(app.staticTexts["pack-tasmap-status"].label.hasPrefix("On this"))
         XCTAssertFalse(bar.exists, "no bar once it's here")
 
@@ -87,8 +94,9 @@ final class StorageTests: XCTestCase {
 
     @MainActor
     func testStoppedDownloadStaysStopped() {
-        // a slow fake download, so Stop lands mid-way
-        let app = offlineApp(["-fakePacks", "vector,topo,relief", "-fakePackSeconds", "6"])
+        // a slow fake download, so Stop lands mid-way (scaled: on a slow
+        // runner the ring, its menu and Stop take seconds of queries)
+        let app = offlineApp(["-fakePacks", "vector,topo,relief", "-fakePackSeconds", "\(patience(6))"])
         app.launch()
         XCTAssertTrue(app.buttons["layers-button"].waitForExistence(timeout: patience(15)))
         openStorage(app)
@@ -111,7 +119,7 @@ final class StorageTests: XCTestCase {
     @MainActor
     func testGetAllSeasonsAndTheIncompleteSeasonNote() {
         // one pack at a time (the store's queue): 5 seasons × 1 s
-        let app = launch(packs: "vector,topo,relief,season-2023,season-2024", seconds: "1")
+        let app = launch(packs: "vector,topo,relief,season-2023,season-2024", seconds: 1)
         openStorage(app)
         let note = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Still being flown'")).firstMatch
         for _ in 0 ..< 10 where !note.exists { drag(app, under: "Storage") }
