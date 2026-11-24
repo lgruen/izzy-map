@@ -178,19 +178,18 @@ struct CompactPanelSheet: View {
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         // a detent's height leaves out the sheet's bottom safe area, which
-        // the system adds below it once the sheet sits low enough to reach
-        // the home indicator (AX text sizes; at default sizes the small
-        // sheet floats clear of it and the inset is 0). The content runs
-        // through that band, and the fitted detent subtracts it, so the
-        // search row stays centred; scrolled content keeps clear of it.
+        // the system adds below it once the sheet is tall enough to reach
+        // the home indicator (34 pt on the 16e; a glance of only the search
+        // row floats clear of it: 0). The content runs through that band;
+        // scrolled content at medium and large keeps clear of it. The fitted
+        // detent never reads it (see `fitHeight`).
         //
         // Measured with the keyboard left out (a child of a container that
         // ignores the keyboard's region): the scroll view's own inset
         // includes the keyboard's overlap with the sheet, which depends on
-        // the sheet's height — the fitted detent would follow the keyboard
-        // (down to 44 pt, the sheet squashed to nothing under it) and the
-        // sheet's keyboard handling would lay the sheet out again on every
-        // change. The scroll view keeps its own keyboard avoidance.
+        // the sheet's height, and the sheet's keyboard handling would lay
+        // the sheet out again on every change. The scroll view keeps its own
+        // keyboard avoidance.
         .contentMargins(.bottom, detent == fitDetent ? 0 : bottomInset, for: .scrollContent)
         .ignoresSafeArea(.container, edges: .bottom)
         .background {
@@ -199,19 +198,33 @@ struct CompactPanelSheet: View {
                     .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom.rounded() } action: { inset in
                         guard abs(inset - bottomInset) > 0.5 else { return }
                         bottomInset = inset
-                        updateFit(contentHeight)
                     }
             }
             .ignoresSafeArea(.keyboard)
         }
     }
 
+    /// The fitted detent's height: the search header plus the glance below
+    /// it (a card's glance — header, plant faces — or the notice rows), and
+    /// nothing else, so it changes only with the content. Never the sheet's
+    /// bottom safe area: the system adds that below a detent itself, and
+    /// sets it from the sheet's own height (iPhone 16e: 0 while a short
+    /// sheet floats, 34 once a taller one reaches the home indicator, the
+    /// switch between 99 and 105 pt). Subtracting it fed the sheet's shape
+    /// back into its detent: with the "No offline maps" row (133 pt) it
+    /// cycled 133 → 115 → 99 → 133, the system dropped the last change,
+    /// and the glance rested at a different height after a card than at
+    /// launch — the map's resting inset followed and moved every pin.
+    nonisolated static func fitHeight(header: CGFloat, content: CGFloat, peek: CGFloat) -> CGFloat {
+        // with a card: its glance, not all of it
+        let body = peek > 0 ? min(content, peek + 12) : content
+        return max(44, header + body)
+    }
+
     /// The fitted detent follows the content; a sheet resting on it grows
     /// or shrinks along (a card appears, Dynamic Type changes).
     private func updateFit(_ content: CGFloat) {
-        // with a card: its glance (header, plant faces), not all of it
-        let body = model.selection != nil && peek > 0 ? min(content, peek + 12) : content
-        let height = max(44, headerHeight + body - bottomInset)
+        let height = Self.fitHeight(header: headerHeight, content: content, peek: model.selection != nil ? peek : 0)
         guard abs(height - fitHeight) > 0.5 else { return }
         let wasResting = detent == fitDetent
         fitHeight = height

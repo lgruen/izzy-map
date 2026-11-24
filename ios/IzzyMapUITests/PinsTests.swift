@@ -63,16 +63,11 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "a tap on the pin selects it")
         XCTAssertEqual(title(app).value as? String, "Seep below the track")
         // a long-press ON the pin selects it, never stacks a second one
-        // (a new pin's card would open empty, its title focused). From a
-        // fresh launch, like the tap: closing a card can move the map — the
-        // glance with the "No offline maps" row does not settle at one
-        // height (99, 115 or 133 pt seen on the 16e), so the uncovered
-        // map's centre (`restingLift` → content inset) moves the pin up to
-        // ~27 pt about a second after ✕, beyond the 16 pt hit radius. A
-        // press right after ✕ raced that and lost on CI (run 45311707954).
-        app.terminate()
-        app = launch()
-        XCTAssertFalse(card(app).exists)
+        // (a new pin's card would open empty, its title focused) — right
+        // after ✕: closing a card leaves the map where it was (see
+        // testClosingACardPutsTheGlanceAndTheMapBack)
+        app.buttons["card-close"].tap()
+        XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists })
         app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)))
         XCTAssertEqual(title(app).value as? String, "Seep below the track")
@@ -82,6 +77,40 @@ final class PinsTests: XCTestCase {
         // of the map buttons at the trailing edge)
         app.coordinate(withNormalizedOffset: Self.emptySpot).tap()
         XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists })
+    }
+
+    /// Closing a card puts the phone's glance back at its launch height, so
+    /// the map's resting inset (`restingLift`) and every pin stay put. With
+    /// the "No offline maps" row (no packs) the glance used to rest at a
+    /// different height after a card than at launch (its fitted detent
+    /// followed the sheet's own bottom inset), and about a second later
+    /// the map re-centred: the pin moved 14–27 pt, past its 16 pt hit
+    /// radius on CI.
+    @MainActor
+    func testClosingACardPutsTheGlanceAndTheMapBack() {
+        let app = launch(Self.watchdog)
+        let search = app.textFields["search-field"]
+        XCTAssertTrue(search.waitForExistence(timeout: patience(5)))
+        // the glance at rest (restingLift waits 350 ms after the sheet settles)
+        sleep(3)
+        let rest = search.frame
+        app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)))
+        XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus }, "title focused")
+        app.typeText("Gate\n")
+        XCTAssertTrue(eventually(patience(3)) { !self.title(app).hasFocus })
+        app.buttons["card-close"].tap()
+        XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists })
+        // long enough for the map to follow a changed glance (it did ~1 s
+        // after ✕)
+        sleep(3)
+        XCTAssertEqual(search.frame.minY, rest.minY, accuracy: 1, "the glance rests where it rested at launch")
+        XCTAssertEqual(search.frame.height, rest.height, accuracy: 1, "the glance rests where it rested at launch")
+        // the pin is still under the spot: a long-press there selects it
+        app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
+        XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)))
+        XCTAssertEqual(title(app).value as? String, "Gate", "the same pin, not a new one")
+        XCTAssertFalse(title(app).hasFocus)
     }
 
     /// `-debugLongPress` (screenshots, scripted runs) takes the same path.
