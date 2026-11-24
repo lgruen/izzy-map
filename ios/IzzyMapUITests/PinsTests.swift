@@ -63,9 +63,16 @@ final class PinsTests: XCTestCase {
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)), "a tap on the pin selects it")
         XCTAssertEqual(title(app).value as? String, "Seep below the track")
         // a long-press ON the pin selects it, never stacks a second one
-        // (a new pin's card would open empty, its title focused)
-        app.buttons["card-close"].tap()
-        XCTAssertTrue(eventually(patience(3)) { !self.card(app).exists })
+        // (a new pin's card would open empty, its title focused). From a
+        // fresh launch, like the tap: closing a card can move the map — the
+        // glance with the "No offline maps" row does not settle at one
+        // height (99, 115 or 133 pt seen on the 16e), so the uncovered
+        // map's centre (`restingLift` → content inset) moves the pin up to
+        // ~27 pt about a second after ✕, beyond the 16 pt hit radius. A
+        // press right after ✕ raced that and lost on CI (run 45311707954).
+        app.terminate()
+        app = launch()
+        XCTAssertFalse(card(app).exists)
         app.coordinate(withNormalizedOffset: Self.spot).press(forDuration: 0.8)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(5)))
         XCTAssertEqual(title(app).value as? String, "Seep below the track")
