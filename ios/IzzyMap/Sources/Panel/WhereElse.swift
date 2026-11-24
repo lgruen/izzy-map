@@ -36,8 +36,14 @@ struct WhereElse: View {
                             .font(.subheadline)
                             .foregroundStyle(DesignColor.ink)
                             .fixedSize(horizontal: false, vertical: true)
-                        InkKey(items: [(TasmaniaMiniMap.presenceInk[1], "trace"), (TasmaniaMiniMap.presenceInk[4], "most of a 2 km square")])
-                            .fixedSize()
+                        // side by side where they fit; else one above the
+                        // other (a narrow card — a phone on its side: fixed
+                        // side by side they made the whole card wider than
+                        // its glass, shifting it left and clipping it)
+                        ViewThatFits(in: .horizontal) {
+                            InkKey(items: inkKey).fixedSize()
+                            InkKey(items: inkKey, axis: .vertical).fixedSize()
+                        }
                         Button(action: showOnMap) {
                             Label("Show on map", systemImage: "scope")
                                 .font(.subheadline.weight(.semibold))
@@ -70,6 +76,10 @@ struct WhereElse: View {
                 }.value
             }
         }
+    }
+
+    private var inkKey: [(opacity: Double, label: String)] {
+        [(TasmaniaMiniMap.presenceInk[1], "trace"), (TasmaniaMiniMap.presenceInk[4], "most of a 2 km square")]
     }
 
     private var caption: String {

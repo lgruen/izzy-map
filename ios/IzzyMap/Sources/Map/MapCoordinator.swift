@@ -398,6 +398,19 @@ final class MapCoordinator: NSObject {
         camera.setCenter(map, target, zoom: map.zoomLevel, animated: animated)
     }
 
+    private var appliedPinReveal = 0
+
+    /// A pin moved (on the map, to her location) or put back by Undo: once
+    /// the "Pin moved" pill has appeared (or gone), the pin is brought into
+    /// the map she can see with the pill's frame as one more obstruction
+    /// (`visibleInsets` holds it) — one camera move, only if it is hidden,
+    /// and never against a gesture: hers cancels it (`RevealGate`).
+    func apply(pinReveal: Int, to map: MLNMapView) {
+        guard pinReveal != appliedPinReveal else { return }
+        appliedPinReveal = pinReveal
+        if revealGate.moved(model.selection?.pinID) { scheduleRevealPin(map) }
+    }
+
     private var appliedPinFocus: Int?
 
     /// A pin placed out of sight (the pin button): the camera eases to it,

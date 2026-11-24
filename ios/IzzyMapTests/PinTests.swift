@@ -473,6 +473,50 @@ private func freshDefaults() -> UserDefaults {
         coordinator.mapView(map, regionWillChangeWith: .programmatic, animated: true)
         #expect(coordinator.revealGate.armed)
     }
+
+    /// M-02: after a move (and after Undo of one) the pin is brought clear
+    /// of the "Pin moved" pill too — asked for once per move, even after
+    /// her gesture had made the map hers; her next gesture cancels it.
+    @Test func aMoveAsksOnceToBringThePinClearOfItsPill() throws {
+        let model = AppModel(data: .none, tables: .empty)
+        model.dropPin(at: CLLocationCoordinate2D(latitude: -42.9, longitude: 147.3))
+        let id = try #require(model.selection?.pinID)
+        let coordinator = MapCoordinator(model: model)
+        let map = MLNMapView(frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+                             styleJSON: ##"{"version":8,"sources":{},"layers":[]}"##)
+        // the pill (y 444–502) above the sheet at its glance
+        let chrome = MapChrome(visibleInsets: UIEdgeInsets(top: 60, left: 0, bottom: 844 - 444, right: 0),
+                               panelFrame: CGRect(x: 8, y: 560, width: 374, height: 284))
+        coordinator.apply(chrome: chrome, to: map)
+        coordinator.apply(pins: model.pins, selectedPin: id, to: map)
+        coordinator.apply(pinReveal: model.pinRevealRequest, to: map)
+        let before = coordinator.revealsScheduled
+        coordinator.mapView(map, regionWillChangeWith: .gesturePan, animated: false)
+        #expect(!coordinator.revealGate.armed)
+
+        model.startMovingPin()
+        // the tap lands just above the sheet, under where the pill appears
+        let spot = map.convert(CGPoint(x: 195, y: 470), toCoordinateFrom: map)
+        model.movePin(to: spot)
+        coordinator.apply(pins: model.pins, selectedPin: id, to: map)
+        coordinator.apply(pinReveal: model.pinRevealRequest, to: map)
+        #expect(coordinator.revealsScheduled == before + 1, "one reveal for the move")
+        #expect(coordinator.revealGate.armed)
+        // the same request again: nothing more
+        coordinator.apply(pinReveal: model.pinRevealRequest, to: map)
+        #expect(coordinator.revealsScheduled == before + 1)
+
+        // the reveal itself: the pin ends above the pill
+        coordinator.revealSelectedPin(map, animated: false)
+        let pin = try #require(model.selectedPin)
+        let point = map.convert(CLLocationCoordinate2D(latitude: pin.lat, longitude: pin.lon), toPointTo: map)
+        #expect(point.y <= 444 - PinFraming.comfort.bottom + 0.5, "clear of the pill: \(point.y)")
+
+        // Undo of the move asks again
+        model.undoPinDelete()
+        coordinator.apply(pinReveal: model.pinRevealRequest, to: map)
+        #expect(coordinator.revealsScheduled == before + 2, "Undo of the move")
+    }
 }
 
 /// `Features.pins` off at the map: no long-press recogniser, no pin layers.
@@ -521,7 +565,10 @@ private func freshDefaults() -> UserDefaults {
 @MainActor
 @Suite struct PinModelTests {
     private func model(_ clock: ManualClock = ManualClock()) -> AppModel {
-        AppModel(data: .none, tables: .empty, clock: clock.clock)
+        let m = AppModel(data: .none, tables: .empty, clock: clock.clock)
+        // the tests hand the fixes in; never the test host's Core Location
+        m.watchesFreshFixes = false
+        return m
     }
 
     nonisolated private static let here = CLLocationCoordinate2D(latitude: -42.9, longitude: 147.3)
@@ -598,11 +645,13 @@ private func freshDefaults() -> UserDefaults {
         m.pinCurrentLocation()
         // allowed, but no fix has come yet: wait — or long-press
         #expect(m.pins?.pins.isEmpty == true && m.notice == .waitingForPin)
-        #expect(LocationNotice.waitingForPin.message.contains("long-press"))
-        #expect(LocationNotice.noFixForPin.message.contains("long-press"))
+        // ("long‑press" never breaks across lines: U+2011)
+        #expect(LocationNotice.waitingForPin.message.contains("long\u{2011}press"))
+        #expect(LocationNotice.noFixForPin.message.contains("long\u{2011}press"))
 
         // a fix too coarse to pin: fixes came, none usable — long-press
         m.locationUpdated(Self.fix(accuracy: 3000, at: now))
+        #expect(m.pins?.pins.isEmpty == true, "a coarse fix places nothing")
         m.pinCurrentLocation()
         #expect(m.pins?.pins.isEmpty == true && m.notice == .noFixForPin)
 
@@ -714,7 +763,7 @@ private func freshDefaults() -> UserDefaults {
         // the pin button's denied notice names the long-press, then Settings
         #expect(m.notice == .deniedForPin && m.pins!.pins.isEmpty)
         #expect(LocationNotice.deniedForPin.offersSettings && LocationNotice.denied.offersSettings)
-        #expect(LocationNotice.deniedForPin.message.contains("long-press"))
+        #expect(LocationNotice.deniedForPin.message.contains("long\u{2011}press"))
         // "Move to my location": its own denied notice — Move on map, then
         // Settings; never the long-press (that would place a second pin)
         m.dropPin(at: Self.here)
@@ -740,7 +789,7 @@ private func freshDefaults() -> UserDefaults {
             if let fix { m.locationUpdated(fix) }
             m.movePinToMyLocation()
             #expect(m.notice == .noFixForMove, "\(status.rawValue)")
-            #expect(!m.pinWaitsForFix, "a move never waits")
+            #expect(m.pendingPin == nil, "a move never waits")
             #expect(pin.lat == Self.here.latitude && pin.placement == .map)
         }
         for notice in [LocationNotice.noFixForMove, .deniedForMove] {
@@ -749,62 +798,228 @@ private func freshDefaults() -> UserDefaults {
         }
     }
 
-    /// "Waiting for a location fix": the pin goes there when the fix comes;
-    /// dismissing the notice or doing anything else on the map first
-    /// cancels it.
-    @Test func aPinWaitingForAFixIsPlacedWhenItComes() throws {
-        let m = model()
+    /// "No location yet — use Move on map instead." goes once there is a
+    /// fix to move to, and when a later "Move to my location" works.
+    @Test func theMoveNoticeGoesWithAFix() throws {
         let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let m = model()
         m.wallClock = { now }
         m.systemLocation = { nil }
         m.authorization = .authorizedWhenInUse
-        m.pinCurrentLocation()
-        #expect(m.notice == .waitingForPin && m.pinWaitsForFix)
-        m.locationUpdated(Self.fix(accuracy: 7, at: now))
-        let pin = try #require(m.pins?.pins.first, "placed at the fix")
-        #expect(pin.placement == .gps && pin.accuracy == 7 && m.selection?.pinID == pin.id)
-        #expect(m.notice == nil && !m.pinWaitsForFix)
-
-        // a coarse first fix: the honest notice, no pin
+        m.dropPin(at: Self.here)
+        m.movePinToMyLocation()
+        #expect(m.notice == .noFixForMove)
+        // a stale sample: still none to move to
+        m.locationUpdated(Self.fix(accuracy: 5, at: now.addingTimeInterval(-120)))
+        #expect(m.notice == .noFixForMove)
+        m.locationUpdated(Self.fix(accuracy: 5, at: now))
+        #expect(m.notice == nil, "a usable fix came")
+        // the notice up, the system's own fix fresh (MapLibre silent): Move works and the notice goes
         let n = model()
+        var system: CLLocation?
         n.wallClock = { now }
-        n.systemLocation = { nil }
+        n.systemLocation = { system }
         n.authorization = .authorizedWhenInUse
-        n.pinCurrentLocation()
-        n.locationUpdated(Self.fix(accuracy: 3000, at: now))
-        #expect(n.pins!.pins.isEmpty && n.notice == .noFixForPin)
+        n.dropPin(at: Self.here)
+        n.movePinToMyLocation()
+        #expect(n.notice == .noFixForMove)
+        system = Self.fix(accuracy: 4, at: now)
+        n.movePinToMyLocation()
+        #expect(n.notice == nil && n.pinUndo?.movedFrom != nil)
+        #expect(n.pendingPin == nil && n.pinRevealRequest > 0)
+    }
 
-        // cancelled: the notice dismissed, a map tap (selection), a long-press
-        for cancel in ["dismiss", "tap", "clear", "long-press"] {
-            let c = model()
-            c.wallClock = { now }
-            c.systemLocation = { nil }
-            c.authorization = .authorizedWhenInUse
-            c.pinCurrentLocation()
-            switch cancel {
-            case "dismiss": c.dismissNotice()
-            case "tap": c.select(.geology("Jd"))
-            case "clear": c.clearSelection()
-            default: c.dropPin(at: CLLocationCoordinate2D(latitude: -42.95, longitude: 147.35))
-            }
-            let before = c.pins!.pins.count
-            c.locationUpdated(Self.fix(accuracy: 5, at: now))
-            #expect(c.pins!.pins.count == before, "\(cancel): nothing placed at the fix")
+    /// A model whose pin button is waiting (allowed, no fix yet), pressed
+    /// at `pressed`.
+    private func waiting(_ clock: ManualClock = ManualClock(), pressed: Date) -> AppModel {
+        let m = model(clock)
+        m.wallClock = { pressed }
+        m.systemLocation = { nil }
+        m.authorization = .authorizedWhenInUse
+        m.pinCurrentLocation()
+        return m
+    }
+
+    /// "Waiting for a location fix": the pin goes at the first FRESH fix —
+    /// taken at or after the press — as a pin-button press would place it.
+    @Test func aPinWaitingForAFixIsPlacedAtTheFirstFreshFix() throws {
+        let pressed = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let m = waiting(pressed: pressed)
+        #expect(m.notice == .waitingForPin && m.pendingPin == PendingPin(pressedAt: pressed))
+        // Core Location's cached sample (older than the press) — often the
+        // first one after the permission prompt — neither places nor ends it
+        m.locationUpdated(Self.fix(accuracy: 6, at: pressed.addingTimeInterval(-30)))
+        #expect(m.pins!.pins.isEmpty && m.notice == .waitingForPin && m.pendingPin != nil)
+        // nor does a fresh but coarse one (a better one may follow)
+        m.locationUpdated(Self.fix(accuracy: 3000, at: pressed.addingTimeInterval(1)))
+        #expect(m.pins!.pins.isEmpty && m.notice == .waitingForPin && m.pendingPin != nil)
+        // nor an invalid one
+        m.locationUpdated(Self.fix(accuracy: -1, at: pressed.addingTimeInterval(1)))
+        #expect(m.pins!.pins.isEmpty && m.pendingPin != nil)
+        // the fresh fix: the pin, its accuracy honest (a Wi-Fi iPad's may be coarse)
+        let placed = m.pinPlacedCount
+        m.locationUpdated(Self.fix(accuracy: 180, altitude: 40, at: pressed.addingTimeInterval(2)))
+        let pin = try #require(m.pins?.pins.first, "placed at the fresh fix")
+        #expect(pin.placement == .gps && pin.accuracy == 180 && pin.altitude == 40)
+        #expect(m.selection?.pinID == pin.id && m.pinPlacedCount == placed + 1)
+        #expect(m.pinFocus?.latitude == pin.lat)
+        #expect(m.notice == nil && m.pendingPin == nil)
+        // a fix taken exactly at the press counts too
+        let n = waiting(pressed: pressed)
+        n.locationUpdated(Self.fix(accuracy: 5, at: pressed))
+        #expect(n.pins!.pins.count == 1)
+    }
+
+    /// The wait never reads the system's cached position: only a fix
+    /// that arrives counts.
+    @Test func aWaitingPinIgnoresTheSystemsCachedPosition() {
+        let pressed = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let m = waiting(pressed: pressed)
+        m.wallClock = { pressed.addingTimeInterval(3) }
+        m.systemLocation = { Self.fix(accuracy: 5, at: pressed.addingTimeInterval(-5)) }
+        m.locationUpdated(nil)
+        #expect(m.pins!.pins.isEmpty && m.pendingPin != nil)
+    }
+
+    /// Its notice runs out without a fresh fix: the honest "No location
+    /// yet — long-press…", and a fix after that places nothing.
+    @Test func aWaitingPinExpiresWithItsNotice() async {
+        let clock = ManualClock()
+        let pressed = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let m = waiting(clock, pressed: pressed)
+        await settle { clock.sleeperCount > 0 }
+        clock.advance(by: AppModel.noticeDuration)
+        await settle { m.notice == .noFixForPin }
+        #expect(m.notice == .noFixForPin && m.pendingPin == nil)
+        m.locationUpdated(Self.fix(accuracy: 5, at: pressed.addingTimeInterval(11)))
+        #expect(m.pins!.pins.isEmpty)
+    }
+
+    /// Anything else she does while it waits cancels it — silently, the
+    /// waiting notice goes, and the fresh fix later places nothing.
+    @Test func everythingElseCancelsAWaitingPin() throws {
+        let pressed = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let cancels: [(String, (AppModel) -> Void)] = [
+            ("notice dismissed", { $0.dismissNotice() }),
+            ("notice replaced", { $0.show(.noFix) }),
+            ("a map tap", { $0.select(.geology("Jd")) }),
+            ("card closed", { $0.clearSelection() }),
+            ("a long-press", { $0.dropPin(at: CLLocationCoordinate2D(latitude: -42.95, longitude: 147.35)) }),
+            ("search", { $0.search.begin() }),
+            ("Move", { $0.movingPin = UUID() }),
+            ("a modal", { $0.present(.layers) }),
+            ("the Pins screen over Layers", { $0.pinsScreenShown = true }),
+            ("the project form", { $0.pinProjectForm = true }),
+            ("camera or library", { $0.pinPhotoSourceShown = true }),
+            ("a photo", { $0.photoViewer = UUID() }),
+            ("a pushed card view", { $0.push(.group(key: "G", context: PlantContext())) }),
+            ("framing an area", { $0.startFraming() }),
+            ("the background", { $0.scenePhaseChanged(active: false, background: true) }),
+            ("inactive (not iOS's prompt)", { $0.scenePhaseChanged(active: false, background: false) }),
+        ]
+        for (name, cancel) in cancels {
+            let m = model()
+            // a card open before the press (pushing needs one; the press
+            // itself keeps it)
+            m.select(.geology("Jd"))
+            m.wallClock = { pressed }
+            m.systemLocation = { nil }
+            m.authorization = .authorizedWhenInUse
+            m.pinCurrentLocation()
+            #expect(m.pendingPin != nil && m.selection != nil, "\(name): waiting")
+            cancel(m)
+            #expect(m.pendingPin == nil, "\(name): cancelled")
+            #expect(m.notice != .waitingForPin, "\(name): the waiting notice goes")
+            let before = m.pins!.pins.count
+            m.locationUpdated(Self.fix(accuracy: 5, at: pressed.addingTimeInterval(2)))
+            #expect(m.pins!.pins.count == before, "\(name): nothing placed at the fix")
         }
     }
 
-    /// The waiting notice goes once a fix comes (it no longer holds — the
-    /// pin it waited for is placed: `aPinWaitingForAFixIsPlacedWhenItComes`).
-    @Test func theWaitingNoticeGoesWithTheFirstFix() {
+    /// iOS's own permission prompt (the pin button raised it) makes the
+    /// window inactive: that is the wait itself, not something else.
+    @Test func thePermissionPromptKeepsTheWait() throws {
+        let pressed = Date(timeIntervalSinceReferenceDate: 1_000_000)
         let m = model()
-        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        m.wallClock = { pressed }
+        m.systemLocation = { nil }
+        m.authorization = .notDetermined
+        m.pinCurrentLocation()
+        #expect(m.pendingPin != nil && m.notice == .waitingForPin)
+        m.scenePhaseChanged(active: false, background: false)  // the prompt
+        #expect(m.pendingPin != nil)
+        m.authorizationChanged(to: .authorizedWhenInUse)       // Allow
+        // the wait goes on, its notice with its full time again
+        #expect(m.notice == .waitingForPin && m.pendingPin == PendingPin(pressedAt: pressed))
+        // the fix may come before the window is active again
+        m.locationUpdated(Self.fix(accuracy: 8, at: pressed.addingTimeInterval(3)))
+        #expect(m.pins?.pins.count == 1 && m.selection?.pinID != nil)
+    }
+
+    /// The prompt unanswered: the wait outlasts its notice's 10 s (she is
+    /// reading the prompt), for up to a minute after the press.
+    @Test func thePromptUnansweredKeepsTheWaitUpToAMinute() async {
+        let clock = ManualClock()
+        var now = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let m = model(clock)
         m.wallClock = { now }
         m.systemLocation = { nil }
-        m.authorization = .authorizedWhenInUse
+        m.authorization = .notDetermined
         m.pinCurrentLocation()
-        #expect(m.notice == .waitingForPin)
-        m.locationUpdated(Self.fix(accuracy: 5, at: now))
-        #expect(m.notice == nil)
+        for _ in 0 ..< 5 {
+            await settle { clock.sleeperCount > 0 }
+            now = now.addingTimeInterval(10)
+            clock.advance(by: AppModel.noticeDuration)
+            await settle()
+            #expect(m.notice == .waitingForPin && m.pendingPin != nil)
+        }
+        await settle { clock.sleeperCount > 0 }
+        now = now.addingTimeInterval(10)
+        clock.advance(by: AppModel.noticeDuration)
+        await settle { m.notice == .noFixForPin }
+        #expect(m.notice == .noFixForPin && m.pendingPin == nil, "a minute on: the honest notice")
+    }
+
+    /// Don't Allow: the denied notice (with the long-press), no wait.
+    @Test func thePermissionPromptDeclinedSaysSo() {
+        let m = model()
+        m.wallClock = { Date(timeIntervalSinceReferenceDate: 1_000_000) }
+        m.systemLocation = { nil }
+        m.authorization = .notDetermined
+        m.pinCurrentLocation()
+        m.authorizationChanged(to: .denied)
+        #expect(m.notice == .deniedForPin && m.pendingPin == nil)
+    }
+
+    /// The prompt answered Allow late: the notice's time starts again then.
+    @Test func allowRestartsTheWaitingNoticesTime() async {
+        let clock = ManualClock()
+        let pressed = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let m = model(clock)
+        m.wallClock = { pressed }
+        m.systemLocation = { nil }
+        m.authorization = .notDetermined
+        m.pinCurrentLocation()
+        await settle { clock.sleeperCount > 0 }
+        clock.advance(by: .seconds(8))
+        m.authorizationChanged(to: .authorizedWhenInUse)
+        await settle { clock.sleeperCount > 0 }
+        clock.advance(by: .seconds(8))
+        await settle()
+        #expect(m.notice == .waitingForPin && m.pendingPin != nil, "16 s after the press, 8 after Allow")
+        m.locationUpdated(Self.fix(accuracy: 5, at: pressed.addingTimeInterval(16)))
+        #expect(m.pins!.pins.count == 1)
+    }
+
+    /// The fresh fix arrives while something is up that no cancel path saw
+    /// (checked again at arrival): the wait ends, no pin.
+    @Test func aFixArrivingWhileSomethingIsUpPlacesNothing() {
+        let pressed = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let m = waiting(pressed: pressed)
+        m.sceneInBackground = true
+        m.locationUpdated(Self.fix(accuracy: 5, at: pressed.addingTimeInterval(2)))
+        #expect(m.pins!.pins.isEmpty && m.pendingPin == nil && m.notice == nil)
+        #expect(!m.pinPlacementIsClear)
     }
 
     /// Move offers Undo, which puts the pin back where — and as — it was.

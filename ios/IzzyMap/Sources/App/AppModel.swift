@@ -343,6 +343,8 @@ final class AppModel {
             if selection?.id != oldValue?.id {
                 cardPath = []
                 pinProjectForm = false
+                // anything else on the map: a pin waiting for its fix is off
+                cancelPendingPin()
             }
             // closing the card or selecting something else ends a move
             if let moving = movingPin, selection?.pinID != moving { movingPin = nil }
@@ -351,7 +353,10 @@ final class AppModel {
     /// Views pushed over the card (group list, plant sheet), oldest first.
     var cardPath: [CardRoute] = [] {
         // the plant sheet that showed the photo viewer is gone
-        didSet { if cardPath != oldValue { photoViewer = nil } }
+        didSet {
+            if cardPath != oldValue { photoViewer = nil }
+            if !cardPath.isEmpty { cancelPendingPin() }
+        }
     }
 
     /// Pushes a view over the card — never the same one twice in a row (a
@@ -369,11 +374,16 @@ final class AppModel {
     let search = SearchModel()
     /// The modal on screen (at most one).
     var modal: ModalRequest? {
-        didSet { if modal != oldValue { modalDepth = 0; photoViewer = nil } }
+        didSet {
+            if modal != oldValue { modalDepth = 0; photoViewer = nil }
+            if modal != nil { cancelPendingPin() }
+        }
     }
     /// A plant sheet's photos full screen: the sheet that opened it
     /// (`PhotoViewer`; each plant sheet presents only its own).
-    var photoViewer: UUID?
+    var photoViewer: UUID? {
+        didSet { if photoViewer != nil { cancelPendingPin() } }
+    }
     /// Levels pushed inside the open modal's own navigation (Layers ▸ Key /
     /// Storage, Identify ▸ plant sheet, Credits ▸ Acknowledgements): the
     /// modal reports it (`ModalEscape`), so Escape pops one level before it
@@ -430,6 +440,8 @@ final class AppModel {
             self?.endSpotlight()
             self?.clearSelection()
         }
+        // a search begun: a pin waiting for its fix is off
+        search.onBegin = { [weak self] in self?.cancelPendingPin() }
     }
 
     convenience init(data: DataLocation, tables: MapTables, layers: LayerState = .default, clock: LocationClock = .live,
@@ -447,8 +459,6 @@ final class AppModel {
         // detent) shows its card
         if search.isActive { search.end() }
         keyHighlight = nil
-        // anything else on the map: a pin waiting for a fix is off
-        pinWaitsForFix = false
         selection = FeatureSelection(feature: feature)
     }
 
@@ -476,7 +486,6 @@ final class AppModel {
     }
 
     func clearSelection() {
-        pinWaitsForFix = false
         selection = nil
     }
 
@@ -608,6 +617,7 @@ final class AppModel {
 
     /// "Download an area…" (Storage, Layers): the modal goes, the map frames.
     func startFraming() {
+        cancelPendingPin()
         modal = nil
         movingPin = nil
         endSpotlight()
@@ -650,7 +660,9 @@ final class AppModel {
     /// nil while pins are switched off (`Features.pins`).
     var pins: PinStore? { shared.pins }
     /// Moving this pin: the next map tap is its new spot (a bar says so).
-    var movingPin: UUID?
+    var movingPin: UUID? {
+        didSet { if movingPin != nil { cancelPendingPin() } }
+    }
     /// A new pin's card opens with its title field focused (long-press).
     var pinTitleFocus: UUID?
     /// Bumped when a pin is placed (the light haptic's trigger).
@@ -662,7 +674,13 @@ final class AppModel {
     /// The "pins couldn't be opened" notice was put away (this session).
     var pinStoreNoticeDismissed = false
     /// The card's "New project…" form is open (Escape closes just that).
-    var pinProjectForm = false
+    var pinProjectForm = false {
+        didSet { if pinProjectForm { cancelPendingPin() } }
+    }
+    /// The pin card's camera or photo library is up (PinPhotos).
+    var pinPhotoSourceShown = false {
+        didSet { if pinPhotoSourceShown { cancelPendingPin() } }
+    }
     /// Something is typed in that form: Escape asks it (`pinProjectFormEscape`)
     /// rather than closing it.
     @ObservationIgnored var pinProjectFormEdited = false
@@ -671,7 +689,9 @@ final class AppModel {
     /// The Pins screen is up — as the modal, or over Layers or Storage on
     /// an iPad: the map's Undo pill stays down (the screen shows its own)
     /// and ⌘P has nothing to open.
-    var pinsScreenShown = false
+    var pinsScreenShown = false {
+        didSet { if pinsScreenShown { cancelPendingPin() } }
+    }
     /// The camera eases to a pin placed out of sight (the pin button).
     private(set) var pinFocus: PinFocus?
     /// "Show on map" and a pin picked in the Pins screen: the camera frames
@@ -684,19 +704,42 @@ final class AppModel {
     /// Wall-clock time, to judge a fix's age by its timestamp.
     @ObservationIgnored var wallClock: @MainActor () -> Date = { Date() }
     /// The pin button found no fix yet and said "Waiting for a location
-    /// fix": the pin is placed when the first one comes — unless the
-    /// notice goes or she does anything else on the map first.
-    @ObservationIgnored var pinWaitsForFix = false
+    /// fix": the pin is placed at the first FRESH fix (`PendingPin`) — as
+    /// long as that notice is up and she does nothing else meanwhile
+    /// (`cancelPendingPin`).
+    @ObservationIgnored var pendingPin: PendingPin? {
+        didSet { if (pendingPin == nil) != (oldValue == nil) { watchFreshFixes(pendingPin != nil) } }
+    }
+    /// While the pin button waits: Core Location's own updates, besides
+    /// MapLibre's (which drops a sample at an unchanged coordinate — after
+    /// the permission prompt the cached sample comes first, then fresh ones
+    /// at the same spot that MapLibre never passes on; Wi-Fi positioning
+    /// repeats coordinates too). Off in unit tests.
+    @ObservationIgnored var watchesFreshFixes = true
+    @ObservationIgnored private var freshFixes: Task<Void, Never>?
+    /// The window is in the background (the scene phase): a fix arriving
+    /// then places nothing.
+    @ObservationIgnored var sceneInBackground = false
     /// A pin just deleted: the Undo banner.
     private(set) var pinUndo: PinUndo?
     @ObservationIgnored var pinUndoTimer: Task<Void, Never>?
     /// Bumped to ask for the user's location (the pin button before
     /// location was ever allowed: the map turns its dot on, iOS asks).
     private(set) var locationRequest = 0
-    /// How long the Undo banner stays up.
-    static let pinUndoDuration: Duration = .seconds(8)
+    /// How long the Undo banner stays up (UI tests on a slow runner:
+    /// `-pinUndoSeconds S`, DEBUG only).
+    static let pinUndoDuration: Duration = {
+        #if DEBUG
+        let s = UserDefaults.standard.double(forKey: "pinUndoSeconds")
+        if s > 0 { return .milliseconds(Int(s * 1000)) }
+        #endif
+        return .seconds(8)
+    }()
+    /// How long the pin button's wait may outlast its notice while iOS's
+    /// permission prompt is still unanswered (seconds after the press).
+    static let pinPromptPatience: TimeInterval = 60
     /// A fix less accurate than this is no place for a pin.
-    static let pinMaxAccuracy: Double = 500
+    nonisolated static let pinMaxAccuracy: Double = 500
 
     nonisolated struct PinFocus: Equatable, Sendable {
         let latitude: Double
@@ -707,6 +750,29 @@ final class AppModel {
     func focusPin(latitude: Double, longitude: Double) {
         pinFocus = PinFocus(latitude: latitude, longitude: longitude, serial: (pinFocus?.serial ?? 0) + 1)
     }
+
+    /// Core Location's live updates while the pin button waits (only the
+    /// ones taken after the press count: `PendingPin`).
+    private func watchFreshFixes(_ on: Bool) {
+        freshFixes?.cancel()
+        freshFixes = nil
+        guard on, watchesFreshFixes else { return }
+        freshFixes = Task { [weak self] in
+            do {
+                for try await update in CLLocationUpdate.liveUpdates() {
+                    guard !Task.isCancelled, let self else { return }
+                    if let location = update.location { self.fixArrived(location) }
+                }
+            } catch {}
+        }
+    }
+
+    /// Bumped after a move and after Undo of a move: the map brings the
+    /// selected pin into the area she can see, clear of the "Pin moved"
+    /// pill too (`MapCoordinator.apply(pinReveal:)`).
+    private(set) var pinRevealRequest = 0
+
+    func revealMovedPin() { pinRevealRequest += 1 }
 
     /// What the Undo banner brings back: a pin, or a project with the pins
     /// that went with it — or a moved pin's old spot (`movedFrom`).
@@ -794,9 +860,15 @@ final class AppModel {
         lastFix = clock.now()
         if let location { lastLocation = location }
         noFixWatch?.cancel()
-        // (waiting for a fix: it came — a pin asked for meanwhile goes there)
-        if fixArrived() { return }
+        // the pin button waiting: a fresh fix places its pin; a stale or
+        // coarse one changes nothing (the notice and the wait stay)
+        if pendingPin != nil {
+            fixArrived(location)
+            return
+        }
         if notice == .noFix || notice == .waitingForPin { dismissNotice() }
+        // "Move to my location" said there was none: there is one now
+        if notice == .noFixForMove, usableFix != nil { dismissNotice() }
     }
 
     /// MapLibre reported a location failure. MapLibre Native 7.0.0 forwards
@@ -824,12 +896,13 @@ final class AppModel {
             trackingMode = pending
             watchForFix()
         }
+        pinButtonAnswered(status)
     }
 
     func dismissNotice() {
         noticeTimer?.cancel()
         notice = nil
-        pinWaitsForFix = false
+        pendingPin = nil
     }
 
     /// Following started: if no position arrives within `noFixDelay`, say so
@@ -874,14 +947,30 @@ final class AppModel {
     }
     #endif
 
-    /// Shows a location message for `noticeDuration`.
+    /// Shows a location message for `noticeDuration`. It replaces any
+    /// other — and with it a pin waiting for its fix (the waiting notice
+    /// is that request's only sign).
     func show(_ notice: LocationNotice) {
+        pendingPin = nil
         self.notice = notice
         noticeTimer?.cancel()
         noticeTimer = Task { [weak self, clock] in
             do { try await clock.sleep(Self.noticeDuration) } catch { return }
-            guard !Task.isCancelled else { return }
-            self?.notice = nil
+            guard !Task.isCancelled, let self else { return }
+            if let pending = self.pendingPin, self.notice == .waitingForPin {
+                // iOS's permission prompt still up: reading it must not use
+                // up the wait (for up to a minute after the press)
+                if self.authorization == .notDetermined,
+                   self.wallClock().timeIntervalSince(pending.pressedAt) < Self.pinPromptPatience {
+                    self.show(.waitingForPin)
+                    self.pendingPin = pending
+                    return
+                }
+                // the wait ran out without a fresh fix: say so, honestly
+                self.show(.noFixForPin)
+                return
+            }
+            self.notice = nil
         }
     }
 }

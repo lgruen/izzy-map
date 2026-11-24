@@ -10,13 +10,6 @@ struct PanelContent: View {
     nonisolated static let space = "panel-content"
     @Bindable var model: AppModel
 
-    /// The scroll edge under the pinned search header: the system's soft
-    /// edge, except over a pin card, whose colour swatches would smear
-    /// colour (data) into the chrome — a hard edge there.
-    static func topEdge(_ model: AppModel) -> ScrollEdgeEffectStyle {
-        model.selection?.isPin == true && !model.search.isActive ? .hard : .soft
-    }
-
     /// Whether there is anything under the header.
     static func hasBody(_ model: AppModel) -> Bool {
         model.search.isActive || model.selection != nil || (model.data.isEmpty && model.shared.packs.isResolved)

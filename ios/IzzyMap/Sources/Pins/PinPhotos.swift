@@ -74,6 +74,9 @@ struct PinPhotos<Chip: View>: View {
         )) {
             PinPhotoViewer(model: model, store: store, pinID: pin.id, selected: $selected)
         }
+        // the camera or the library up: a pin waiting for its fix is off
+        .onChange(of: showCamera || showLibrary) { _, up in model.pinPhotoSourceShown = up }
+        .onDisappear { if showCamera || showLibrary { model.pinPhotoSourceShown = false } }
         .animation(.snappy, value: photos.count)
         .animation(.snappy, value: cameraDenied)
     }

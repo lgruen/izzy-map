@@ -42,8 +42,6 @@ struct ProjectEditor: View {
     /// What the fields held when the sheet opened (changes = a difference).
     @State private var original: Fields?
     @FocusState private var focus: Field?
-    /// The sheet's width (where the palette's row fits at the pages' inset).
-    @State private var width: CGFloat = 0
     /// ✕ with something typed or picked: asks before throwing it away.
     @State private var confirmDiscard = false
 
@@ -64,10 +62,8 @@ struct ProjectEditor: View {
     var body: some View {
         NavigationStack {
             // plain sections on the sheet's own ground, as Storage, at the
-            // Pins pages' insets (no jump from a project's page to Edit) —
-            // unless that leaves the palette too little room for its one row
-            // of eight (a phone): then the card's own inset
-            PinsList(horizontalMargin: width >= Self.pagesInsetWidth ? nil : 0) {
+            // Pins pages' insets (no jump from a project's page to Edit)
+            PinsList {
                 Section {
                     HStack(spacing: 12) {
                         KeyBox(hex: colour.hex, opacity: 1, width: 28, height: 28)
@@ -91,8 +87,10 @@ struct ProjectEditor: View {
                 .listSectionSeparator(.hidden)
 
                 Section {
-                    // the card's own palette row, as wide as on the card
-                    SwatchRow(selected: colour.rawValue) { colour = $0 }
+                    // the card's own palette row, as wide as on the card where
+                    // there is room; on a phone, at the pages' insets, the
+                    // gaps shrink (the swatches keep the card's size)
+                    SwatchRow(selected: colour.rawValue, minStep: Self.paletteMinStep) { colour = $0 }
                         .frame(maxWidth: Self.paletteWidth, alignment: .leading)
                         .listRowSeparator(.hidden)
                 } header: {
@@ -179,7 +177,6 @@ struct ProjectEditor: View {
                 }
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { width = $0 }
         .onAppear(perform: load)
         .interactiveDismissDisabled(hasChanges)
         // Escape: as ✕
@@ -197,10 +194,10 @@ struct ProjectEditor: View {
     /// The palette row's width: the card's (one row of eight 44 pt
     /// targets), so both editors read as one palette.
     static let paletteWidth: CGFloat = 8 * SwatchLayout.target - (SwatchLayout.target - SwatchRow.visual)
-    /// A sheet at least this wide keeps the Pins pages' insets (about
-    /// 36 pt a side: the list's margin and the row's) with the palette in
-    /// one row.
-    static let pagesInsetWidth: CGFloat = paletteWidth + 2 * 36
+    /// The editor's narrowest swatch step: 6 pt between the drawn swatches
+    /// (a 390 pt phone at the pages' ~36 pt insets leaves 318 pt: a step
+    /// of ~41 pt, a 9 pt gap).
+    static let paletteMinStep: CGFloat = SwatchRow.visual + 6
 
     static func footer(_ project: PinProject, pins: Int) -> String {
         let archive = project.archivedAt == nil

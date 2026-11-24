@@ -115,6 +115,8 @@ private struct WindowContent: View {
             .environment(model.documents)
             // a document fetch lasts as long as its card is selected
             .onChange(of: model.selection?.id) { model.documents.selectionChanged() }
+            // the reader up: a pin waiting for its fix is off
+            .onChange(of: model.documents.isReading) { _, reading in if reading { model.cancelPendingPin() } }
             .onChange(of: model.layers) { _, state in
                 LayerStore().save(state)
                 sceneLayers = try? JSONEncoder().encode(state)
@@ -135,6 +137,8 @@ private struct WindowContent: View {
             // typing in a pin's title or note is saved after a pause: leaving
             // the foreground saves it now
             .onChange(of: scenePhase) { _, phase in
+                // a pin waiting for its fix: not once she has left
+                model.scenePhaseChanged(active: phase == .active, background: phase == .background)
                 if phase != .active { model.pins?.flush() }
                 // back in front: what is now more than 30 days deleted goes
                 if phase == .active { model.purgePins() }

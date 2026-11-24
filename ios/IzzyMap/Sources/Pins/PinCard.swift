@@ -67,7 +67,9 @@ struct PinCard: View {
                 // screenshots: `-debugPinNewProject YES` opens the editor
                 if UserDefaults.standard.bool(forKey: "debugPinNewProject") { model.pinProjectForm = true }
                 // UI tests, the card going while a field has the keyboard,
-                // S seconds after the first card opens:
+                // S seconds after the first character is typed in its title
+                // (counted from her typing, not from launch: a slow runner's
+                // launch and focus never eat into it):
                 // `-debugRemovePinAfter S` deletes its pin straight in the
                 // store (as a delete synced from the other device arrives);
                 // `-debugCloseCardAfter S` closes it from outside the card
@@ -80,6 +82,11 @@ struct PinCard: View {
                 if remove > 0 || close > 0 || delete > 0, !Self.debugCardGone {
                     Self.debugCardGone = true
                     Task { [model, store, pinID] in
+                        var polls = 0
+                        while store.pin(pinID)?.title.isEmpty ?? false, polls < 1200 {
+                            try? await Task.sleep(for: .milliseconds(100))
+                            polls += 1
+                        }
                         try? await Task.sleep(for: .seconds(max(remove, close, delete)))
                         if remove > 0, let pin = store.pin(pinID) { store.delete(pin) }
                         if close > 0, model.selection?.pinID == pinID { model.clearSelection() }
@@ -166,7 +173,7 @@ struct PinCard: View {
 
     /// The eight swatches with the one in effect framed — the pin's own,
     /// else its project's, else the standard colour. While the pin
-    /// overrides it, a text button gives it back ("Use project colour").
+    /// overrides it, a capsule button gives it back ("Use project colour").
     private func colourRow(_ pin: SavedPin) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Colour")
@@ -174,14 +181,15 @@ struct PinCard: View {
                 .foregroundStyle(DesignColor.secondaryInk)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // (an overlay: showing it never moves the swatches)
-                .overlay(alignment: .trailing) {
+                .overlay(alignment: .bottomTrailing) {
                     if let reset = Self.resetTitle(pin) {
-                        Button(reset) { store.setColour(pin, nil) }
-                            .font(.subheadline)
-                            .foregroundStyle(DesignColor.ink)
-                            .buttonStyle(.plain)
-                            .contentShape(.rect.inset(by: -12))
-                            .hoverEffect(.highlight)
+                        // the app's small capsule button (Recently deleted's
+                        // Restore): it reads as an action, not a second label.
+                        // Its capsule ends on the label's bottom line, so it
+                        // keeps the label's 8 pt above the swatches (its
+                        // 44 pt target is 7 pt taller below the capsule)
+                        GetButton(title: reset) { store.setColour(pin, nil) }
+                            .offset(y: 7)
                             .accessibilityIdentifier("pin-colour-project")
                             .transition(.opacity)
                     }
@@ -440,10 +448,14 @@ struct PinTileMarks: View {
 struct SwatchRow: View {
     /// The selected colour's NAME (nil: none of them).
     let selected: String?
+    /// The narrowest step that keeps the eight in one row (the card: a
+    /// 44 pt target each; the project editor, at the Pins pages' insets on
+    /// a phone, lets the gaps shrink instead — never the swatches).
+    var minStep: CGFloat = SwatchLayout.target
     let pick: (PinColour) -> Void
 
     var body: some View {
-        SwatchLayout(visual: Self.visual) {
+        SwatchLayout(visual: Self.visual, minStep: minStep) {
             ForEach(PinColour.allCases) { colour in
                 let isSelected = PinColour.named(selected) == colour
                 Button { pick(colour) } label: {
@@ -474,28 +486,30 @@ struct SwatchRow: View {
 nonisolated struct SwatchLayout: Layout {
     /// Width of each swatch as drawn.
     var visual: CGFloat
+    /// The narrowest step that still keeps them in one row.
+    var minStep: CGFloat = target
     static let target: CGFloat = 44
 
-    static func columns(width: CGFloat, count: Int, visual: CGFloat) -> Int {
+    static func columns(width: CGFloat, count: Int, visual: CGFloat, minStep: CGFloat = target) -> Int {
         guard count > 1 else { return count }
-        return (width - visual) / CGFloat(count - 1) >= target ? count : (count + 1) / 2
+        return (width - visual) / CGFloat(count - 1) >= minStep ? count : (count + 1) / 2
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? CGFloat(subviews.count) * Self.target
-        let columns = max(1, Self.columns(width: width, count: subviews.count, visual: visual))
+        let columns = max(1, Self.columns(width: width, count: subviews.count, visual: visual, minStep: minStep))
         let rows = (subviews.count + columns - 1) / columns
         return CGSize(width: width, height: CGFloat(rows) * Self.target)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let columns = max(1, Self.columns(width: bounds.width, count: subviews.count, visual: visual))
+        let columns = max(1, Self.columns(width: bounds.width, count: subviews.count, visual: visual, minStep: minStep))
         let step = columns > 1 ? (bounds.width - visual) / CGFloat(columns - 1) : Self.target
         for (i, subview) in subviews.enumerated() {
             let x = bounds.minX + visual / 2 + CGFloat(i % columns) * step
             let y = bounds.minY + Self.target / 2 + CGFloat(i / columns) * Self.target
             subview.place(at: CGPoint(x: x, y: y), anchor: .center,
-                          proposal: ProposedViewSize(width: max(Self.target, step), height: Self.target))
+                          proposal: ProposedViewSize(width: max(minStep, step), height: Self.target))
         }
     }
 }

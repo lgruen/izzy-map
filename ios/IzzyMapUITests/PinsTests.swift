@@ -25,7 +25,9 @@ final class PinsTests: XCTestCase {
     private func launch(_ extra: [String] = []) -> XCUIApplication {
         func hex(_ s: String) -> String { "<" + s.utf8.map { String(format: "%02x", $0) }.joined() + ">" }
         let camera = #"{"latitude":-42.88,"longitude":147.32,"zoom":14,"heading":0}"#
-        let app = offlineApp(["-pinsStore", storePath, "-lastCamera", hex(camera), "-layerState", hex("{}")] + extra)
+        // the Undo pill outlives a slow runner's queries (8 s locally)
+        let app = offlineApp(["-pinsStore", storePath, "-lastCamera", hex(camera), "-layerState", hex("{}"),
+                              "-pinUndoSeconds", "\(patience(8))"] + extra)
         // no launch fix: the camera stays where the test puts it
         app.resetAuthorizationStatus(for: .location)
         app.launch()
@@ -146,7 +148,14 @@ final class PinsTests: XCTestCase {
 
     /// A main-thread hang ends the app within this many seconds
     /// (`-hangWatchdog`), so the test fails at once instead of stalling.
-    private static let watchdog = ["-hangWatchdog", "5"]
+    /// Generous: a cold launch on a slow runner must not read as a hang
+    /// (the hang it guards against never ended: 30 s and more).
+    private static let watchdog = ["-hangWatchdog", "20"]
+
+    /// The `-debug…After` hooks' delay, counted from the first character
+    /// typed in the title: long enough for the "still typing" check right
+    /// after typing, on a runner 3× slower too.
+    private static var hookDelay: String { "\(patience(3))" }
 
     /// The phone's sheet back at its glance with nothing in it, and the
     /// app answering (no hang: a hung app is gone, see `watchdog`).
@@ -175,7 +184,7 @@ final class PinsTests: XCTestCase {
     /// inert, and dragging the sheet down puts the keyboard away).
     @MainActor
     func testCardClosedFromOutsideWhileTypingATitle() {
-        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugCloseCardAfter", "6"] + Self.watchdog)
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugCloseCardAfter", Self.hookDelay] + Self.watchdog)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
         app.typeText("Gate")
@@ -189,7 +198,7 @@ final class PinsTests: XCTestCase {
     /// reaches it puts the keyboard away): the pill offers Undo.
     @MainActor
     func testDeleteWhileTypingATitle() {
-        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugDeletePinAfter", "6"] + Self.watchdog)
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugDeletePinAfter", Self.hookDelay] + Self.watchdog)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
         app.typeText("Gate")
@@ -214,7 +223,7 @@ final class PinsTests: XCTestCase {
     /// keyboard here (`-debugRemovePinAfter`: straight in the store).
     @MainActor
     func testPinRemovedUnderAFocusedCard() {
-        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugRemovePinAfter", "6"] + Self.watchdog)
+        let app = launch(["-debugLongPress", "\(Self.spot.dx),\(Self.spot.dy)", "-debugRemovePinAfter", Self.hookDelay] + Self.watchdog)
         XCTAssertTrue(card(app).waitForExistence(timeout: patience(8)))
         XCTAssertTrue(eventually(patience(5)) { self.title(app).hasFocus })
         app.typeText("Gate")
@@ -282,7 +291,8 @@ final class PinsTests: XCTestCase {
         // undecided (the usual state here): "No location yet — long-press …";
         // a simulator left with location denied says that instead — either
         // way an honest notice, never a pin at a guessed spot
-        let honest = NSPredicate(format: "label CONTAINS 'long-press' OR label CONTAINS 'Location access is off'")
+        // ("long‑press" with a non-breaking hyphen, U+2011)
+        let honest = NSPredicate(format: "label CONTAINS 'press the map' OR label CONTAINS 'Location access is off'")
         XCTAssertTrue(notice.staticTexts.containing(honest).firstMatch.exists)
         XCTAssertFalse(card(app).exists)
         // answer iOS's prompt: left up, it outlives the app and covers the

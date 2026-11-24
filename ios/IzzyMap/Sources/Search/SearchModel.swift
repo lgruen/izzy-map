@@ -88,6 +88,9 @@ final class SearchModel {
     /// Search mode: the results (or recents) replace the card; the phone's
     /// sheet stands at its large detent, the iPad card grows.
     private(set) var isActive = false
+    /// Called when search mode begins (the window's model ends a pin
+    /// button's wait for a fix).
+    @ObservationIgnored var onBegin: (@MainActor () -> Void)?
     /// Mirrors the field's focus (the header writes it).
     var fieldFocused = false
     /// Bumped to ask the header to focus the field (⌘F, a tap on the chip's
@@ -145,7 +148,10 @@ final class SearchModel {
     /// The field got focus (or ⌘F): search mode, the last query and its
     /// results back (distances from the current centre).
     func begin() {
-        if !isActive { isActive = true }
+        if !isActive {
+            isActive = true
+            onBegin?()
+        }
         ensureIndex()
         refresh()
     }

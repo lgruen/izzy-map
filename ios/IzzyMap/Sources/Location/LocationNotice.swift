@@ -21,13 +21,15 @@ nonisolated enum LocationNotice: Equatable, Sendable {
     /// "Move to my location" with location access off.
     case deniedForMove
 
+    /// (SwiftUI text: “long-press” carries a non-breaking hyphen, U+2011,
+    /// so it never breaks across lines.)
     var message: String {
         switch self {
         case .denied: "Location access is off for IzzyMap. You can turn it on in Settings."
         case .noFix: "No location fix — the map still works. Wi-Fi-only iPads have no GPS."
-        case .noFixForPin: "No location yet — long-press the map to place a pin there."
-        case .waitingForPin: "Waiting for a location fix — or long-press the map to place a pin."
-        case .deniedForPin: "Location access is off for IzzyMap — long-press the map to place a pin, or turn it on in Settings."
+        case .noFixForPin: "No location yet — long\u{2011}press the map to place a pin there."
+        case .waitingForPin: "Waiting for a location fix — or long\u{2011}press the map to place a pin."
+        case .deniedForPin: "Location access is off for IzzyMap — long\u{2011}press the map to place a pin, or turn it on in Settings."
         case .noFixForMove: "No location yet — use Move on map instead."
         case .deniedForMove: "Location access is off for IzzyMap — use Move on map, or turn it on in Settings."
         }

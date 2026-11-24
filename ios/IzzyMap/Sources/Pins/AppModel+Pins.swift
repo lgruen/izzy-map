@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import os
 
 /// The window's pin gestures and card actions (docs/PINS_PLAN.md §4–5).
 /// The records live in the shared `PinStore`; selection, the move mode,
@@ -33,10 +34,19 @@ extension AppModel {
     /// The pin button: a pin at the freshest usable fix, with its accuracy
     /// and altitude; the camera eases to it if it is out of sight. No
     /// usable fix → the honest notice, never a guess; location never asked
-    /// for yet → iOS asks (and the notice says to wait or long-press).
+    /// for yet, or no fix since it was allowed → iOS asks, the notice says
+    /// to wait (or long-press) and the pin waits for the first fresh fix
+    /// (`PendingPin`).
     func pinCurrentLocation() {
-        guard let pins else { return }
+        guard pins != nil else { return }
         guard let fix = fixForPin(placing: true) else { return }
+        placePin(at: fix)
+    }
+
+    /// A pin at `fix`, placed by GPS, its card open (the pin button, or
+    /// the fix it waited for).
+    private func placePin(at fix: CLLocation) {
+        guard let pins else { return }
         if notice?.isPinNotice == true { dismissNotice() }
         let pin = pins.addPin(latitude: fix.coordinate.latitude, longitude: fix.coordinate.longitude, placedBy: .gps,
                               accuracy: fix.horizontalAccuracy,
@@ -49,7 +59,8 @@ extension AppModel {
 
     /// The usable fix, or nil after saying why there is none
     /// (`pinNotice`). `placing`: the pin button (its notices name the
-    /// long-press), not "Move to my location".
+    /// long-press, and "Waiting for a location fix" holds the request),
+    /// not "Move to my location" (which never waits).
     private func fixForPin(placing: Bool) -> CLLocation? {
         if isLocationDenied {
             show(pinNotice(placing: placing))
@@ -59,24 +70,88 @@ extension AppModel {
         if authorization == .notDetermined { requestLocation() }
         let notice = pinNotice(placing: placing)
         show(notice)
-        // "Waiting for a location fix": the pin goes there when it comes
-        // (`fixArrived`), unless she does something else first
-        pinWaitsForFix = notice == .waitingForPin
+        if placing, notice == .waitingForPin { pendingPin = PendingPin(pressedAt: wallClock()) }
         return nil
     }
 
-    /// A fix came while "Waiting for a location fix" is up: the pin the
-    /// button asked for is placed now (or, if the fix is too coarse, the
-    /// honest notice). False when nothing was waiting.
-    func fixArrived() -> Bool {
-        guard pinWaitsForFix, notice == .waitingForPin else {
-            pinWaitsForFix = false
-            return false
+    /// A location came while the pin button waits. Only a FRESH fix — taken
+    /// at or after the press, accurate enough for a pin — fulfils it: Core
+    /// Location's cached sample, often the first one delivered after the
+    /// permission prompt, is older than the press and changes nothing (the
+    /// wait and its notice stay; the notice's time runs out on its own).
+    /// A fresh fix while something else is up (a sheet, search, a move,
+    /// the background) ends the wait without a pin.
+    func fixArrived(_ location: CLLocation?) {
+        guard let pending = pendingPin else { return }
+        guard let location, pending.isFulfilled(by: location) else {
+            if let location {
+                Self.pinLogger.debug("""
+                    pin button waits on: fix \(location.timestamp.timeIntervalSince(pending.pressedAt), format: .fixed(precision: 1)) s \
+                    after the press, ± \(location.horizontalAccuracy, format: .fixed(precision: 0)) m
+                    """)
+            }
+            return
         }
-        pinWaitsForFix = false
-        dismissNotice()
-        if usableFix != nil { pinCurrentLocation() } else { show(.noFixForPin) }
-        return true
+        pendingPin = nil
+        if notice == .waitingForPin { dismissNotice() }
+        guard pinPlacementIsClear else {
+            Self.pinLogger.debug("pin button's fix came while something else was up: \(self.pinPlacementState, privacy: .public)")
+            return
+        }
+        placePin(at: location)
+    }
+
+    /// iOS's permission prompt, raised by the pin button, answered. Allow:
+    /// the wait goes on and its notice gets its full time again (reading
+    /// the prompt must not use it up — the fix only starts coming now).
+    /// Don't Allow: the denied notice, with the long-press.
+    func pinButtonAnswered(_ status: CLAuthorizationStatus) {
+        guard let pending = pendingPin, notice == .waitingForPin else { return }
+        if isLocationDenied {
+            show(.deniedForPin)
+        } else if status == .authorizedWhenInUse || status == .authorizedAlways {
+            show(.waitingForPin)
+            pendingPin = pending
+        }
+    }
+
+    /// Ends the pin button's wait without a pin, and takes its notice
+    /// down — called by everything else she can do meanwhile: another
+    /// selection, a search, a move, a sheet, the camera or library, the
+    /// reader, a photo, a pushed card view, framing an area, the
+    /// background (a notice dismissed or replaced ends it too).
+    func cancelPendingPin() {
+        guard pendingPin != nil else { return }
+        Self.pinLogger.debug("pin button's wait cancelled: \(self.pinPlacementState, privacy: .public)")
+        pendingPin = nil
+        if notice == .waitingForPin { dismissNotice() }
+    }
+
+    private static let pinLogger = Logger(subsystem: "org.gruenschloss.izzymap", category: "Pins")
+
+    /// Nothing but the map: what must still hold when the fix the pin
+    /// button waited for arrives.
+    var pinPlacementIsClear: Bool {
+        modal == nil && !search.isActive && movingPin == nil && !pinProjectForm && !pinPhotoSourceShown
+            && photoViewer == nil && !documents.isReading && cardPath.isEmpty && !isFraming && !pinsScreenShown
+            && !sceneInBackground
+    }
+
+    /// What `pinPlacementIsClear` looked at (the debug log).
+    private var pinPlacementState: String {
+        "modal \(modal?.id ?? "-") search \(search.isActive) moving \(movingPin != nil) form \(pinProjectForm) "
+            + "photos \(pinPhotoSourceShown) viewer \(photoViewer != nil) reader \(documents.isReading) "
+            + "path \(cardPath.count) framing \(isFraming) pins \(pinsScreenShown) background \(sceneInBackground) "
+            + "selection \(selection.map { "\($0.feature)" } ?? "-")"
+    }
+
+    /// The window's scene phase. Going to the background ends the wait; so
+    /// does going inactive, unless iOS's own permission prompt is what
+    /// covers the app (the pin button raised it: the answer, then the
+    /// fix, are what she is waiting for).
+    func scenePhaseChanged(active: Bool, background: Bool) {
+        sceneInBackground = background
+        if background || (!active && authorization != .notDetermined) { cancelPendingPin() }
     }
 
     /// Why there is no fix, in words that say what to do: location off →
@@ -116,6 +191,7 @@ extension AppModel {
         pins.move(pin, latitude: coordinate.latitude, longitude: coordinate.longitude, placedBy: .map)
         offerMoveUndo(pin, from: from)
         if selection?.pinID != id { selectPin(id) }
+        revealMovedPin()
     }
 
     /// "Move to my location": the freshest usable fix, or the honest
@@ -127,8 +203,10 @@ extension AppModel {
         let from = Self.spot(pin)
         pins.move(pin, latitude: fix.coordinate.latitude, longitude: fix.coordinate.longitude, placedBy: .gps,
                   accuracy: fix.horizontalAccuracy, altitude: fix.verticalAccuracy > 0 ? fix.altitude : nil)
+        // a "No location yet" from an earlier try is moot now
+        if notice?.isPinNotice == true { dismissNotice() }
         offerMoveUndo(pin, from: from)
-        focusPin(latitude: pin.lat, longitude: pin.lon)
+        revealMovedPin()
     }
 
     private static func spot(_ pin: SavedPin) -> PinSpot {
@@ -188,7 +266,7 @@ extension AppModel {
                       placedBy: SavedPin.Placement(rawValue: from.placedBy) ?? .map,
                       accuracy: from.accuracy, altitude: from.altitude)
             if selection?.pinID != id { selectPin(id) }
-            focusPin(latitude: from.latitude, longitude: from.longitude)
+            revealMovedPin()
             return
         }
         pins.restore(pin)
@@ -231,6 +309,18 @@ extension AppModel {
         // following would drag the camera straight off the pins
         if trackingMode != .off { trackingMode = .off }
         showPinsLayer()
+    }
+}
+
+/// The pin button's request while it waits for a fix: the time of the
+/// press, which a fix must not predate.
+nonisolated struct PendingPin: Equatable, Sendable {
+    let pressedAt: Date
+
+    /// A fix taken at or after the press, with a valid accuracy no worse
+    /// than a pin may have (`AppModel.pinMaxAccuracy`).
+    func isFulfilled(by fix: CLLocation) -> Bool {
+        fix.timestamp >= pressedAt && fix.horizontalAccuracy >= 0 && fix.horizontalAccuracy <= AppModel.pinMaxAccuracy
     }
 }
 

@@ -163,9 +163,13 @@ nonisolated struct GridSquare: Sendable, Hashable {
 /// A map key row: small ink squares with their meaning.
 struct InkKey: View {
     let items: [(opacity: Double, label: String)]
+    /// Side by side, or one above the other (a narrow column).
+    var axis: Axis = .horizontal
 
     var body: some View {
-        HStack(spacing: 10) {
+        let layout = axis == .horizontal ? AnyLayout(HStackLayout(spacing: 10))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+        layout {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(spacing: 4) {
                     // a swatch of the printed plate: ink on paper, in dark mode too

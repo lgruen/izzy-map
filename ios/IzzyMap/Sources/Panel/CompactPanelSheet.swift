@@ -176,9 +176,7 @@ struct CompactPanelSheet: View {
                     updateFit(contentHeight)
                 }
         }
-        // a pin card: a hard edge — its swatches would smear colour (data)
-        // into the search row (chrome)
-        .scrollEdgeEffectStyle(PanelContent.topEdge(model), for: .top)
+        .scrollEdgeEffectStyle(.soft, for: .top)
         // a detent's height leaves out the sheet's bottom safe area, which
         // the system adds below it once the sheet sits low enough to reach
         // the home indicator (AX text sizes; at default sizes the small

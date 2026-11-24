@@ -85,6 +85,16 @@ nonisolated enum PinFraming {
             return armed
         }
 
+        /// The selected pin moved, or a move was undone: armed again for
+        /// it (its new spot may be under the sheet or the pill). False
+        /// with no pin selected.
+        mutating func moved(_ id: UUID?) -> Bool {
+            guard let id else { return false }
+            pin = id
+            armed = true
+            return true
+        }
+
         /// The panel's geometry changed: true while armed.
         func panelChanged() -> Bool { armed }
 

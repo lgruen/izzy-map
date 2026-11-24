@@ -602,7 +602,7 @@ private struct RecentlyDeletedPage: View {
                 }
                 ForEach(store.deletedPins) { pin in
                     let row = PinRow.title(pin)
-                    DeletedRow(title: row.text, untitled: row.untitled,
+                    DeletedRow(title: row.text, titleLines: 2, untitled: row.untitled,
                                status: PinsScreenText.deletedStatus(place: Self.place(pin), photos: store.photoCount(of: pin),
                                                                     daysLeft: store.daysLeft(pin.deletedAt)),
                                identifier: pin.displayTitle,
@@ -615,6 +615,11 @@ private struct RecentlyDeletedPage: View {
             } footer: {
                 Text("Deleted pins and projects stay here for 30 days, then they’re gone for good.")
                     .foregroundStyle(DesignColor.secondaryInk)
+                    // "Delete all now"'s question hangs here, just above its
+                    // button: the button's section goes with what it deletes,
+                    // this footer stays (a dialog whose anchor is gone can
+                    // stay armed and reopen by itself)
+                    .deleteNowDialog($confirm, id: "all") { model.deleteNow($0) }
             }
             .panelRows()
 
@@ -628,7 +633,6 @@ private struct RecentlyDeletedPage: View {
                     }
                     .buttonStyle(.plain)
                     .hoverEffect(.highlight)
-                    .deleteNowDialog($confirm, id: "all") { model.deleteNow($0) }
                     .accessibilityIdentifier("deleted-delete-all")
                 }
                 .panelRows()
@@ -639,6 +643,8 @@ private struct RecentlyDeletedPage: View {
         .toolbar { DoneItem(done: done) }
         // overdue items go now, not only at launch (a long-running iPad)
         .onAppear { model.purgePins() }
+        // nothing left to ask about: no question stays armed for later
+        .onChange(of: store.hasDeleted) { _, any in if !any { confirm = nil } }
     }
 
     /// Where a pin goes back to: "Knocklofty", "Unfiled".
@@ -696,8 +702,12 @@ extension View {
                             set: { if !$0, confirm.wrappedValue?.id == id { confirm.wrappedValue = nil } })
         return confirmationDialog(confirm.wrappedValue?.title ?? "", isPresented: shown, titleVisibility: .visible,
                                   presenting: confirm.wrappedValue) { c in
-            Button(c.button, role: .destructive) { perform(c) }
-            Button("Cancel", role: .cancel) {}
+            // the question ends with either answer (never left armed)
+            Button(c.button, role: .destructive) {
+                confirm.wrappedValue = nil
+                perform(c)
+            }
+            Button("Cancel", role: .cancel) { confirm.wrappedValue = nil }
         } message: { c in
             Text(c.message)
         }

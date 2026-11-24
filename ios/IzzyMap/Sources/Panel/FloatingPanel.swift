@@ -64,7 +64,7 @@ struct FloatingPanel: View {
                         .padding(.bottom, hasBody ? 14 : inset)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                 }
-                .scrollEdgeEffectStyle(PanelContent.topEdge(model), for: .top)
+                .scrollEdgeEffectStyle(.soft, for: .top)
                 // a card taller than the room (a phone on its side): the
                 // content fades out over the last 24 pt — it reads as
                 // "scrolls on", never as a row cut off flush with the edge
